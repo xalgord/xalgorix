@@ -1,4 +1,0 @@
-# Placeholder so the migrations directory is embedded by `//go:embed` in
-# internal/cloud/db/migrations.go before any real migration files exist.
-# Subsequent tasks (xalgorix-saas 1.2 through 1.10) populate this directory
-# with the schema described in design.md → "Data Models".
