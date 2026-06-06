@@ -7,6 +7,9 @@ set -euo pipefail
 #   ./release.sh 4.3.0            # explicit version
 #   ./release.sh --minor          # bump minor (4.2.10 → 4.3.0)
 #   ./release.sh --major          # bump major (4.2.10 → 5.0.0)
+#
+# The version bump is committed on a dedicated release/vX.Y.Z branch (never
+# directly on main), so the PR merges cleanly without version-string conflicts.
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 MAIN_GO="$REPO_ROOT/cmd/xalgorix/main.go"
@@ -38,6 +41,19 @@ if [[ -n "$(git status --porcelain)" ]]; then
     die "Working tree is dirty. Commit or stash changes first."
 fi
 
+# ─── Step 0: Sync main with origin to avoid divergence ───
+ORIGINAL_BRANCH="$(git branch --show-current)"
+if [[ "$ORIGINAL_BRANCH" != "main" ]]; then
+    info "Switching to main..."
+    git checkout main
+fi
+info "Syncing main with origin/main..."
+git pull --ff-only origin main 2>/dev/null || {
+    warn "Fast-forward pull failed — trying rebase..."
+    git pull --rebase origin main || die "Cannot sync main with origin. Resolve manually."
+}
+ok "main is in sync with origin"
+
 # ─── Determine current version ───
 CURRENT=$(grep -oP 'var version = "\K[^"]+' "$MAIN_GO")
 [[ -z "$CURRENT" ]] && die "Could not parse current version from $MAIN_GO"
@@ -67,7 +83,17 @@ read -rp "Proceed with release v$NEW_VERSION? [y/N] " confirm
 [[ "$confirm" =~ ^[Yy]$ ]] || { warn "Aborted."; exit 0; }
 echo ""
 
-# ─── Step 1: Bump version in source ───
+# ─── Step 1: Create release branch from main ───
+RELEASE_BRANCH="release/v$NEW_VERSION"
+if git rev-parse --verify --quiet "$RELEASE_BRANCH" >/dev/null; then
+    warn "Branch $RELEASE_BRANCH already exists locally — refusing to overwrite. Delete it and rerun if intentional."
+    die "release branch collision"
+fi
+info "Creating branch $RELEASE_BRANCH from main..."
+git checkout -b "$RELEASE_BRANCH"
+ok "On branch $RELEASE_BRANCH"
+
+# ─── Step 2: Bump version in source (on release branch) ───
 info "Bumping version in main.go..."
 sed -i "s/var version = \"$CURRENT\"/var version = \"$NEW_VERSION\"/" "$MAIN_GO"
 if [[ -f "$MAKEFILE" ]]; then
@@ -78,19 +104,18 @@ if [[ -f "$README" ]]; then
 fi
 ok "Version bumped: $CURRENT → $NEW_VERSION"
 
-# ─── Step 2: Build & verify ───
+# ─── Step 3: Build & verify ───
 info "Building and verifying..."
-# The previous version had `die` before `git checkout`, but `die` calls
-# `exit 1` so the checkout never ran and the version bump was left on disk.
-# Reorder: revert the bump first, then exit.
 if ! go build ./cmd/xalgorix/; then
-    warn "Build failed — reverting version bump"
+    warn "Build failed — reverting version bump and deleting release branch"
     git checkout -- "$MAIN_GO" "$MAKEFILE" "$README"
-    die "Build failed (version bump reverted)"
+    git checkout main
+    git branch -D "$RELEASE_BRANCH"
+    die "Build failed (version bump reverted, release branch deleted)"
 fi
 ok "Build successful"
 
-# ─── Step 3: Build release binary ───
+# ─── Step 4: Build release binary ───
 info "Building linux/amd64 release binary..."
 mkdir -p "$BUILD_DIR"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
@@ -99,7 +124,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     ./cmd/xalgorix/
 ok "Binary built: $BUILD_DIR/xalgorix-linux-amd64"
 
-# ─── Step 4: Generate changelog ───
+# ─── Step 5: Generate changelog (commits since last tag) ───
 info "Generating changelog..."
 CHANGELOG=$(git log --oneline "v$CURRENT"..HEAD 2>/dev/null | sed 's/^/- /' || echo "- Release v$NEW_VERSION")
 if [[ -z "$CHANGELOG" ]]; then
@@ -108,35 +133,20 @@ fi
 echo "$CHANGELOG"
 echo ""
 
-# ─── Step 5: Commit & tag ───
+# ─── Step 6: Commit & tag (on release branch) ───
 info "Committing and tagging..."
 git add -A
 git commit -m "release: v$NEW_VERSION"
 git tag "v$NEW_VERSION"
 ok "Tagged v$NEW_VERSION"
 
-# ─── Step 6: Push to release branch and open PR ───
-# `main` is branch-protected and rejects direct pushes; release work goes onto
-# a per-version release branch and merges via PR, matching the existing
-# v4.4.17 / v4.4.18 / v4.4.19 release pattern.
-RELEASE_BRANCH="release/v$NEW_VERSION"
-info "Switching to $RELEASE_BRANCH and pushing..."
-
-# Capture the commit just made on the current branch (typically main) and use
-# it as the tip of the release branch. This avoids cherry-picking and keeps
-# the tag on the same commit the PR merges.
-RELEASE_COMMIT="$(git rev-parse HEAD)"
-
-if git rev-parse --verify --quiet "$RELEASE_BRANCH" >/dev/null; then
-    warn "Branch $RELEASE_BRANCH already exists locally — refusing to overwrite. Delete it and rerun if intentional."
-    die "release branch collision"
-fi
-
-git branch "$RELEASE_BRANCH" "$RELEASE_COMMIT"
+# ─── Step 7: Push release branch & tag ───
+info "Pushing $RELEASE_BRANCH and tag..."
 git push -u origin "$RELEASE_BRANCH"
 git push origin "v$NEW_VERSION"
 ok "Pushed $RELEASE_BRANCH and tag v$NEW_VERSION"
 
+# ─── Step 8: Open PR against main ───
 info "Opening PR against main..."
 PR_BODY="### Changes
 
@@ -150,7 +160,7 @@ else
     ok "PR opened: $PR_URL"
 fi
 
-# ─── Step 7: Create GitHub Release ───
+# ─── Step 9: Create GitHub Release ───
 info "Creating GitHub Release..."
 gh release create "v$NEW_VERSION" \
     "$BUILD_DIR/xalgorix-linux-amd64" \
@@ -159,6 +169,11 @@ gh release create "v$NEW_VERSION" \
 
 $CHANGELOG"
 ok "GitHub Release created"
+
+# ─── Step 10: Switch back to main ───
+info "Switching back to main..."
+git checkout main
+ok "Back on main (clean — version bump lives only on $RELEASE_BRANCH)"
 
 # ─── Cleanup ───
 rm -rf "$BUILD_DIR"
