@@ -35,9 +35,6 @@ type ScanState struct {
 	SkillsLoaded               int
 	UniqueToolsUsed            map[string]bool
 	ReconDone                  bool
-	InjectionTested            bool
-	DirBustingDone             bool
-	AccessControlTested        bool
 	ScannerUsed                bool
 	FinishAttempts             int
 	DiscoveryMode              bool
@@ -46,6 +43,21 @@ type ScanState struct {
 	PassiveReconGuardActive    bool
 	PassiveReconPassiveLookups int
 	PassiveReconBlockedActive  int
+
+	// Coverage counters — track UNIQUE endpoints per test category.
+	// These replace the old boolean flags (InjectionTested, etc.) which
+	// fired after a single command, allowing the agent to finish after
+	// testing only 1 out of 20 discovered endpoints.
+	InjectionEndpoints     map[string]bool // unique endpoints with injection payloads
+	AccessControlEndpoints map[string]bool // unique endpoints with auth/IDOR tests
+	DirBustingHosts        map[string]bool // unique hosts/paths fuzzed
+	EndpointsTested        map[string]bool // all unique URL paths tested with any tool
+	EndpointInventorySaved bool            // add_note called (recon checklist step 5)
+
+	// Backward-compat booleans — derived from map lengths in hookWorkTracker
+	InjectionTested     bool
+	DirBustingDone      bool
+	AccessControlTested bool
 
 	// Stuck-loop detection
 	StuckDomain        string
@@ -73,8 +85,12 @@ type ScanState struct {
 // NewScanState creates a zero-value ScanState with initialized maps.
 func NewScanState() *ScanState {
 	return &ScanState{
-		UniqueToolsUsed: make(map[string]bool),
-		DetectedTechs:   make(map[string]bool),
+		UniqueToolsUsed:        make(map[string]bool),
+		DetectedTechs:          make(map[string]bool),
+		InjectionEndpoints:     make(map[string]bool),
+		AccessControlEndpoints: make(map[string]bool),
+		DirBustingHosts:        make(map[string]bool),
+		EndpointsTested:        make(map[string]bool),
 	}
 }
 
@@ -183,6 +199,12 @@ func hookWorkTracker(state *ScanState, args map[string]string) HookResult {
 		state.TerminalCalls++
 		cmd := strings.ToLower(args["command"])
 
+		// Extract endpoint from curl/httpx commands for coverage tracking
+		endpoint := extractEndpointFromCmd(cmd)
+		if endpoint != "" {
+			state.EndpointsTested[endpoint] = true
+		}
+
 		// Detect recon commands
 		if strings.Contains(cmd, "nmap") || strings.Contains(cmd, "whatweb") ||
 			strings.Contains(cmd, "curl -si") || strings.Contains(cmd, "curl -sk") ||
@@ -193,32 +215,44 @@ func hookWorkTracker(state *ScanState, args map[string]string) HookResult {
 			state.ReconDone = true
 		}
 
-		// Detect directory busting
+		// Detect directory busting — track unique hosts/paths
 		if strings.Contains(cmd, "ffuf") || strings.Contains(cmd, "gobuster") ||
 			strings.Contains(cmd, "dirsearch") || strings.Contains(cmd, "feroxbuster") ||
 			strings.Contains(cmd, "dirb ") {
+			host := extractHostFromCmd(cmd)
+			if host != "" {
+				state.DirBustingHosts[host] = true
+			}
 			state.DirBustingDone = true
 		}
 
-		// Detect injection testing
-		if strings.Contains(cmd, "sqlmap") || strings.Contains(cmd, "dalfox") ||
+		// Detect injection testing — track unique endpoints
+		isInjection := strings.Contains(cmd, "sqlmap") || strings.Contains(cmd, "dalfox") ||
 			strings.Contains(cmd, "sleep(") || strings.Contains(cmd, "alert(") ||
 			strings.Contains(cmd, "<script>") || strings.Contains(cmd, "' or ") ||
 			strings.Contains(cmd, "' and ") || strings.Contains(cmd, "{{7*7}}") ||
 			strings.Contains(cmd, "etc/passwd") || strings.Contains(cmd, "xalg0r1x") ||
 			strings.Contains(cmd, "$ne") || strings.Contains(cmd, "$gt") ||
 			strings.Contains(cmd, "__proto__") || strings.Contains(cmd, "%0d%0a") ||
-			(strings.Contains(cmd, "content-length") && strings.Contains(cmd, "transfer-encoding")) {
+			(strings.Contains(cmd, "content-length") && strings.Contains(cmd, "transfer-encoding"))
+		if isInjection {
+			if endpoint != "" {
+				state.InjectionEndpoints[endpoint] = true
+			}
 			state.InjectionTested = true
 		}
 
-		// Detect access control testing (IDOR, auth bypass)
-		if strings.Contains(cmd, "/user/1") || strings.Contains(cmd, "/user/2") ||
+		// Detect access control testing — track unique endpoints
+		isAccessControl := strings.Contains(cmd, "/user/1") || strings.Contains(cmd, "/user/2") ||
 			strings.Contains(cmd, "id=1") || strings.Contains(cmd, "id=2") ||
 			strings.Contains(cmd, "role=admin") || strings.Contains(cmd, "isadmin") ||
 			strings.Contains(cmd, "x-forwarded-for") || strings.Contains(cmd, "x-original-url") ||
 			(strings.Contains(cmd, "admin") && strings.Contains(cmd, "curl")) ||
-			strings.Contains(cmd, "authorization") {
+			strings.Contains(cmd, "authorization")
+		if isAccessControl {
+			if endpoint != "" {
+				state.AccessControlEndpoints[endpoint] = true
+			}
 			state.AccessControlTested = true
 		}
 
@@ -235,7 +269,53 @@ func hookWorkTracker(state *ScanState, args map[string]string) HookResult {
 		state.SkillsLoaded++
 	}
 
+	// Track endpoint inventory saved (mandatory recon checklist step 5)
+	if toolName == "add_note" {
+		noteContent := strings.ToLower(args["content"])
+		if strings.Contains(noteContent, "endpoint") || strings.Contains(noteContent, "api") ||
+			strings.Contains(noteContent, "subdomain") || strings.Contains(noteContent, "inventory") ||
+			strings.Contains(noteContent, "discovered") {
+			state.EndpointInventorySaved = true
+		}
+	}
+
 	return HookResult{}
+}
+
+// extractEndpointFromCmd extracts a URL path from curl/httpx commands.
+// Returns a normalized endpoint like "/api/users" or "" if not found.
+func extractEndpointFromCmd(cmd string) string {
+	for _, prefix := range []string{"curl ", "httpx ", "wget "} {
+		if !strings.Contains(cmd, prefix) {
+			continue
+		}
+		for _, token := range strings.Fields(cmd) {
+			if strings.HasPrefix(token, "http://") || strings.HasPrefix(token, "https://") {
+				token = strings.Trim(token, "\"'")
+				if parsed, err := url.Parse(token); err == nil && parsed.Host != "" {
+					path := parsed.Path
+					if path == "" || path == "/" {
+						path = "/"
+					}
+					return parsed.Host + path
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// extractHostFromCmd extracts the target host from a command for dirbusting tracking.
+func extractHostFromCmd(cmd string) string {
+	for _, token := range strings.Fields(cmd) {
+		token = strings.Trim(token, "\"'")
+		if strings.HasPrefix(token, "http://") || strings.HasPrefix(token, "https://") {
+			if parsed, err := url.Parse(token); err == nil && parsed.Host != "" {
+				return parsed.Host
+			}
+		}
+	}
+	return ""
 }
 
 // ── hookStuckTracker ─────────────────────────────────────────────────────────
@@ -423,7 +503,9 @@ func hookTechDetector(state *ScanState, args map[string]string) HookResult {
 }
 
 // ── hookFinishGatekeeper ─────────────────────────────────────────────────────
-// Replaces canFinish() closure. Decides if the agent has done enough work.
+// Decides if the agent has done enough work. Uses proportional coverage
+// tracking: the gate checks how many UNIQUE endpoints were tested per
+// vuln class, not just "did you run sqlmap once?".
 func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 	state.FinishAttempts++
 
@@ -445,6 +527,10 @@ func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 	}
 
 	iter := state.Iteration
+	totalEndpoints := len(state.EndpointsTested)
+	injectionCount := len(state.InjectionEndpoints)
+	accessControlCount := len(state.AccessControlEndpoints)
+	dirBustingCount := len(state.DirBustingHosts)
 
 	// Absolute minimum: at least 3 iterations (sanity floor)
 	if iter < 3 {
@@ -470,77 +556,99 @@ func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 		}
 	}
 
-	// After basic threshold, evaluate work quality
-	if state.TerminalCalls >= 10 && state.ReconDone {
-		if iter < 15 {
-			missing := []string{}
-			if !state.InjectionTested {
-				missing = append(missing, "manual injection testing (SQLi, XSS, SSRF, NoSQL, SSTI)")
-			}
-			if !state.DirBustingDone {
-				missing = append(missing, "directory brute-forcing (ffuf/gobuster/dirsearch)")
-			}
-			if !state.AccessControlTested {
-				missing = append(missing, "access control testing (IDOR, auth bypass, role testing)")
-			}
-			if len(missing) > 0 {
-				return HookResult{
-					Block:       true,
-					BlockReason: fmt.Sprintf("Recon is done but you haven't completed: %s. Continue testing before finishing.", strings.Join(missing, ", ")),
-				}
-			}
+	// ── Coverage-based gating ──
+	// Instead of "did you run sqlmap once?", check how many unique
+	// endpoints were tested per category. This prevents shallow scans
+	// that test 1 out of 20 discovered endpoints.
+
+	// Gate: Endpoint inventory must be saved (mandatory recon step 5)
+	if !state.EndpointInventorySaved && iter < 50 {
+		return HookResult{
+			Block:       true,
+			BlockReason: "You haven't saved your endpoint inventory with add_note yet. Complete the mandatory recon checklist: save ALL discovered endpoints, subdomains, and API bases to notes before finishing.",
 		}
-		// Work quality is acceptable — check iteration floor and first-attempt nudge below
-	} else if iter < 35 {
-		// Between threshold with < 10 commands: nudge to do more
+	}
+
+	// Gate: Proportional coverage — require testing multiple endpoints
+	if iter < 50 {
 		missing := []string{}
-		if !state.InjectionTested {
-			missing = append(missing, "manual parameter testing (SQLi, XSS, SSRF, NoSQL, SSTI, CRLF)")
+
+		// Injection: require at least 3 unique endpoints tested (or all if < 3 exist)
+		minInjection := minInt(3, maxInt(1, totalEndpoints/3))
+		if injectionCount < minInjection {
+			missing = append(missing, fmt.Sprintf("injection testing on %d more endpoints (tested %d/%d — try SQLi, XSS, SSRF, SSTI on different endpoints)",
+				minInjection-injectionCount, injectionCount, totalEndpoints))
 		}
-		if !state.DirBustingDone {
-			missing = append(missing, "directory discovery (ffuf/gobuster/dirsearch)")
+
+		// Directory busting: require at least 1 host
+		if dirBustingCount < 1 {
+			missing = append(missing, "directory brute-forcing (ffuf/gobuster/dirsearch on at least 1 target)")
 		}
-		if !state.AccessControlTested {
-			missing = append(missing, "access control testing (IDOR, privilege escalation, auth bypass)")
+
+		// Access control: require at least 2 unique endpoints tested
+		minAccessControl := minInt(2, maxInt(1, totalEndpoints/4))
+		if accessControlCount < minAccessControl {
+			missing = append(missing, fmt.Sprintf("access control testing on %d more endpoints (tested %d — try IDOR, auth bypass, privilege escalation)",
+				minAccessControl-accessControlCount, accessControlCount))
 		}
+
 		if len(missing) > 0 {
 			return HookResult{
 				Block:       true,
-				BlockReason: fmt.Sprintf("Still missing: %s. Continue testing before finishing.", strings.Join(missing, ", ")),
+				BlockReason: fmt.Sprintf("Coverage gap: you've tested %d unique endpoints total but still need: %s", totalEndpoints, strings.Join(missing, "; ")),
 			}
 		}
 	}
 
-	// Generous allowance after 35 iterations regardless
-	// (iter >= 35 always passes through to first-attempt check below)
-
-	// First finish attempt nudge: reconsider if < 35 iterations
-	if state.FinishAttempts == 1 && iter < 35 {
-		scannerNote := ""
-		if !state.ScannerUsed {
-			scannerNote = "\n- You haven't used any automated scanners (nuclei/ffuf) yet — consider running them on promising endpoints"
-		}
-		skillNote := ""
-		if state.SkillsLoaded == 0 {
-			skillNote = "\n- ⚠️ You haven't loaded ANY deep knowledge skills (read_skill). Load skills for the target's tech stack to get expert-level payloads and bypass techniques!"
-		}
-		nudgeMsg := fmt.Sprintf(`⚠️ Are you SURE you want to finish? You still have capacity to test more.
+	// ── Iteration floor: 50 ──
+	// Matches the system prompt: "Minimum 50 iterations for a thorough assessment"
+	if iter < 50 {
+		if state.FinishAttempts <= 2 {
+			scannerNote := ""
+			if !state.ScannerUsed {
+				scannerNote = "\n- You haven't used any automated scanners (nuclei/ffuf) yet — consider running them on promising endpoints"
+			}
+			skillNote := ""
+			if state.SkillsLoaded == 0 {
+				skillNote = "\n- ⚠️ You haven't loaded ANY deep knowledge skills (read_skill). Load skills for the target's tech stack to get expert-level payloads and bypass techniques!"
+			}
+			coverageNote := fmt.Sprintf("\n- Endpoints tested: %d (injection: %d, access control: %d, dirbusting hosts: %d)",
+				totalEndpoints, injectionCount, accessControlCount, dirBustingCount)
+			nudgeMsg := fmt.Sprintf(`⚠️ Only %d/50 iterations completed. You still have capacity to test more.
 
 Before finishing, verify you have covered:
 - All discovered endpoints and parameters tested MANUALLY
 - Common vulnerability classes (SQLi, XSS, SSRF, IDOR, broken auth)
 - Technology-specific CVEs
-- API endpoints found in JavaScript files%s%s
+- API endpoints found in JavaScript files%s%s%s
 
-If you have truly covered everything, call finish again. Otherwise, continue testing.`, scannerNote, skillNote)
+Continue testing. Call finish again after iteration 50.`, iter, coverageNote, scannerNote, skillNote)
 
-		return HookResult{
-			Block:       true,
-			BlockReason: nudgeMsg,
+			return HookResult{
+				Block:       true,
+				BlockReason: nudgeMsg,
+			}
 		}
 	}
 
+	// After 50 iterations with coverage met: allow finish
 	return HookResult{}
+}
+
+// maxInt returns the larger of two ints.
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// minInt returns the smaller of two ints.
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // ── hookEmptyResponseHandler ─────────────────────────────────────────────────
