@@ -440,3 +440,277 @@ func TestSetParentContextCleanedOnCleanup(t *testing.T) {
 		t.Fatalf("GetParentContext after cleanup = %q, want empty", got)
 	}
 }
+
+// TestAutoDowngrade_OneLevelDrop verifies that the auto-downgrade for weak
+// evidence drops severity by exactly one level (not nuclear to "info").
+func TestAutoDowngrade_OneLevelDrop(t *testing.T) {
+	tests := []struct {
+		name     string
+		severity string
+		want     string
+	}{
+		{"critical drops to high", "critical", "high"},
+		{"high drops to medium", "high", "medium"},
+		{"medium drops to low", "medium", "low"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			contextID := "test-auto-downgrade-" + tt.severity
+			CleanupContext(contextID)
+			defer CleanupContext(contextID)
+
+			// Use deliberately weak proof that won't pass hasStrongEvidence
+			args := map[string]string{
+				"title":               "Some finding on endpoint",
+				"severity":            tt.severity,
+				"description":         "A potential issue was observed",
+				"exploitation_proof":  "The endpoint responded with a 200 status code when tested",
+				"verification_method": "manual_verified",
+				"target":              "https://example.com",
+				"endpoint":            "/api/test-" + tt.severity,
+				// No CVSS provided — so CVSS enforcement won't override
+			}
+
+			result, err := reportVulnWithContextID(contextID, args)
+			if err != nil {
+				t.Fatalf("report error: %v", err)
+			}
+
+			vulns := GetVulnerabilitiesForContext(contextID)
+			if len(vulns) != 1 {
+				t.Fatalf("expected 1 vuln, got %d (output: %s)", len(vulns), result.Output)
+			}
+
+			if vulns[0].Severity != tt.want {
+				t.Errorf("severity = %q, want %q (auto-downgrade should drop one level, not to info)", vulns[0].Severity, tt.want)
+			}
+		})
+	}
+}
+
+// TestCVSSEnforcement_OverridesAutoDowngrade verifies that CVSS enforcement
+// is truly authoritative — it overrides prior auto-downgrade decisions.
+// This was the core bug: CVSS 7.4 should ALWAYS produce "high", regardless
+// of what the auto-downgrade gate decided.
+func TestCVSSEnforcement_OverridesAutoDowngrade(t *testing.T) {
+	tests := []struct {
+		name         string
+		severity     string // agent-provided severity
+		cvss         string // agent-provided CVSS
+		wantSeverity string // expected final severity
+	}{
+		// CVSS 7.4 = high, regardless of what the agent labels it
+		{"high with CVSS 7.4", "high", "7.4", "high"},
+		{"low with CVSS 7.4", "low", "7.4", "high"},
+		{"info with CVSS 7.4", "info", "7.4", "high"},
+
+		// CVSS 9.5 = critical
+		{"high with CVSS 9.5", "high", "9.5", "critical"},
+		{"medium with CVSS 9.5", "medium", "9.5", "critical"},
+
+		// CVSS 5.5 = medium
+		{"critical with CVSS 5.5", "critical", "5.5", "medium"},
+		{"high with CVSS 5.5", "high", "5.5", "medium"},
+
+		// CVSS 2.5 = low
+		{"high with CVSS 2.5", "high", "2.5", "low"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			contextID := "test-cvss-enforcement-" + tt.name
+			CleanupContext(contextID)
+			defer CleanupContext(contextID)
+
+			args := map[string]string{
+				"title":               "SQL Injection in API endpoint",
+				"severity":            tt.severity,
+				"description":         "SQL injection allows data extraction from the database",
+				"exploitation_proof":  "sql injection data extraction confirmed; email address records dumped from user table via union select",
+				"verification_method": "data_extracted",
+				"target":              "https://example.com",
+				"endpoint":            "/api/vuln-" + tt.name,
+				"cvss":                tt.cvss,
+			}
+
+			_, err := reportVulnWithContextID(contextID, args)
+			if err != nil {
+				t.Fatalf("report error: %v", err)
+			}
+
+			vulns := GetVulnerabilitiesForContext(contextID)
+			if len(vulns) != 1 {
+				t.Fatalf("expected 1 vuln, got %d", len(vulns))
+			}
+
+			if vulns[0].Severity != tt.wantSeverity {
+				t.Errorf("severity = %q, want %q (CVSS %s should always produce %s)", vulns[0].Severity, tt.wantSeverity, tt.cvss, tt.wantSeverity)
+			}
+		})
+	}
+}
+
+// TestStoredXSS_CVSS74_AlwaysHigh reproduces the exact scenario from the
+// user's bug report: "Stored XSS in ActiveCampaign CRM" with CVSS 7.4
+// was classified as HIGH in one run and LOW in another. After the fix,
+// CVSS 7.4 must always produce HIGH.
+func TestStoredXSS_CVSS74_AlwaysHigh(t *testing.T) {
+	// Simulate both scenarios the LLM might produce
+	scenarios := []struct {
+		name     string
+		severity string
+		proof    string
+	}{
+		{
+			"strong proof",
+			"high",
+			"Unauthenticated endpoint /api/activecampaign-lead accepts and stores unsanitized HTML/JavaScript in the firstName and lastName fields. Payload <script>alert(document.cookie)</script> fires in admin panel.",
+		},
+		{
+			"weak proof",
+			"high",
+			"The endpoint accepts HTML input in the firstName field. The data is stored and displayed.",
+		},
+		{
+			"agent says low",
+			"low",
+			"Unauthenticated endpoint accepts unsanitized HTML input.",
+		},
+	}
+
+	for _, sc := range scenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			contextID := "test-stored-xss-consistency-" + sc.name
+			CleanupContext(contextID)
+			defer CleanupContext(contextID)
+
+			args := map[string]string{
+				"title":               "Stored XSS in ActiveCampaign CRM via /api/activecampaign-lead",
+				"severity":            sc.severity,
+				"description":         "Unauthenticated endpoint /api/activecampaign-lead accepts and stores unsanitized HTML/JavaScript",
+				"exploitation_proof":  sc.proof,
+				"verification_method": "reflected",
+				"target":              "https://vanhack.com",
+				"endpoint":            "/api/activecampaign-lead",
+				"method":              "POST",
+				"cvss":                "7.4",
+			}
+
+			_, err := reportVulnWithContextID(contextID, args)
+			if err != nil {
+				t.Fatalf("report error: %v", err)
+			}
+
+			vulns := GetVulnerabilitiesForContext(contextID)
+			if len(vulns) != 1 {
+				t.Fatalf("expected 1 vuln, got %d", len(vulns))
+			}
+
+			// CVSS 7.4 = HIGH, always. This is the fix.
+			if vulns[0].Severity != "high" {
+				t.Errorf("severity = %q, want %q — CVSS 7.4 must always produce HIGH regardless of proof strength or agent-provided severity", vulns[0].Severity, "high")
+			}
+		})
+	}
+}
+
+// TestClassifySeverity_XSSCaps verifies that stored XSS is capped at
+// high (not critical) by classifySeverity, but CVSS enforcement can
+// still override this cap.
+func TestClassifySeverity_XSSCaps(t *testing.T) {
+	// Stored XSS without admin/mass/worm proof → capped at high
+	sev, reason := classifySeverity("Stored XSS in comment field", "Persistent XSS stores payload", "critical", "alert(1) fires in page")
+	if sev != "high" {
+		t.Errorf("classifySeverity for stored XSS at critical = %q (reason=%q), want high", sev, reason)
+	}
+
+	// Reflected XSS → capped at medium
+	sev, reason = classifySeverity("Reflected XSS in search", "Input reflected in response", "high", "payload reflected")
+	if sev != "medium" {
+		t.Errorf("classifySeverity for reflected XSS at high = %q (reason=%q), want medium", sev, reason)
+	}
+}
+
+// TestClassifySeverity_VulnTypeFallback verifies that the vulnType-based
+// fallback fires when the LLM uses a different title framing for the same
+// vulnerability. This was the exact bug from scan logs where:
+// - "Stored XSS in ActiveCampaign CRM" → matched "stored xss" keyword → high cap
+// - "Unauthenticated Contact Injection" → matched NO keyword → no cap at all
+// After the fix, extractVulnType catches "xss" in both titles/descriptions.
+func TestClassifySeverity_VulnTypeFallback(t *testing.T) {
+	tests := []struct {
+		name     string
+		title    string
+		desc     string
+		severity string
+		want     string
+	}{
+		{
+			"stored xss keyword in title → high cap",
+			"Stored XSS in ActiveCampaign CRM via /api/activecampaign-lead",
+			"Persistent XSS stores payload in CRM firstName field",
+			"critical",
+			"high",
+		},
+		{
+			"xss in description only → vulnType fallback catches it",
+			"Unauthenticated ActiveCampaign Contact Injection — CRM Pollution",
+			"Anyone can inject stored XSS payloads via the firstName field",
+			"critical",
+			"high", // vulnType="xss" + "stored" in desc → high cap
+		},
+		{
+			"xss in description via different wording → vulnType catches it",
+			"Unauthenticated CRM Contact Creation — Unsanitized Input",
+			"The endpoint stores user-controlled HTML without sanitization, enabling cross-site scripting in the admin panel",
+			"critical",
+			"high", // vulnType="xss" from "cross-site scripting" + "stored" not present but desc says "stores" → check
+		},
+		{
+			"no xss anywhere → no fallback cap",
+			"Unauthenticated ActiveCampaign Contact Creation",
+			"Anyone can create arbitrary contacts in the CRM without authentication",
+			"critical",
+			"critical", // no vuln type detected → no cap
+		},
+		{
+			"reflected xss via vulnType → medium cap",
+			"Input Reflection in Search Endpoint",
+			"The search parameter reflects user input without encoding — cross-site scripting possible",
+			"high",
+			"medium", // vulnType="xss", no "stored"/"persistent" → reflected → medium cap
+		},
+		{
+			"csrf via vulnType → medium cap",
+			"Unauthenticated State Change in Profile Settings",
+			"Missing CSRF protection allows cross-site request forgery on profile update",
+			"critical",
+			"medium",
+		},
+		{
+			"ssrf via vulnType → high cap",
+			"Internal Network Access via URL Parameter",
+			"Server-side request forgery allows access to internal services",
+			"critical",
+			"high",
+		},
+		{
+			"cors via vulnType → low cap",
+			"Wildcard Origin Allowed on API",
+			"Cross-origin resource sharing misconfiguration reflects any origin",
+			"high",
+			"low",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, reason := classifySeverity(tt.title, tt.desc, tt.severity, "some proof")
+			if got != tt.want {
+				t.Errorf("classifySeverity(%q, %q, %q) = %q (reason=%q), want %q",
+					tt.title, tt.desc, tt.severity, got, reason, tt.want)
+			}
+		})
+	}
+}

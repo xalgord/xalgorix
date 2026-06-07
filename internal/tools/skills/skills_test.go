@@ -217,6 +217,63 @@ func TestResolveAlias(t *testing.T) {
 	}
 }
 
+// TestResolveAlias_SystemPromptHints verifies that every alias referenced
+// in agent.go's system prompt (the read_skill(name="...") hints) resolves
+// to a real skill. These were previously broken (16 dead references).
+func TestResolveAlias_SystemPromptHints(t *testing.T) {
+	hints := []struct {
+		input string
+		want  string
+	}{
+		{"2fa-mfa-bypass", "bypassing-two-factor-and-otp"},
+		{"authentication-jwt", "exploiting-jwt-algorithm-confusion-attack"},
+		{"cache-poisoning", "performing-web-cache-poisoning-attack"},
+		{"cors-exploitation", "testing-cors-misconfiguration"},
+		{"dom-xss", "testing-for-xss-vulnerabilities"},
+		{"graphql-advanced", "performing-graphql-security-assessment"},
+		{"host-header-attacks", "testing-for-host-header-injection"},
+		{"information-disclosure", "testing-for-sensitive-data-exposure"},
+		{"insecure-file-uploads", "exploiting-file-upload-vulnerabilities"},
+		{"oauth2-attacks", "exploiting-oauth-misconfiguration"},
+		{"path-traversal-lfi-rfi", "performing-directory-traversal-testing"},
+		{"race-conditions", "exploiting-race-condition-vulnerabilities"},
+		{"web-llm-attacks", "testing-llm-prompt-injection-and-jailbreaks"},
+		{"websocket-hijacking", "exploiting-websocket-vulnerabilities"},
+		{"zero-day-hunting", "performing-zero-day-vulnerability-discovery"},
+	}
+	for _, tc := range hints {
+		got := resolveAlias(tc.input)
+		if got != tc.want {
+			t.Errorf("resolveAlias(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+// TestResolveAlias_UnderscoreNormalization verifies that underscore-style
+// names (used in old system prompt examples) resolve via the dash-keyed
+// alias map after normalization.
+func TestResolveAlias_UnderscoreNormalization(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"nosql_injection", "exploiting-nosql-injection-vulnerabilities"},
+		{"prototype_pollution", "exploiting-prototype-pollution-in-javascript"},
+		{"http_request_smuggling", "exploiting-http-request-smuggling"},
+		{"mass_assignment", "exploiting-mass-assignment-in-rest-apis"},
+		{"sql_injection", "exploiting-sql-injection-vulnerabilities"},
+		// Mixed case + underscores
+		{"SQL_Injection", "exploiting-sql-injection-vulnerabilities"},
+		{"NOSQL_INJECTION", "exploiting-nosql-injection-vulnerabilities"},
+	}
+	for _, tc := range tests {
+		got := resolveAlias(tc.input)
+		if got != tc.want {
+			t.Errorf("resolveAlias(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
 func TestReadSkill_Alias(t *testing.T) {
 	// Set up a test FS that has the full canonical name the alias resolves to.
 	dir := t.TempDir()
@@ -245,5 +302,14 @@ func TestReadSkill_Alias(t *testing.T) {
 	}
 	if !strings.Contains(result.Output, "SQL Injection") {
 		t.Errorf("alias 'sqli' should resolve to full skill, got: %s", result.Output)
+	}
+
+	// Test underscore-style name resolves via normalization
+	result, err = fn(map[string]string{"name": "sql_injection"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Output, "SQL Injection") {
+		t.Errorf("underscore alias 'sql_injection' should resolve to full skill, got: %s", result.Output)
 	}
 }

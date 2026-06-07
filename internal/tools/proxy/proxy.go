@@ -3,10 +3,13 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -42,7 +45,7 @@ func initLimiter() {
 func Register(r *tools.Registry) {
 	r.Register(&tools.Tool{
 		Name:        "send_request",
-		Description: "Send an HTTP request through the Caido proxy. Falls back to direct request if Caido is unavailable.",
+		Description: "Send an HTTP request through the Caido proxy. Falls back to direct request if Caido is unavailable. Large responses (>10KB) are automatically saved to /tmp/ — use terminal_execute (grep/cat) to search the saved file. Prefer curl via terminal_execute for recon to get full responses directly.",
 		Parameters: []tools.Parameter{
 			{Name: "method", Description: "HTTP method (GET, POST, PUT, DELETE, etc.)", Required: true},
 			{Name: "url", Description: "Target URL", Required: true},
@@ -163,19 +166,44 @@ func sendRequest(args map[string]string) (tools.Result, error) {
 	}
 	b.WriteString("\n")
 
+	// For large responses, save the full body to a temp file so the agent
+	// can grep/search it with terminal_execute instead of losing data.
+	const previewLimit = 10000
 	bodyStr := string(respBody)
-	if len(bodyStr) > 10000 {
-		bodyStr = bodyStr[:10000] + "\n\n... [TRUNCATED]"
+	var savedPath string
+	if len(bodyStr) > previewLimit {
+		// Generate a deterministic filename from URL + method for caching.
+		h := sha256.Sum256([]byte(method + " " + targetURL))
+		hash := hex.EncodeToString(h[:8])
+		savedPath = "/tmp/send_request_" + hash + ".txt"
+		if err := os.WriteFile(savedPath, respBody, 0644); err != nil {
+			// If file write fails, fall back to truncation.
+			savedPath = ""
+		}
 	}
-	b.WriteString(bodyStr)
+
+	if savedPath != "" {
+		b.WriteString(bodyStr[:previewLimit])
+		b.WriteString(fmt.Sprintf("\n\n... [RESPONSE TOO LARGE: %d bytes total]\n", len(bodyStr)))
+		b.WriteString(fmt.Sprintf("💾 Full response saved to: %s\n", savedPath))
+		b.WriteString("Use terminal_execute to search it: grep -oE 'pattern' " + savedPath + "\n")
+	} else {
+		b.WriteString(bodyStr)
+	}
+
+	meta := map[string]any{
+		"status_code": resp.StatusCode,
+		"url":         targetURL,
+		"via_proxy":   cfg.UseProxy,
+	}
+	if savedPath != "" {
+		meta["saved_to"] = savedPath
+		meta["full_size"] = len(respBody)
+	}
 
 	return tools.Result{
-		Output: b.String(),
-		Metadata: map[string]any{
-			"status_code": resp.StatusCode,
-			"url":         targetURL,
-			"via_proxy":   cfg.UseProxy,
-		},
+		Output:   b.String(),
+		Metadata: meta,
 	}, nil
 }
 

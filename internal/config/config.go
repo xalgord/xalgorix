@@ -17,13 +17,14 @@ import (
 // Config holds all Xalgorix configuration.
 type Config struct {
 	// LLM settings
-	LLM             string // XALGORIX_LLM — model name (e.g. "openai/gpt-5.4", "anthropic/claude-sonnet-4-20250514")
-	APIBase         string // XALGORIX_API_BASE — API endpoint
-	APIKey          string // XALGORIX_API_KEY — API key
-	LLMProfile      string // XALGORIX_LLM_PROFILE — active credential pointer "<provider>:<profileId>" (v4.4.22+)
-	ReasoningEffort string // XALGORIX_REASONING_EFFORT — "low", "medium", "high"
-	LLMMaxRetries   int    // XALGORIX_LLM_MAX_RETRIES
-	MemCompTimeout  int    // XALGORIX_MEMORY_COMPRESSOR_TIMEOUT
+	LLM             string   // XALGORIX_LLM — model name (e.g. "openai/gpt-5.4", "anthropic/claude-sonnet-4-20250514")
+	APIBase         string   // XALGORIX_API_BASE — API endpoint
+	APIKey          string   // XALGORIX_API_KEY — API key
+	LLMProfile      string   // XALGORIX_LLM_PROFILE — active credential pointer "<provider>:<profileId>" (v4.4.22+)
+	ReasoningEffort string   // XALGORIX_REASONING_EFFORT — "low", "medium", "high"
+	Temperature     *float64 // XALGORIX_TEMPERATURE — LLM temperature (0.0-2.0), default 0.2; pointer to distinguish unset from 0.0
+	LLMMaxRetries   int      // XALGORIX_LLM_MAX_RETRIES
+	MemCompTimeout  int      // XALGORIX_MEMORY_COMPRESSOR_TIMEOUT
 
 	// Runtime settings
 	RuntimeBackend string // XALGORIX_RUNTIME_BACKEND — always "native"
@@ -179,6 +180,7 @@ func load() *Config {
 		APIKey:          envOr("XALGORIX_API_KEY", ""),
 		LLMProfile:      envOr("XALGORIX_LLM_PROFILE", ""),
 		ReasoningEffort: envOr("XALGORIX_REASONING_EFFORT", "high"),
+		Temperature:     envOrFloatPtr("XALGORIX_TEMPERATURE", 0.2),
 		LLMMaxRetries:   envOrInt("XALGORIX_LLM_MAX_RETRIES", 5),
 		MemCompTimeout:  envOrInt("XALGORIX_MEMORY_COMPRESSOR_TIMEOUT", 30),
 
@@ -457,6 +459,20 @@ func envOrFloat(key string, fallback float64) float64 {
 		}
 	}
 	return fallback
+}
+
+// envOrFloatPtr reads a float from the env and returns a pointer.
+// This lets callers distinguish "not set" (returns &fallback) from
+// "explicitly set to 0.0" (returns &0.0). Used by Temperature so that
+// setting XALGORIX_TEMPERATURE=0 sends temperature=0.0 to the API
+// instead of omitting it.
+func envOrFloatPtr(key string, fallback float64) *float64 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseFloat(v, 64); err == nil {
+			return &n
+		}
+	}
+	return &fallback
 }
 
 func envOrBool(key string, fallback bool) bool {

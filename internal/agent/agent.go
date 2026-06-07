@@ -2507,6 +2507,66 @@ const defaultChecklist = `
 **The more you find here, the more attack surface you can test later!**
 **MUST COMPLETE THIS PHASE FULLY BEFORE MOVING ON - Do not skip!**
 
+## ⚡ MANDATORY FIRST 5 ITERATIONS — EXECUTE IN THIS EXACT ORDER
+These steps MUST be completed FIRST, IN ORDER, before any creative exploration.
+Skipping or reordering these causes inconsistent coverage across scans.
+
+**Iteration 1: Headers + Tech Fingerprint**
+` + "`" + `bash` + "`" + `
+curl -sI https://TARGET -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" 2>&1 | head -50
+# Note: Server, X-Powered-By, Set-Cookie, CSP, and any framework hints
+` + "`" + `
+
+**Iteration 2: Download main page + extract JS bundle URLs**
+` + "`" + `bash` + "`" + `
+curl -s https://TARGET -A "Mozilla/5.0" --max-time 15 -o /tmp/main_page.html
+# Extract all JS bundle URLs
+grep -oE 'src="[^"]*\.js[^"]*"' /tmp/main_page.html | sort -u
+# Extract all internal links
+grep -oE 'href="[^"]*"' /tmp/main_page.html | grep -v '^href="http' | sort -u | head -50
+` + "`" + `
+
+**Iteration 3: Download ALL JS bundles + deep grep for endpoints (CRITICAL)**
+` + "`" + `bash` + "`" + `
+# Download every JS file found. This is WHERE MOST FINDINGS COME FROM.
+# For each JS URL from iteration 2:
+curl -s "https://TARGET/path/to/bundle.js" -A "Mozilla/5.0" -o /tmp/bundle.js
+# Then grep for:
+grep -oE '"https?://[^"]+' /tmp/bundle.js | sort -u > /tmp/js_urls.txt       # Full URLs
+grep -oE '"/api/[^"]*"' /tmp/bundle.js | sort -u > /tmp/js_api_paths.txt      # API paths
+grep -oE '"/(v[0-9]+|access|admin|auth|connect)/[^"]*"' /tmp/bundle.js | sort -u  # Versioned paths
+grep -oE '[a-z]+\.(vanhack|TARGET_DOMAIN)\.[a-z]+' /tmp/bundle.js | sort -u   # Subdomains
+grep -oE '(apiUrl|baseURL|API_URL|apiBase)[^,]*' /tmp/bundle.js | head -10     # API base URLs
+grep -oE '(token|secret|key|password|api_key)\s*[:=]\s*"[^"]*"' /tmp/bundle.js # Leaked secrets
+` + "`" + `
+
+**Iteration 4: Test ALL discovered subdomains + API bases**
+` + "`" + `bash` + "`" + `
+# For each subdomain/API base found in JS:
+for host in SUBDOMAINS_FROM_STEP3; do
+  echo "--- $host ---"
+  curl -skI "https://$host" -A "Mozilla/5.0" --max-time 10 2>&1 | head -20
+done
+# Check common API paths on each live host:
+for path in /swagger.json /swagger/v1/swagger.json /swagger/v2/swagger.json /api-docs /graphql /.well-known/openid-configuration /actuator /health; do
+  curl -skI "https://TARGET$path" -A "Mozilla/5.0" --max-time 5 2>&1 | head -5
+done
+` + "`" + `
+
+**Iteration 5: Save complete endpoint inventory**
+` + "`" + `bash` + "`" + `
+# Use add_note to save ALL discovered:
+# - Live subdomains
+# - API endpoints from JS
+# - API bases (e.g., api.target.dev)
+# - Technology stack
+# - Any interesting headers or behaviors
+# This note is your attack surface map for the rest of the scan.
+` + "`" + `
+
+⚠️ DO NOT skip to vulnerability testing until ALL 5 steps are done.
+⚠️ Step 3 (JS bundle analysis) is where 80% of critical findings originate — be thorough.
+
 ## 1A: PASSIVE RECON (No direct contact with target - uses third-party sources)
 ` + "`" + `bash` + "`" + `
 # DNS & Subdomain Enumeration (PASSIVE - no direct target contact)
@@ -2897,7 +2957,13 @@ TIP: If the target requires email verification, ALWAYS use agentmail — it give
 
 ### Caido Proxy
 All HTTP requests via the send_request tool are automatically routed through the Caido proxy (port 8080) for traffic analysis.
-Use list_requests to see all captured HTTP traffic. Use send_request instead of curl when you want requests logged in Caido.
+Use list_requests to see all captured HTTP traffic.
+
+⚠️ **IMPORTANT: PREFER terminal_execute (curl) OVER send_request for ALL reconnaissance and analysis.**
+- send_request truncates responses at 10KB — JS bundles, API responses, and HTML pages are often 50-500KB.
+- Use curl via terminal_execute for: downloading pages, JS bundles, API probing, and any response you need to grep/analyze.
+- Use send_request ONLY when you specifically need requests logged in the Caido proxy (e.g., authenticated session testing).
+- NEVER use send_request to download JavaScript files — they WILL be truncated and you'll miss endpoints.
 
 ### Test Authenticated Endpoints
    - Test cookie theft via XSS after login

@@ -77,6 +77,7 @@ var skillAliases = map[string]string{
 	"nosqli":                           "exploiting-nosql-injection-vulnerabilities",
 	"xss":                              "testing-for-xss-vulnerabilities",
 	"cross-site-scripting":             "testing-for-xss-vulnerabilities",
+	"dom-xss":                          "testing-for-xss-vulnerabilities",
 	"xss-burp":                         "testing-for-xss-vulnerabilities-with-burpsuite",
 	"ssrf":                             "performing-ssrf-vulnerability-exploitation",
 	"blind-ssrf":                       "performing-blind-ssrf-exploitation",
@@ -91,6 +92,7 @@ var skillAliases = map[string]string{
 	"server-side-template-injection":   "exploiting-template-injection-vulnerabilities",
 	"cors":                             "testing-cors-misconfiguration",
 	"cors-misconfiguration":            "testing-cors-misconfiguration",
+	"cors-exploitation":                "testing-cors-misconfiguration",
 	"open-redirect":                    "testing-for-open-redirect-vulnerabilities",
 	"clickjacking":                     "performing-clickjacking-attack-test",
 	"deserialization":                  "exploiting-insecure-deserialization",
@@ -100,21 +102,26 @@ var skillAliases = map[string]string{
 	"prototype-pollution":     "exploiting-prototype-pollution-in-javascript",
 	"type-juggling":           "exploiting-type-juggling-vulnerabilities",
 	"websocket":               "exploiting-websocket-vulnerabilities",
+	"websocket-hijacking":     "exploiting-websocket-vulnerabilities",
 	"request-smuggling":       "exploiting-http-request-smuggling",
 	"http-request-smuggling":  "exploiting-http-request-smuggling",
 	"broken-access-control":   "testing-for-broken-access-control",
 	"bac":                     "testing-for-broken-access-control",
 	"business-logic":          "testing-for-business-logic-vulnerabilities",
 	"host-header-injection":   "testing-for-host-header-injection",
+	"host-header-attacks":     "testing-for-host-header-injection",
 	"hpp":                     "performing-http-parameter-pollution-attack",
 	"parameter-pollution":     "performing-http-parameter-pollution-attack",
 	"graphql":                 "performing-graphql-security-assessment",
+	"graphql-advanced":        "performing-graphql-security-assessment",
 	"web-cache-poisoning":     "performing-web-cache-poisoning-attack",
+	"cache-poisoning":         "performing-web-cache-poisoning-attack",
 	"web-cache-deception":     "performing-web-cache-deception-attack",
 	"csp-bypass":              "performing-content-security-policy-bypass",
 	"waf-bypass":              "performing-web-application-firewall-bypass",
 	"second-order-sqli":       "performing-second-order-sql-injection",
 	"sensitive-data-exposure": "testing-for-sensitive-data-exposure",
+	"information-disclosure":  "testing-for-sensitive-data-exposure",
 	"xml-injection":           "testing-for-xml-injection-vulnerabilities",
 	"email-header-injection":  "testing-for-email-header-injection",
 	"broken-link-hijacking":   "exploiting-broken-link-hijacking",
@@ -130,6 +137,7 @@ var skillAliases = map[string]string{
 	"2fa-bypass":           "bypassing-two-factor-and-otp",
 	"mfa-bypass":           "bypassing-two-factor-and-otp",
 	"otp-bypass":           "bypassing-two-factor-and-otp",
+	"2fa-mfa-bypass":       "bypassing-two-factor-and-otp",
 	"password-reset":       "testing-password-reset-flaws",
 	"forgot-password":      "testing-password-reset-flaws",
 	"reset-password":       "testing-password-reset-flaws",
@@ -162,6 +170,7 @@ var skillAliases = map[string]string{
 	"checkout":                "testing-ecommerce-and-payment-logic",
 	"shopping-cart":           "testing-ecommerce-and-payment-logic",
 	"race-condition":          "exploiting-race-condition-vulnerabilities",
+	"race-conditions":         "exploiting-race-condition-vulnerabilities",
 	"mass-assignment":         "exploiting-mass-assignment-in-rest-apis",
 	"api-injection":           "exploiting-api-injection-vulnerabilities",
 
@@ -170,15 +179,16 @@ var skillAliases = map[string]string{
 	// reference. Without these aliases the agent's natural lookups
 	// (read_skill name=lfi / path-traversal) silently failed, which is a
 	// frequent cause of missed file-read findings (e.g. //etc/passwd).
-	"lfi":                   "performing-directory-traversal-testing",
-	"local-file-inclusion":  "performing-directory-traversal-testing",
-	"rfi":                   "performing-directory-traversal-testing",
-	"remote-file-inclusion": "performing-directory-traversal-testing",
-	"path-traversal":        "performing-directory-traversal-testing",
-	"directory-traversal":   "performing-directory-traversal-testing",
-	"file-read":             "performing-directory-traversal-testing",
-	"arbitrary-file-read":   "performing-directory-traversal-testing",
-	"etc-passwd":            "performing-directory-traversal-testing",
+	"lfi":                     "performing-directory-traversal-testing",
+	"local-file-inclusion":    "performing-directory-traversal-testing",
+	"rfi":                     "performing-directory-traversal-testing",
+	"remote-file-inclusion":   "performing-directory-traversal-testing",
+	"path-traversal":          "performing-directory-traversal-testing",
+	"path-traversal-lfi-rfi":  "performing-directory-traversal-testing",
+	"directory-traversal":     "performing-directory-traversal-testing",
+	"file-read":               "performing-directory-traversal-testing",
+	"arbitrary-file-read":     "performing-directory-traversal-testing",
+	"etc-passwd":              "performing-directory-traversal-testing",
 
 	// ── OS command injection / RCE ───────────────────────────────────
 	// "command-injection" previously resolved to a Modbus/ICS detection
@@ -195,9 +205,11 @@ var skillAliases = map[string]string{
 	// ── Authentication & authorization ───────────────────────────────
 	"jwt":               "exploiting-jwt-algorithm-confusion-attack",
 	"jwt-attack":        "exploiting-jwt-algorithm-confusion-attack",
+	"authentication-jwt": "exploiting-jwt-algorithm-confusion-attack",
 	"jwt-signing":       "implementing-jwt-signing-and-verification",
 	"oauth":             "exploiting-oauth-misconfiguration",
 	"oauth-misconfig":   "exploiting-oauth-misconfiguration",
+	"oauth2-attacks":    "exploiting-oauth-misconfiguration",
 	"oauth-token-theft": "detecting-oauth-token-theft",
 	"forced-browsing":   "bypassing-authentication-with-forced-browsing",
 	"brute-force":       "detecting-rdp-brute-force-attacks",
@@ -271,10 +283,11 @@ var skillAliases = map[string]string{
 	"burp":             "intercepting-mobile-traffic-with-burpsuite",
 
 	// ── File upload testing ──────────────────────────────────────────
-	"file-upload":     "exploiting-file-upload-vulnerabilities",
-	"upload":          "exploiting-file-upload-vulnerabilities",
-	"upload-bypass":   "exploiting-file-upload-vulnerabilities",
-	"webshell-upload": "exploiting-file-upload-vulnerabilities",
+	"file-upload":         "exploiting-file-upload-vulnerabilities",
+	"upload":              "exploiting-file-upload-vulnerabilities",
+	"upload-bypass":       "exploiting-file-upload-vulnerabilities",
+	"webshell-upload":     "exploiting-file-upload-vulnerabilities",
+	"insecure-file-uploads": "exploiting-file-upload-vulnerabilities",
 
 	// ── CMS-specific testing ────────────────────────────────────────
 	"cms":         "performing-cms-specific-security-testing",
@@ -290,11 +303,12 @@ var skillAliases = map[string]string{
 	"dangling-cname":     "exploiting-subdomain-takeover-vulnerabilities",
 
 	// ── Zero-day & novel vulnerability discovery ────────────────────
-	"zero-day":        "performing-zero-day-vulnerability-discovery",
-	"0day":            "performing-zero-day-vulnerability-discovery",
-	"novel-vuln":      "performing-zero-day-vulnerability-discovery",
-	"attack-chaining": "performing-zero-day-vulnerability-discovery",
-	"logic-flaw":      "performing-zero-day-vulnerability-discovery",
+	"zero-day":         "performing-zero-day-vulnerability-discovery",
+	"0day":             "performing-zero-day-vulnerability-discovery",
+	"novel-vuln":       "performing-zero-day-vulnerability-discovery",
+	"attack-chaining":  "performing-zero-day-vulnerability-discovery",
+	"logic-flaw":       "performing-zero-day-vulnerability-discovery",
+	"zero-day-hunting": "performing-zero-day-vulnerability-discovery",
 
 	// ── Exploit verification ────────────────────────────────────────
 	"exploit-verification": "performing-exploit-verification",
@@ -467,6 +481,7 @@ var skillAliases = map[string]string{
 	"prompt-injection":      "testing-llm-prompt-injection-and-jailbreaks",
 	"jailbreak":             "testing-llm-prompt-injection-and-jailbreaks",
 	"llm-injection":         "testing-llm-prompt-injection-and-jailbreaks",
+	"web-llm-attacks":       "testing-llm-prompt-injection-and-jailbreaks",
 	"mcp":                   "testing-mcp-server-security",
 	"mcp-security":          "testing-mcp-server-security",
 	"tool-poisoning":        "testing-mcp-server-security",
@@ -1151,8 +1166,11 @@ var skillAliases = map[string]string{
 
 // resolveAlias returns the canonical skill name for a shorthand alias.
 // If no alias matches, the original name is returned unchanged.
+// Underscores are normalized to dashes before lookup so that old-style
+// names (e.g. "nosql_injection") resolve via the dash-keyed alias map.
 func resolveAlias(name string) string {
 	key := strings.ToLower(name)
+	key = strings.ReplaceAll(key, "_", "-")
 	if canonical, ok := skillAliases[key]; ok {
 		return canonical
 	}

@@ -143,7 +143,7 @@ type chatRequest struct {
 	Messages      []Message      `json:"messages"`
 	Stream        bool           `json:"stream"`
 	StreamOptions *streamOptions `json:"stream_options,omitempty"`
-	Temperature   float64        `json:"temperature,omitempty"`
+	Temperature   *float64       `json:"temperature,omitempty"`
 	MaxTokens     int            `json:"max_tokens,omitempty"`
 }
 
@@ -664,6 +664,7 @@ func (c *Client) ChatStream(messages []Message) <-chan StreamChunk {
 				Messages:      messages,
 				Stream:        true,
 				StreamOptions: &streamOptions{IncludeUsage: true},
+				Temperature:   c.cfg.Temperature,
 			}
 			body, _ = json.Marshal(reqBody)
 		}
@@ -891,7 +892,7 @@ func (c *Client) doChat(messages []Message) (out string, err error) {
 			return "", fmt.Errorf("failed to marshal Anthropic request: %w", err)
 		}
 	} else {
-		reqBody := chatRequest{Model: model, Messages: messages, Stream: false}
+		reqBody := chatRequest{Model: model, Messages: messages, Stream: false, Temperature: c.cfg.Temperature}
 		body, err = json.Marshal(reqBody)
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal request: %w", err)
