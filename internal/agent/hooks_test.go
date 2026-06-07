@@ -144,7 +144,7 @@ func TestWorkTracker_AccessControlEndpoints(t *testing.T) {
 func TestWorkTracker_EndpointInventory(t *testing.T) {
 	state := NewScanState()
 
-	// Non-inventory note
+	// Non-inventory note — no keywords at all
 	hookWorkTracker(state, map[string]string{
 		"tool_name": "add_note",
 		"content":   "Target uses CloudFlare WAF",
@@ -153,13 +153,32 @@ func TestWorkTracker_EndpointInventory(t *testing.T) {
 		t.Error("Should not be saved for non-inventory note")
 	}
 
-	// Inventory note
+	// False positive — has "api" in text but no URL patterns (audit fix #2)
 	hookWorkTracker(state, map[string]string{
 		"tool_name": "add_note",
-		"content":   "## Discovered Endpoints\n- /api/users\n- /api/login",
+		"content":   "Discovered that the WAF blocks API calls",
+	})
+	if state.EndpointInventorySaved {
+		t.Error("Should not be saved for note with just keyword 'discovered' without URL patterns")
+	}
+
+	// Real inventory note — keyword + multiple URL-like patterns
+	hookWorkTracker(state, map[string]string{
+		"tool_name": "add_note",
+		"content":   "## Discovered Endpoints\n- /api/users\n- /api/login\n- /admin/dashboard",
 	})
 	if !state.EndpointInventorySaved {
-		t.Error("Should be saved for inventory note")
+		t.Error("Should be saved for inventory note with keyword + URL patterns")
+	}
+
+	// Reset and test multi-line fallback
+	state2 := NewScanState()
+	hookWorkTracker(state2, map[string]string{
+		"tool_name": "add_note",
+		"content":   "Discovered endpoints:\n/page1\n/page2\n/page3\n/page4\n/page5\n/page6",
+	})
+	if !state2.EndpointInventorySaved {
+		t.Error("Should be saved for note with keyword + 5+ lines")
 	}
 }
 
@@ -483,5 +502,29 @@ func TestFinishGatekeeper_LargeSurfaceNoEarlyFinish(t *testing.T) {
 	result := hookFinishGatekeeper(state, nil)
 	if !result.Block {
 		t.Error("Large surface (20 endpoints) should not get early finish at iter 35")
+	}
+}
+
+func TestFinishGatekeeper_DirBustingOnlyGamingBlocked(t *testing.T) {
+	// Audit fix: agent inflates dirbusting hosts to game depth ratio
+	// 3 endpoints, 0 injection, 0 access control, 4 dirbusting hosts
+	// depth = (0 + 0 + 4) / 3 = 1.33 — looks okay but only 1 category covered
+	state := NewScanState()
+	state.Iteration = 30
+	state.TerminalCalls = 12
+	state.ReconDone = true
+	state.EndpointInventorySaved = true
+	state.EndpointsTested["a"] = true
+	state.EndpointsTested["b"] = true
+	state.EndpointsTested["c"] = true
+	state.DirBustingHosts["target.com"] = true
+	state.DirBustingHosts["sub1.target.com"] = true
+	state.DirBustingHosts["sub2.target.com"] = true
+	state.DirBustingHosts["sub3.target.com"] = true
+	// categoriesCovered = 1 (only dirbusting) → early finish blocked
+
+	result := hookFinishGatekeeper(state, nil)
+	if !result.Block {
+		t.Error("Should block early finish when only 1 of 3 vuln categories covered (dirbusting-only gaming)")
 	}
 }

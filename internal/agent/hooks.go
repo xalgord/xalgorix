@@ -285,9 +285,21 @@ func hookWorkTracker(state *ScanState, args map[string]string) HookResult {
 	// Track endpoint inventory saved (mandatory recon checklist step 5)
 	if toolName == "add_note" {
 		noteContent := strings.ToLower(args["content"])
-		if strings.Contains(noteContent, "endpoint") || strings.Contains(noteContent, "api") ||
-			strings.Contains(noteContent, "subdomain") || strings.Contains(noteContent, "inventory") ||
-			strings.Contains(noteContent, "discovered") {
+		hasKeyword := strings.Contains(noteContent, "endpoint") || strings.Contains(noteContent, "inventory") ||
+			strings.Contains(noteContent, "discovered") || strings.Contains(noteContent, "subdomain")
+		// Require URL-like patterns (at least 3) to prevent false positives
+		// from notes like "the WAF blocks our API calls"
+		urlPatterns := 0
+		for _, marker := range []string{"/api/", "/api", "http://", "https://", "/v1/", "/v2/", "/admin", "/login", "/user", "/auth"} {
+			if strings.Contains(noteContent, marker) {
+				urlPatterns++
+			}
+		}
+		if hasKeyword && urlPatterns >= 2 {
+			state.EndpointInventorySaved = true
+		}
+		// Also allow if note has many lines (likely a real inventory list)
+		if hasKeyword && strings.Count(noteContent, "\n") >= 5 {
 			state.EndpointInventorySaved = true
 		}
 	}
@@ -590,7 +602,20 @@ func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 	// ── Adaptive surface area detection ──
 	// Static/small targets shouldn't burn 50+ iterations doing nothing.
 	// Allow early finish if the surface area is small AND test depth is high.
-	if state.ReconDone && state.EndpointInventorySaved && dirBustingCount >= 1 {
+	// Require at least 2 of 3 vuln categories to have non-zero coverage
+	// to prevent gaming via dirbusting inflation (audit concern #4).
+	categoriesCovered := 0
+	if injectionCount > 0 {
+		categoriesCovered++
+	}
+	if accessControlCount > 0 {
+		categoriesCovered++
+	}
+	if dirBustingCount > 0 {
+		categoriesCovered++
+	}
+
+	if state.ReconDone && state.EndpointInventorySaved && dirBustingCount >= 1 && categoriesCovered >= 2 {
 		// Small surface (< 5 endpoints): allow finish at 25+ iterations with deep testing
 		if totalEndpoints < 5 && iter >= 25 && depth >= 2.0 {
 			// Verified small target with thorough testing — allow finish
