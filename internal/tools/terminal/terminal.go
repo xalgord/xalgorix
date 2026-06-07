@@ -1373,9 +1373,25 @@ func runShellInternal(contextID string, command string) (string, int) {
 	cmd.Dir = workDir
 	cmd.Env = commandEnv(homeDir, goPath, workDir, rateRuntime)
 
-	// Create new process group for this command
+	// Create new process group for this command so we can kill the
+	// entire tree (bash + children like curl) on timeout.
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
+	}
+
+	// Kill the entire process group on context cancellation/timeout.
+	// exec.CommandContext only sends SIGKILL to the parent bash process,
+	// but child processes (curl, for loops, etc.) in the new process group
+	// survive as orphans, keeping stdout/stderr pipes open. This causes
+	// wg.Wait() to block until the watchdog's 30-minute kill.
+	// Fix: use cmd.Cancel to send SIGKILL to the negative PGID, which
+	// kills the entire tree and closes all pipe write ends.
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			// Kill entire process group: negative PID = process group
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		return os.ErrProcessDone
 	}
 
 	// Use pipes for real-time output streaming
@@ -1451,10 +1467,16 @@ func runShellInternal(contextID string, command string) (string, int) {
 		}
 	}()
 
-	// Wait for output readers to finish
+	// Wait for output readers to finish, then the process.
+	// IMPORTANT: wg.Wait() MUST run before cmd.Wait(). The Go docs say
+	// "it is incorrect to call Wait before all reads from the pipe have
+	// completed" when using StdoutPipe — calling cmd.Wait() first would
+	// close the pipes and lose buffered data.
+	//
+	// On timeout: cmd.Cancel kills the entire process group (SIGKILL to
+	// -PGID), which closes all pipe write ends, causing the goroutines
+	// to get EOF → wg.Wait() returns → cmd.Wait() runs.
 	wg.Wait()
-
-	// Wait for command to finish
 	err = cmd.Wait()
 	// Note: process unregistration is handled by defer UntrackProcess(cmd) above
 
