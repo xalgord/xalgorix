@@ -152,6 +152,63 @@ func TestWorkTracker_AccessControlEndpoints(t *testing.T) {
 	}
 }
 
+func TestWorkTracker_VulnClassTracking(t *testing.T) {
+	state := NewScanState()
+
+	// SSTI
+	hookWorkTracker(state, map[string]string{
+		"tool_name": "terminal_execute",
+		"command":   `curl "https://target.com/search?q={{7*7}}"`,
+	})
+	if !state.VulnClassesTested["ssti"] {
+		t.Error("SSTI should be detected from {{7*7}}")
+	}
+
+	// CRLF
+	hookWorkTracker(state, map[string]string{
+		"tool_name": "terminal_execute",
+		"command":   `curl "https://target.com/redirect?url=%0d%0aInjected-Header:true"`,
+	})
+	if !state.VulnClassesTested["crlf"] {
+		t.Error("CRLF should be detected from CRLF payload")
+	}
+
+	// Command injection
+	hookWorkTracker(state, map[string]string{
+		"tool_name": "terminal_execute",
+		"command":   `curl "https://target.com/ping?host=127.0.0.1; id"`,
+	})
+	if !state.VulnClassesTested["cmdi"] {
+		t.Error("CmdI should be detected from ; id")
+	}
+
+	// Path traversal
+	hookWorkTracker(state, map[string]string{
+		"tool_name": "terminal_execute",
+		"command":   `curl "https://target.com/file?path=../../../etc/passwd"`,
+	})
+	if !state.VulnClassesTested["path_traversal"] {
+		t.Error("Path traversal should be detected from ../../../etc/passwd")
+	}
+
+	// SSRF
+	hookWorkTracker(state, map[string]string{
+		"tool_name": "terminal_execute",
+		"command":   `curl "https://target.com/proxy?url=http://169.254.169.254/latest"`,
+	})
+	if !state.VulnClassesTested["ssrf"] {
+		t.Error("SSRF should be detected from 169.254")
+	}
+
+	// Verify SQLi and XSS not set (we didn't send those)
+	if state.VulnClassesTested["sqli"] {
+		t.Error("SQLi should not be detected without SQL payloads")
+	}
+	if state.VulnClassesTested["xss"] {
+		t.Error("XSS should not be detected without XSS payloads")
+	}
+}
+
 func TestWorkTracker_EndpointInventory(t *testing.T) {
 	state := NewScanState()
 

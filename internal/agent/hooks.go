@@ -7,6 +7,7 @@ package agent
 import (
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -54,6 +55,10 @@ type ScanState struct {
 	EndpointsTested        map[string]bool // all unique URL paths tested with any tool
 	EndpointInventorySaved bool            // add_note called (recon checklist step 5)
 
+	// Granular vuln class coverage — tracks which attack types have been attempted.
+	// Used to nudge the agent to test missing classes before finishing.
+	VulnClassesTested map[string]bool // e.g. "ssti", "crlf", "cmdi", "xxe"
+
 	// Backward-compat booleans — derived from map lengths in hookWorkTracker
 	InjectionTested     bool
 	DirBustingDone      bool
@@ -95,6 +100,7 @@ func NewScanState() *ScanState {
 		AccessControlEndpoints: make(map[string]bool),
 		DirBustingHosts:        make(map[string]bool),
 		EndpointsTested:        make(map[string]bool),
+		VulnClassesTested:      make(map[string]bool),
 	}
 }
 
@@ -258,6 +264,46 @@ func hookWorkTracker(state *ScanState, args map[string]string) HookResult {
 				state.InjectionEndpoints[endpoint] = true
 			}
 			state.InjectionTested = true
+		}
+
+		// ── Granular vuln class tracking ──
+		// Detect individual vuln classes beyond the broad "injection" bucket.
+		// These feed the coverage nudge in hookFinishGatekeeper.
+		if strings.Contains(cmd, "sqlmap") || strings.Contains(cmd, "' or ") ||
+			strings.Contains(cmd, "' and ") || strings.Contains(cmd, "union select") ||
+			strings.Contains(cmd, "sleep(") {
+			state.VulnClassesTested["sqli"] = true
+		}
+		if strings.Contains(cmd, "<script") || strings.Contains(cmd, "alert(") ||
+			strings.Contains(cmd, "onerror") || strings.Contains(cmd, "<img") ||
+			strings.Contains(cmd, "dalfox") {
+			state.VulnClassesTested["xss"] = true
+		}
+		if strings.Contains(cmd, "{{7*7}}") || strings.Contains(cmd, "${7*7}") ||
+			strings.Contains(cmd, "<%=7*7%>") || strings.Contains(cmd, "#{7*7}") ||
+			strings.Contains(cmd, "ssti") {
+			state.VulnClassesTested["ssti"] = true
+		}
+		if strings.Contains(cmd, "%0d%0a") || strings.Contains(cmd, "\\r\\n") ||
+			strings.Contains(cmd, "crlf") {
+			state.VulnClassesTested["crlf"] = true
+		}
+		if strings.Contains(cmd, "; id") || strings.Contains(cmd, "| id") ||
+			strings.Contains(cmd, "$(id)") || strings.Contains(cmd, "`id`") ||
+			strings.Contains(cmd, "; cat ") || strings.Contains(cmd, "| cat ") {
+			state.VulnClassesTested["cmdi"] = true
+		}
+		if strings.Contains(cmd, "../") || strings.Contains(cmd, "etc/passwd") ||
+			strings.Contains(cmd, "..%2f") {
+			state.VulnClassesTested["path_traversal"] = true
+		}
+		if strings.Contains(cmd, "169.254") || strings.Contains(cmd, "metadata") ||
+			strings.Contains(cmd, "ssrf") || strings.Contains(cmd, "127.0.0.1") {
+			state.VulnClassesTested["ssrf"] = true
+		}
+		if strings.Contains(cmd, "ffuf") || strings.Contains(cmd, "gobuster") ||
+			strings.Contains(cmd, "dirsearch") || strings.Contains(cmd, "feroxbuster") {
+			state.VulnClassesTested["dirbusting"] = true
 		}
 
 		// Detect access control testing — track unique endpoints
@@ -785,6 +831,38 @@ Continue testing. Call finish again after iteration 50.`, iter, coverageNote, sc
 				Block:       true,
 				BlockReason: nudgeMsg,
 			}
+		}
+	}
+
+	// ── Vuln class coverage nudge ──
+	// After meeting the iteration floor, check which vuln classes were never tested.
+	// This is a soft nudge (not a hard block) — fires once per scan to tell the agent
+	// what it missed, then allows subsequent finish attempts through.
+	mandatoryClasses := map[string]string{
+		"sqli":           "SQLi: try ' OR 1=1--, sqlmap -u, UNION SELECT on input params",
+		"xss":            "XSS: try <script>alert(1)</script>, \"><img src=x onerror=alert(1)> in inputs",
+		"ssti":           "SSTI: try {{7*7}}, ${7*7}, <%=7*7%> in template-rendered inputs",
+		"cmdi":           "Command Injection: try ;id, |id, $(id) in parameters processed server-side",
+		"path_traversal": "Path Traversal: try ../../../etc/passwd, ..%2f..%2f in file/path params",
+		"ssrf":           "SSRF: try http://169.254.169.254, http://127.0.0.1 in URL params",
+		"crlf":           "CRLF: try %0d%0aInjected-Header:true in URL params and headers",
+	}
+
+	var missingClasses []string
+	for cls, hint := range mandatoryClasses {
+		if !state.VulnClassesTested[cls] {
+			missingClasses = append(missingClasses, hint)
+		}
+	}
+
+	// Only nudge once (first finish attempt after iter 50) and only if ≥3 classes missing
+	if len(missingClasses) >= 3 && state.FinishAttempts <= 1 {
+		sort.Strings(missingClasses) // deterministic order
+		return HookResult{
+			Block: true,
+			BlockReason: fmt.Sprintf("⚠️ Coverage gap: you haven't tested %d/7 mandatory vulnerability classes:\n\n%s\n\n"+
+				"Run at least ONE test for each missing class on the most promising endpoints, then call finish again.",
+				len(missingClasses), strings.Join(missingClasses, "\n")),
 		}
 	}
 
