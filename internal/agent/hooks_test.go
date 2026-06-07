@@ -164,32 +164,42 @@ func TestWorkTracker_EndpointInventory(t *testing.T) {
 		t.Error("Should not be saved for non-inventory note")
 	}
 
-	// False positive — has "api" in text but no URL patterns (audit fix #2)
+	// False positive — has keyword but only 1 path-like token (too few)
 	hookWorkTracker(state, map[string]string{
 		"tool_name": "add_note",
-		"content":   "Discovered that the WAF blocks API calls",
+		"content":   "Discovered that the WAF blocks /api calls",
 	})
 	if state.EndpointInventorySaved {
-		t.Error("Should not be saved for note with just keyword 'discovered' without URL patterns")
+		t.Error("Should not be saved for note with just 1 path token")
 	}
 
-	// Real inventory note — keyword + multiple URL-like patterns
+	// Real inventory note — keyword + 3 path-like tokens
 	hookWorkTracker(state, map[string]string{
 		"tool_name": "add_note",
 		"content":   "## Discovered Endpoints\n- /api/users\n- /api/login\n- /admin/dashboard",
 	})
 	if !state.EndpointInventorySaved {
-		t.Error("Should be saved for inventory note with keyword + URL patterns")
+		t.Error("Should be saved for inventory note with keyword + 3 path tokens")
 	}
 
-	// Reset and test multi-line fallback
+	// Reset and test multi-line fallback (3+ lines)
 	state2 := NewScanState()
 	hookWorkTracker(state2, map[string]string{
 		"tool_name": "add_note",
-		"content":   "Discovered endpoints:\n/page1\n/page2\n/page3\n/page4\n/page5\n/page6",
+		"content":   "Discovered endpoints:\n/page1\n/page2\n/page3\n/page4",
 	})
 	if !state2.EndpointInventorySaved {
-		t.Error("Should be saved for note with keyword + 5+ lines")
+		t.Error("Should be saved for note with keyword + 3+ lines")
+	}
+
+	// Regression test: vanhack-style note the old check rejected
+	state3 := NewScanState()
+	hookWorkTracker(state3, map[string]string{
+		"tool_name": "add_note",
+		"content":   "API Endpoints discovered:\n- /api/candidates\n- /api/jobs\n- /api/events\n- /api/candidate-stories\n- /v1/auth/refreshtoken",
+	})
+	if !state3.EndpointInventorySaved {
+		t.Error("Should be saved for vanhack-style endpoint inventory")
 	}
 }
 

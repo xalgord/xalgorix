@@ -291,20 +291,25 @@ func hookWorkTracker(state *ScanState, args map[string]string) HookResult {
 	if toolName == "add_note" {
 		noteContent := strings.ToLower(args["content"])
 		hasKeyword := strings.Contains(noteContent, "endpoint") || strings.Contains(noteContent, "inventory") ||
-			strings.Contains(noteContent, "discovered") || strings.Contains(noteContent, "subdomain")
-		// Require URL-like patterns (at least 3) to prevent false positives
-		// from notes like "the WAF blocks our API calls"
-		urlPatterns := 0
-		for _, marker := range []string{"/api/", "/api", "http://", "https://", "/v1/", "/v2/", "/admin", "/login", "/user", "/auth"} {
-			if strings.Contains(noteContent, marker) {
-				urlPatterns++
+			strings.Contains(noteContent, "discovered") || strings.Contains(noteContent, "subdomain") ||
+			strings.Contains(noteContent, "api") || strings.Contains(noteContent, "routes")
+
+		// Count actual path-like tokens in the note (e.g., /api/users, /v1/auth)
+		// This is more robust than checking for specific markers.
+		pathCount := 0
+		for _, token := range strings.Fields(noteContent) {
+			token = strings.Trim(token, "-•*,;:\"'()[]{}") // strip bullet markers
+			if len(token) > 1 && (strings.HasPrefix(token, "/") || strings.HasPrefix(token, "http")) {
+				pathCount++
 			}
 		}
-		if hasKeyword && urlPatterns >= 2 {
+
+		// Accept if: keyword + 3 path-like tokens (e.g., "/api/users, /api/login, /admin")
+		if hasKeyword && pathCount >= 3 {
 			state.EndpointInventorySaved = true
 		}
-		// Also allow if note has many lines (likely a real inventory list)
-		if hasKeyword && strings.Count(noteContent, "\n") >= 5 {
+		// Also accept if note has 3+ lines with a keyword (likely a real list)
+		if hasKeyword && strings.Count(noteContent, "\n") >= 3 {
 			state.EndpointInventorySaved = true
 		}
 	}
@@ -678,7 +683,7 @@ func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 	if !state.EndpointInventorySaved && iter < 50 {
 		return HookResult{
 			Block:       true,
-			BlockReason: "You haven't saved your endpoint inventory with add_note yet. Complete the mandatory recon checklist: save ALL discovered endpoints, subdomains, and API bases to notes before finishing.",
+			BlockReason: "You haven't saved your endpoint inventory with add_note yet. Save a note titled 'Endpoint Inventory' listing ALL discovered paths (at least 3), for example:\n\nDiscovered Endpoints:\n- /api/users\n- /api/login\n- /admin/dashboard\n- /v1/auth/token\n\nThe note must contain: a keyword (endpoint/inventory/discovered/api) AND at least 3 URL paths starting with / or http.",
 		}
 	}
 
