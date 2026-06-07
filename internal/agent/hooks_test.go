@@ -158,16 +158,18 @@ func TestWorkTracker_EndpointInventory(t *testing.T) {
 	// Non-inventory note — no keywords at all
 	hookWorkTracker(state, map[string]string{
 		"tool_name": "add_note",
-		"content":   "Target uses CloudFlare WAF",
+		"key":       "waf_info",
+		"value":     "Target uses CloudFlare WAF",
 	})
 	if state.EndpointInventorySaved {
 		t.Error("Should not be saved for non-inventory note")
 	}
 
-	// False positive — has keyword but only 1 path-like token (too few)
+	// False positive — keyword in key but only 1 path-like token (too few)
 	hookWorkTracker(state, map[string]string{
 		"tool_name": "add_note",
-		"content":   "Discovered that the WAF blocks /api calls",
+		"key":       "discovery_notes",
+		"value":     "Discovered that the WAF blocks /api calls",
 	})
 	if state.EndpointInventorySaved {
 		t.Error("Should not be saved for note with just 1 path token")
@@ -176,7 +178,8 @@ func TestWorkTracker_EndpointInventory(t *testing.T) {
 	// Real inventory note — keyword + 3 path-like tokens
 	hookWorkTracker(state, map[string]string{
 		"tool_name": "add_note",
-		"content":   "## Discovered Endpoints\n- /api/users\n- /api/login\n- /admin/dashboard",
+		"key":       "endpoint_inventory",
+		"value":     "## Discovered Endpoints\n- /api/users\n- /api/login\n- /admin/dashboard",
 	})
 	if !state.EndpointInventorySaved {
 		t.Error("Should be saved for inventory note with keyword + 3 path tokens")
@@ -186,7 +189,8 @@ func TestWorkTracker_EndpointInventory(t *testing.T) {
 	state2 := NewScanState()
 	hookWorkTracker(state2, map[string]string{
 		"tool_name": "add_note",
-		"content":   "Discovered endpoints:\n/page1\n/page2\n/page3\n/page4",
+		"key":       "endpoints",
+		"value":     "Discovered endpoints:\n/page1\n/page2\n/page3\n/page4",
 	})
 	if !state2.EndpointInventorySaved {
 		t.Error("Should be saved for note with keyword + 3+ lines")
@@ -196,7 +200,8 @@ func TestWorkTracker_EndpointInventory(t *testing.T) {
 	state3 := NewScanState()
 	hookWorkTracker(state3, map[string]string{
 		"tool_name": "add_note",
-		"content":   "API Endpoints discovered:\n- /api/candidates\n- /api/jobs\n- /api/events\n- /api/candidate-stories\n- /v1/auth/refreshtoken",
+		"key":       "endpoint_inventory",
+		"value":     "Discovered Endpoints:\n- /api/candidates (VULNERABLE - unauthenticated access)\n- /api/jobs (public job listings)\n- /api/testimonials (public)\n- /api/candidate-stories\n- /v1/auth/refreshtoken",
 	})
 	if !state3.EndpointInventorySaved {
 		t.Error("Should be saved for vanhack-style endpoint inventory")

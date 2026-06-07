@@ -289,7 +289,11 @@ func hookWorkTracker(state *ScanState, args map[string]string) HookResult {
 
 	// Track endpoint inventory saved (mandatory recon checklist step 5)
 	if toolName == "add_note" {
-		noteContent := strings.ToLower(args["content"])
+		// add_note uses "key" and "value" args, NOT "content"
+		noteKey := strings.ToLower(args["key"])
+		noteValue := strings.ToLower(args["value"])
+		noteContent := noteKey + " " + noteValue // combine both for matching
+
 		hasKeyword := strings.Contains(noteContent, "endpoint") || strings.Contains(noteContent, "inventory") ||
 			strings.Contains(noteContent, "discovered") || strings.Contains(noteContent, "subdomain") ||
 			strings.Contains(noteContent, "api") || strings.Contains(noteContent, "routes")
@@ -309,7 +313,7 @@ func hookWorkTracker(state *ScanState, args map[string]string) HookResult {
 			state.EndpointInventorySaved = true
 		}
 		// Also accept if note has 3+ lines with a keyword (likely a real list)
-		if hasKeyword && strings.Count(noteContent, "\n") >= 3 {
+		if hasKeyword && strings.Count(noteValue, "\n") >= 3 {
 			state.EndpointInventorySaved = true
 		}
 	}
