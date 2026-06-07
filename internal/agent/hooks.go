@@ -329,6 +329,41 @@ func hookWorkTracker(state *ScanState, args map[string]string) HookResult {
 		}
 	}
 
+	// ── python_action vuln class tracking ──
+	// The agent sometimes uses python requests.get() instead of curl.
+	// Track vuln payloads in python code so coverage tracking still works.
+	if toolName == "python_action" {
+		code := strings.ToLower(args["code"])
+		if code == "" {
+			code = strings.ToLower(args["script"])
+		}
+		if strings.Contains(code, "sqlmap") || strings.Contains(code, "' or ") ||
+			strings.Contains(code, "union select") || strings.Contains(code, "sleep(") {
+			state.VulnClassesTested["sqli"] = true
+		}
+		if strings.Contains(code, "<script") || strings.Contains(code, "alert(") ||
+			strings.Contains(code, "onerror") {
+			state.VulnClassesTested["xss"] = true
+		}
+		if strings.Contains(code, "{{7*7}}") || strings.Contains(code, "${7*7}") ||
+			strings.Contains(code, "ssti") {
+			state.VulnClassesTested["ssti"] = true
+		}
+		if strings.Contains(code, "%0d%0a") || strings.Contains(code, "crlf") {
+			state.VulnClassesTested["crlf"] = true
+		}
+		if strings.Contains(code, "; id") || strings.Contains(code, "| id") ||
+			strings.Contains(code, "$(id)") {
+			state.VulnClassesTested["cmdi"] = true
+		}
+		if strings.Contains(code, "../") || strings.Contains(code, "etc/passwd") {
+			state.VulnClassesTested["path_traversal"] = true
+		}
+		if strings.Contains(code, "169.254") || strings.Contains(code, "ssrf") {
+			state.VulnClassesTested["ssrf"] = true
+		}
+	}
+
 	if toolName == "read_skill" {
 		state.SkillsLoaded++
 	}
@@ -479,6 +514,37 @@ send_request is ONLY for:
 ✅ Requests with session cookies after browser login (authenticated testing)
 ✅ Requests that must appear in the Caido proxy log
 ❌ Everything else → use curl`, state.SendRequestCalls, method),
+			}
+		}
+	}
+
+	// Track python_action usage for HTTP requests
+	if toolName == "python_action" {
+		code := strings.ToLower(args["code"])
+		if code == "" {
+			code = strings.ToLower(args["script"])
+		}
+		// Detect HTTP requests via requests/urllib/http.client
+		isHTTP := strings.Contains(code, "requests.get") || strings.Contains(code, "requests.post") ||
+			strings.Contains(code, "requests.put") || strings.Contains(code, "requests.delete") ||
+			strings.Contains(code, "urllib") || strings.Contains(code, "http.client")
+		if isHTTP {
+			state.SendRequestCalls++ // reuse counter — conceptually the same issue
+			if state.SendRequestCalls <= 2 {
+				return HookResult{
+					Nudge: `💡 TIP: Use curl instead of python requests for HTTP testing.
+python_action HTTP calls bypass endpoint tracking and don't log to proxy.
+Use instead: curl -sk <URL> -H "header: value" -d '{"payload": "{{7*7}}"}'
+Reserve python only for complex logic (parsing, loops, multi-step chains).`,
+				}
+			}
+			if state.SendRequestCalls >= 5 {
+				return HookResult{
+					Nudge: fmt.Sprintf(`⛔ STOP using python requests for HTTP calls (%d times). This bypasses:
+- Endpoint tracking (your coverage stats are wrong)
+- Proxy logging (findings won't have request/response evidence)
+Switch to curl NOW: curl -sk -X POST <URL> -H "Content-Type: application/json" -d '{}'`, state.SendRequestCalls),
+				}
 			}
 		}
 	}

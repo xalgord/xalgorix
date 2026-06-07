@@ -209,6 +209,50 @@ func TestWorkTracker_VulnClassTracking(t *testing.T) {
 	}
 }
 
+func TestWorkTracker_PythonActionVulnTracking(t *testing.T) {
+	state := NewScanState()
+
+	// Python code with SSTI and CRLF payloads
+	hookWorkTracker(state, map[string]string{
+		"tool_name": "python_action",
+		"code":      `import requests; r = requests.get("https://target.com/search?q={{7*7}}")`,
+	})
+	if !state.VulnClassesTested["ssti"] {
+		t.Error("SSTI should be detected from python_action code")
+	}
+
+	hookWorkTracker(state, map[string]string{
+		"tool_name": "python_action",
+		"code":      `r = requests.get("https://target.com/r?url=%0d%0aX-Injected:true")`,
+	})
+	if !state.VulnClassesTested["crlf"] {
+		t.Error("CRLF should be detected from python_action code")
+	}
+}
+
+func TestCurlPreference_PythonRequestsNudge(t *testing.T) {
+	state := NewScanState()
+
+	// First python HTTP call — soft nudge
+	result := hookCurlPreference(state, map[string]string{
+		"tool_name": "python_action",
+		"code":      `import requests; r = requests.get("https://target.com/api/test")`,
+	})
+	if result.Nudge == "" {
+		t.Error("Should nudge on first python requests.get() call")
+	}
+
+	// Non-HTTP python code — no nudge
+	state2 := NewScanState()
+	result2 := hookCurlPreference(state2, map[string]string{
+		"tool_name": "python_action",
+		"code":      `print("hello world"); x = 1 + 2`,
+	})
+	if result2.Nudge != "" {
+		t.Error("Should NOT nudge on python code without HTTP calls")
+	}
+}
+
 func TestWorkTracker_EndpointInventory(t *testing.T) {
 	state := NewScanState()
 
