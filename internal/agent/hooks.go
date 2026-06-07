@@ -59,6 +59,10 @@ type ScanState struct {
 	DirBustingDone      bool
 	AccessControlTested bool
 
+	// Tool preference tracking
+	SendRequestCalls   int  // total send_request uses (should be low)
+	BrowserAuthContext bool // true after browser login/auth detected — justifies browser use
+
 	// Stuck-loop detection
 	StuckDomain        string
 	StuckIterations    int
@@ -191,6 +195,7 @@ func RegisterDefaultHooks(reg *HookRegistry) {
 	// Order matters: tracking → detection → policy → reset
 	reg.Register(OnToolCall, hookWorkTracker)
 	reg.Register(OnToolCall, hookStuckTracker)
+	reg.Register(OnToolCall, hookCurlPreference)
 	reg.Register(OnStuckCheck, hookStuckNudge)
 	reg.Register(OnToolResult, hookWAFDetector)
 	reg.Register(OnToolResult, hookTechDetector)
@@ -307,28 +312,34 @@ func hookWorkTracker(state *ScanState, args map[string]string) HookResult {
 	return HookResult{}
 }
 
-// extractEndpointFromCmd extracts a URL path from curl/httpx commands.
-// Returns a normalized endpoint like "/api/users" or "" if not found.
+// extractEndpointFromCmd extracts a URL path from any command containing an HTTP URL.
+// Returns a normalized endpoint like "example.com/api/users" or "" if not found.
+// Handles: curl, httpx, wget, sqlmap -u, nuclei -u, piped commands, and any
+// command containing an HTTP(S) URL as a token.
 func extractEndpointFromCmd(cmd string) string {
-	for _, prefix := range []string{"curl ", "httpx ", "wget "} {
-		if !strings.Contains(cmd, prefix) {
-			continue
-		}
-		for _, token := range strings.Fields(cmd) {
-			if strings.HasPrefix(token, "http://") || strings.HasPrefix(token, "https://") {
-				token = strings.Trim(token, "\"'")
-				if parsed, err := url.Parse(token); err == nil && parsed.Host != "" {
-					path := parsed.Path
-					if path == "" || path == "/" {
-						path = "/"
-					}
-					return parsed.Host + path
+	// Strategy: find ANY http:// or https:// URL in the command tokens.
+	// This handles all tools (curl, wget, sqlmap, nuclei, ffuf, etc.)
+	// and piped commands (echo "..." | curl -d @- https://target.com).
+
+	// Split on pipes first — extract from each segment
+	for _, segment := range strings.Split(cmd, "|") {
+		for _, token := range strings.Fields(segment) {
+			token = strings.Trim(token, "\"'`,;)(}{[]")
+			if !strings.HasPrefix(token, "http://") && !strings.HasPrefix(token, "https://") {
+				continue
+			}
+			if parsed, err := url.Parse(token); err == nil && parsed.Host != "" {
+				path := parsed.Path
+				if path == "" || path == "/" {
+					path = "/"
 				}
+				return parsed.Host + path
 			}
 		}
 	}
 	return ""
 }
+
 
 // extractHostFromCmd extracts the target host from a command for dirbusting tracking.
 func extractHostFromCmd(cmd string) string {
@@ -341,6 +352,83 @@ func extractHostFromCmd(cmd string) string {
 		}
 	}
 	return ""
+}
+
+// ── hookCurlPreference ───────────────────────────────────────────────────────
+// Enforces the policy: prefer curl (via terminal_execute) for all HTTP requests.
+// send_request truncates responses at 10KB and doesn't track endpoints.
+// browser_action is slow and heavyweight — only justified for auth flows,
+// dynamic JS rendering, or form interaction.
+func hookCurlPreference(state *ScanState, args map[string]string) HookResult {
+	toolName := args["tool_name"]
+
+	// Track browser auth context: if browser is used for login/auth, it's justified
+	if toolName == "browser_action" {
+		action := strings.ToLower(args["action"])
+		textArg := strings.ToLower(args["text"])
+		urlArg := strings.ToLower(args["url"])
+		// Detect auth-related browser actions (login forms, session handling)
+		isAuth := strings.Contains(action, "type") && (strings.Contains(textArg, "password") ||
+			strings.Contains(textArg, "admin") || strings.Contains(textArg, "login"))
+		isAuth = isAuth || strings.Contains(urlArg, "login") || strings.Contains(urlArg, "auth") ||
+			strings.Contains(urlArg, "signin") || strings.Contains(urlArg, "oauth") ||
+			strings.Contains(urlArg, "sso")
+		if isAuth || strings.Contains(action, "get_cookies") || strings.Contains(action, "load_session") {
+			state.BrowserAuthContext = true
+		}
+
+		// If no auth context and not the first navigation, nudge
+		if !state.BrowserAuthContext && state.ConsecutiveBrowser > 2 {
+			return HookResult{
+				Nudge: `⚠️ TOOL PREFERENCE: You're using browser_action for testing that curl can handle faster.
+Use browser ONLY for:
+- Login/authentication flows (forms, OAuth, SSO)
+- JavaScript-rendered content that curl can't see
+- Dynamic interactions (clicking buttons, filling forms)
+
+For ALL other HTTP requests, use: curl -sk <URL> | head -200
+Switch to curl now — it's faster and gives you full response bodies.`,
+			}
+		}
+	}
+
+	// Track send_request usage
+	if toolName == "send_request" {
+		state.SendRequestCalls++
+
+		// Check if this is justified (authenticated session testing with cookies)
+		method := strings.ToUpper(args["method"])
+		headers := strings.ToLower(args["headers"])
+		hasAuthHeaders := strings.Contains(headers, "cookie") || strings.Contains(headers, "authorization") ||
+			strings.Contains(headers, "x-csrf") || strings.Contains(headers, "bearer")
+
+		// First use: soft nudge (unless it's auth-related)
+		if !hasAuthHeaders && state.SendRequestCalls == 1 {
+			return HookResult{
+				Nudge: fmt.Sprintf(`💡 TIP: Prefer curl over send_request for %s requests.
+send_request truncates responses at 10KB — JS bundles, API responses, and HTML pages are often 50-500KB.
+Use instead: curl -sk -X %s <URL> -H "header: value"
+Reserve send_request ONLY for authenticated requests that need Caido proxy logging.`, method, method),
+			}
+		}
+
+		// 3+ uses without auth context: stronger warning
+		if !hasAuthHeaders && state.SendRequestCalls >= 3 {
+			return HookResult{
+				Nudge: fmt.Sprintf(`⛔ STOP using send_request (%d calls) — you are missing data due to 10KB truncation.
+Switch to curl immediately:
+  curl -sk -X %s <URL> -H "Content-Type: application/json" -d '{"key":"value"}'
+  curl -sk <URL> -o /tmp/response.html && wc -c /tmp/response.html
+
+send_request is ONLY for:
+✅ Requests with session cookies after browser login (authenticated testing)
+✅ Requests that must appear in the Caido proxy log
+❌ Everything else → use curl`, state.SendRequestCalls, method),
+			}
+		}
+	}
+
+	return HookResult{}
 }
 
 // ── hookStuckTracker ─────────────────────────────────────────────────────────

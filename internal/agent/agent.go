@@ -1630,6 +1630,9 @@ func (a *Agent) Run(targets []string, instruction string) {
 					a.msgMu.Lock()
 					a.messages = append(a.messages, llm.Message{Role: "user", Content: rejectMsg})
 					a.msgMu.Unlock()
+					// Finish was rejected — switch to validator temperature (0.0)
+					// for deterministic re-verification of coverage gaps
+					a.client.SetTemperature(TempValidator)
 					continue
 				}
 				a.emit(Event{Type: "finished", Content: result.Output, TotalTokens: tokenCount()})
@@ -1648,6 +1651,9 @@ func (a *Agent) Run(targets []string, instruction string) {
 			case "report_vulnerability":
 				// Next response will write/refine a vulnerability report
 				a.client.SetTemperature(TempReporter)
+			case "add_note", "read_notes":
+				// Next response involves analysis/reasoning about findings
+				a.client.SetTemperature(TempReasoner)
 			default:
 				// Default scanning temperature for all other tools
 				a.client.SetTemperature(TempScanner)

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -24,6 +25,16 @@ func TestExtractEndpointFromCmd(t *testing.T) {
 		{"no url", `nmap -sV target.com`, ""},
 		{"sqlmap no url prefix", `sqlmap -r request.txt`, ""},
 		{"strips query params", `curl https://api.example.com/search?q=test`, "api.example.com/search"},
+		// New: piped commands (audit fix #1)
+		{"piped curl", `echo '{"id":1}' | curl -d @- https://target.com/api/users`, "target.com/api/users"},
+		{"piped with grep", `curl -sk https://target.com/api/v2/config | grep secret`, "target.com/api/v2/config"},
+		// New: tools the old extractor missed (audit fix #1)
+		{"sqlmap with url", `sqlmap -u https://target.com/api/search?q=test --batch`, "target.com/api/search"},
+		{"nuclei with url", `nuclei -u https://target.com/api/health -t cves/`, "target.com/api/health"},
+		{"dalfox", `dalfox url https://target.com/search?q=xss`, "target.com/search"},
+		// Edge cases
+		{"url in quotes", `curl "https://target.com/api/v1/data"`, "target.com/api/v1/data"},
+		{"ncat no url", `echo "GET / HTTP/1.1" | ncat target.com 80`, ""},
 	}
 
 	for _, tt := range tests {
@@ -526,5 +537,102 @@ func TestFinishGatekeeper_DirBustingOnlyGamingBlocked(t *testing.T) {
 	result := hookFinishGatekeeper(state, nil)
 	if !result.Block {
 		t.Error("Should block early finish when only 1 of 3 vuln categories covered (dirbusting-only gaming)")
+	}
+}
+
+// ── hookCurlPreference tests ─────────────────────────────────────────────────
+
+func TestCurlPreference_SendRequestFirstUseNudge(t *testing.T) {
+	state := NewScanState()
+	result := hookCurlPreference(state, map[string]string{
+		"tool_name": "send_request",
+		"method":    "GET",
+		"headers":   "",
+	})
+	if result.Nudge == "" {
+		t.Error("Should nudge on first send_request without auth headers")
+	}
+	if state.SendRequestCalls != 1 {
+		t.Errorf("SendRequestCalls = %d, want 1", state.SendRequestCalls)
+	}
+}
+
+func TestCurlPreference_SendRequestEscalatesAfter3(t *testing.T) {
+	state := NewScanState()
+	state.SendRequestCalls = 2 // already used twice
+
+	result := hookCurlPreference(state, map[string]string{
+		"tool_name": "send_request",
+		"method":    "POST",
+		"headers":   "Content-Type: application/json",
+	})
+	if result.Nudge == "" {
+		t.Error("Should escalate warning after 3+ send_request calls")
+	}
+	if !strings.Contains(result.Nudge, "STOP") {
+		t.Error("Escalated warning should contain 'STOP'")
+	}
+}
+
+func TestCurlPreference_SendRequestAllowsWithAuth(t *testing.T) {
+	state := NewScanState()
+	state.SendRequestCalls = 4 // would normally trigger strong warning
+
+	result := hookCurlPreference(state, map[string]string{
+		"tool_name": "send_request",
+		"method":    "GET",
+		"headers":   "Cookie: session=abc123; Authorization: Bearer xyz",
+	})
+	if result.Nudge != "" {
+		t.Errorf("Should NOT nudge send_request with auth headers, got: %s", result.Nudge)
+	}
+}
+
+func TestCurlPreference_BrowserNudgeWithoutAuth(t *testing.T) {
+	state := NewScanState()
+	state.ConsecutiveBrowser = 3 // already used 3 times
+	state.BrowserAuthContext = false
+
+	result := hookCurlPreference(state, map[string]string{
+		"tool_name": "browser_action",
+		"action":    "navigate",
+		"url":       "https://target.com/api/users",
+		"text":      "",
+	})
+	if result.Nudge == "" {
+		t.Error("Should nudge browser usage without auth context after 2+ consecutive uses")
+	}
+}
+
+func TestCurlPreference_BrowserAllowsAuthContext(t *testing.T) {
+	state := NewScanState()
+	state.ConsecutiveBrowser = 5
+
+	// Login page navigation sets auth context
+	result := hookCurlPreference(state, map[string]string{
+		"tool_name": "browser_action",
+		"action":    "navigate",
+		"url":       "https://target.com/login",
+		"text":      "",
+	})
+	if !state.BrowserAuthContext {
+		t.Error("Login URL should set BrowserAuthContext = true")
+	}
+	if result.Nudge != "" {
+		t.Errorf("Should NOT nudge browser on login page, got: %s", result.Nudge)
+	}
+}
+
+func TestCurlPreference_IgnoresOtherTools(t *testing.T) {
+	state := NewScanState()
+	result := hookCurlPreference(state, map[string]string{
+		"tool_name": "terminal_execute",
+		"command":   "curl https://target.com",
+	})
+	if result.Nudge != "" {
+		t.Error("Should not nudge for terminal_execute (curl)")
+	}
+	if state.SendRequestCalls != 0 {
+		t.Error("SendRequestCalls should remain 0 for non-send_request tools")
 	}
 }
