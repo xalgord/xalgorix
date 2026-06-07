@@ -582,7 +582,28 @@ func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 		}
 	}
 
-	// Gate: Proportional coverage — require testing multiple endpoints
+	// Compute test depth: average vuln-class tests per endpoint.
+	// A depth of 1.0 means each endpoint was tested with 1 category on avg.
+	// A depth of 3.0 means each endpoint had injection + access control + dirbusting.
+	depth := testDepthRatio(totalEndpoints, injectionCount, accessControlCount, dirBustingCount)
+
+	// ── Adaptive surface area detection ──
+	// Static/small targets shouldn't burn 50+ iterations doing nothing.
+	// Allow early finish if the surface area is small AND test depth is high.
+	if state.ReconDone && state.EndpointInventorySaved && dirBustingCount >= 1 {
+		// Small surface (< 5 endpoints): allow finish at 25+ iterations with deep testing
+		if totalEndpoints < 5 && iter >= 25 && depth >= 2.0 {
+			// Verified small target with thorough testing — allow finish
+			return HookResult{}
+		}
+
+		// Medium surface (5-15 endpoints): allow finish at 40+ iterations with good testing
+		if totalEndpoints >= 5 && totalEndpoints <= 15 && iter >= 40 && depth >= 1.5 {
+			return HookResult{}
+		}
+	}
+
+	// ── Proportional coverage gates (for targets below 50 iterations) ──
 	if iter < 50 {
 		missing := []string{}
 
@@ -608,13 +629,14 @@ func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 		if len(missing) > 0 {
 			return HookResult{
 				Block:       true,
-				BlockReason: fmt.Sprintf("Coverage gap: you've tested %d unique endpoints total but still need: %s", totalEndpoints, strings.Join(missing, "; ")),
+				BlockReason: fmt.Sprintf("Coverage gap (depth: %.1f tests/endpoint): you've tested %d unique endpoints but still need: %s", depth, totalEndpoints, strings.Join(missing, "; ")),
 			}
 		}
 	}
 
 	// ── Iteration floor: 50 ──
 	// Matches the system prompt: "Minimum 50 iterations for a thorough assessment"
+	// Only applies to large surface areas (> 15 endpoints) or when depth is low.
 	if iter < 50 {
 		if state.FinishAttempts <= 2 {
 			scannerNote := ""
@@ -625,8 +647,8 @@ func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 			if state.SkillsLoaded == 0 {
 				skillNote = "\n- ⚠️ You haven't loaded ANY deep knowledge skills (read_skill). Load skills for the target's tech stack to get expert-level payloads and bypass techniques!"
 			}
-			coverageNote := fmt.Sprintf("\n- Endpoints tested: %d (injection: %d, access control: %d, dirbusting hosts: %d)",
-				totalEndpoints, injectionCount, accessControlCount, dirBustingCount)
+			coverageNote := fmt.Sprintf("\n- Endpoints tested: %d (injection: %d, access control: %d, dirbusting hosts: %d, depth: %.1f/endpoint)",
+				totalEndpoints, injectionCount, accessControlCount, dirBustingCount, depth)
 			nudgeMsg := fmt.Sprintf(`⚠️ Only %d/50 iterations completed. You still have capacity to test more.
 
 Before finishing, verify you have covered:
@@ -646,6 +668,17 @@ Continue testing. Call finish again after iteration 50.`, iter, coverageNote, sc
 
 	// After 50 iterations with coverage met: allow finish
 	return HookResult{}
+}
+
+// testDepthRatio computes the average number of vuln-class tests per endpoint.
+// A ratio of 1.0 means each endpoint was tested with 1 category on average.
+// Higher is better — it means the agent tested each endpoint more thoroughly.
+func testDepthRatio(totalEndpoints, injectionCount, accessControlCount, dirBustingCount int) float64 {
+	if totalEndpoints == 0 {
+		return 0.0
+	}
+	totalTests := injectionCount + accessControlCount + dirBustingCount
+	return float64(totalTests) / float64(totalEndpoints)
 }
 
 // maxInt returns the larger of two ints.

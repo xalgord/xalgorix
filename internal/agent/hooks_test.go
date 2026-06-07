@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -261,22 +262,26 @@ func TestFinishGatekeeper_AllowsAfter50WithCoverage(t *testing.T) {
 }
 
 func TestFinishGatekeeper_BlocksBelow50EvenWithCoverage(t *testing.T) {
+	// Large surface area (> 15 endpoints): 50-iteration floor always applies
 	state := NewScanState()
 	state.Iteration = 40
 	state.TerminalCalls = 30
 	state.ReconDone = true
 	state.EndpointInventorySaved = true
-	state.InjectionEndpoints["a"] = true
-	state.InjectionEndpoints["b"] = true
-	state.InjectionEndpoints["c"] = true
-	state.AccessControlEndpoints["a"] = true
-	state.AccessControlEndpoints["b"] = true
+	// 20 endpoints — large surface, adaptive early finish doesn't apply
+	for i := range 20 {
+		state.EndpointsTested[fmt.Sprintf("ep%d", i)] = true
+	}
+	state.InjectionEndpoints["ep0"] = true
+	state.InjectionEndpoints["ep1"] = true
+	state.InjectionEndpoints["ep2"] = true
+	state.AccessControlEndpoints["ep0"] = true
+	state.AccessControlEndpoints["ep1"] = true
 	state.DirBustingHosts["target.com"] = true
-	state.EndpointsTested["a"] = true
 
 	result := hookFinishGatekeeper(state, nil)
 	if !result.Block {
-		t.Error("Should block below 50 iterations even with good coverage (first 2 attempts)")
+		t.Error("Large surface (20 endpoints) should block below 50 iterations even with good coverage")
 	}
 }
 
@@ -356,5 +361,127 @@ func TestFloatPtr(t *testing.T) {
 	p0 := floatPtr(0.0)
 	if p0 == nil || *p0 != 0.0 {
 		t.Error("floatPtr(0.0) should return pointer to 0.0, not nil")
+	}
+}
+
+// ── testDepthRatio tests ─────────────────────────────────────────────────────
+
+func TestTestDepthRatio(t *testing.T) {
+	tests := []struct {
+		name                                                  string
+		total, injection, accessControl, dirbusting           int
+		want                                                  float64
+	}{
+		{"no endpoints", 0, 0, 0, 0, 0.0},
+		{"3 endpoints, full coverage", 3, 3, 3, 3, 3.0},
+		{"10 endpoints, partial", 10, 3, 2, 1, 0.6},
+		{"1 endpoint, all classes", 1, 1, 1, 1, 3.0},
+		{"5 endpoints, shallow", 5, 1, 0, 0, 0.2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := testDepthRatio(tt.total, tt.injection, tt.accessControl, tt.dirbusting)
+			if got != tt.want {
+				t.Errorf("testDepthRatio(%d,%d,%d,%d) = %f, want %f",
+					tt.total, tt.injection, tt.accessControl, tt.dirbusting, got, tt.want)
+			}
+		})
+	}
+}
+
+// ── Adaptive surface area tests ──────────────────────────────────────────────
+
+func TestFinishGatekeeper_SmallSurfaceEarlyFinish(t *testing.T) {
+	// Small target (3 endpoints), deep testing (depth 2.0+), iter 30 → allow
+	state := NewScanState()
+	state.Iteration = 30
+	state.TerminalCalls = 12
+	state.ReconDone = true
+	state.EndpointInventorySaved = true
+	// 3 endpoints, all tested with injection + access control + dirbusting
+	state.EndpointsTested["a"] = true
+	state.EndpointsTested["b"] = true
+	state.EndpointsTested["c"] = true
+	state.InjectionEndpoints["a"] = true
+	state.InjectionEndpoints["b"] = true
+	state.InjectionEndpoints["c"] = true
+	state.AccessControlEndpoints["a"] = true
+	state.AccessControlEndpoints["b"] = true
+	state.DirBustingHosts["target.com"] = true
+	// depth = (3 + 2 + 1) / 3 = 2.0
+
+	result := hookFinishGatekeeper(state, nil)
+	if result.Block {
+		t.Errorf("Small surface with depth 2.0 at iter 30 should allow early finish, got blocked: %s", result.BlockReason)
+	}
+}
+
+func TestFinishGatekeeper_SmallSurfaceShallowBlocked(t *testing.T) {
+	// Small target (3 endpoints), shallow testing (depth 0.3), iter 30 → block
+	state := NewScanState()
+	state.Iteration = 30
+	state.TerminalCalls = 12
+	state.ReconDone = true
+	state.EndpointInventorySaved = true
+	state.EndpointsTested["a"] = true
+	state.EndpointsTested["b"] = true
+	state.EndpointsTested["c"] = true
+	state.InjectionEndpoints["a"] = true // only 1 injection test
+	state.DirBustingHosts["target.com"] = true
+	// depth = (1 + 0 + 1) / 3 = 0.67 — too shallow
+
+	result := hookFinishGatekeeper(state, nil)
+	if !result.Block {
+		t.Error("Small surface with shallow depth should still block")
+	}
+}
+
+func TestFinishGatekeeper_MediumSurfaceEarlyFinish(t *testing.T) {
+	// Medium target (8 endpoints), good depth (1.5+), iter 42 → allow
+	state := NewScanState()
+	state.Iteration = 42
+	state.TerminalCalls = 20
+	state.ReconDone = true
+	state.EndpointInventorySaved = true
+	for i := range 8 {
+		state.EndpointsTested[fmt.Sprintf("ep%d", i)] = true
+	}
+	// 4 injection + 4 access control + 4 dirbusting hosts = 12 tests / 8 endpoints = 1.5
+	for i := range 4 {
+		state.InjectionEndpoints[fmt.Sprintf("ep%d", i)] = true
+		state.AccessControlEndpoints[fmt.Sprintf("ep%d", i)] = true
+	}
+	state.DirBustingHosts["target.com"] = true
+	state.DirBustingHosts["sub.target.com"] = true
+	state.DirBustingHosts["api.target.com"] = true
+	state.DirBustingHosts["admin.target.com"] = true
+	// depth = (4 + 4 + 4) / 8 = 1.5
+
+	result := hookFinishGatekeeper(state, nil)
+	if result.Block {
+		t.Errorf("Medium surface with depth 1.5 at iter 42 should allow finish, got blocked: %s", result.BlockReason)
+	}
+}
+
+func TestFinishGatekeeper_LargeSurfaceNoEarlyFinish(t *testing.T) {
+	// Large target (20 endpoints), good depth, iter 35 → still blocked (> 15 endpoints)
+	state := NewScanState()
+	state.Iteration = 35
+	state.TerminalCalls = 25
+	state.ReconDone = true
+	state.EndpointInventorySaved = true
+	for i := range 20 {
+		state.EndpointsTested[fmt.Sprintf("ep%d", i)] = true
+	}
+	for i := range 10 {
+		state.InjectionEndpoints[fmt.Sprintf("ep%d", i)] = true
+		state.AccessControlEndpoints[fmt.Sprintf("ep%d", i)] = true
+	}
+	state.DirBustingHosts["target.com"] = true
+	// depth = (10 + 10 + 1) / 20 = 1.05 — but > 15 endpoints, no early finish
+
+	result := hookFinishGatekeeper(state, nil)
+	if !result.Block {
+		t.Error("Large surface (20 endpoints) should not get early finish at iter 35")
 	}
 }
