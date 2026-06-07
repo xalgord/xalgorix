@@ -1640,6 +1640,18 @@ func (a *Agent) Run(targets []string, instruction string) {
 			a.msgMu.Lock()
 			a.messages = append(a.messages, llm.Message{Role: "user", Content: resultMsg})
 			a.msgMu.Unlock()
+
+			// ── Per-role temperature switching ──
+			// Adjust LLM temperature based on what the agent is about to do
+			// next, inferred from the tool it just called.
+			switch tc.Name {
+			case "report_vulnerability":
+				// Next response will write/refine a vulnerability report
+				a.client.SetTemperature(TempReporter)
+			default:
+				// Default scanning temperature for all other tools
+				a.client.SetTemperature(TempScanner)
+			}
 		}
 		// Prune message history to prevent context window overflow
 		a.pruneMessages()

@@ -171,6 +171,19 @@ const (
 	StuckHardLimit        = 80 // total stuck iterations before force-skip
 )
 
+// ── Per-Role Temperatures ────────────────────────────────────────────────────
+// Temperature controls the LLM's creativity vs determinism tradeoff.
+// Each agent role has an optimal temperature tuned for its purpose.
+
+var (
+	TempScanner   = floatPtr(0.2) // creative enough for novel attack paths, structured enough for methodology
+	TempReasoner  = floatPtr(0.2) // structured analysis with slight flexibility for nuanced verdicts
+	TempValidator = floatPtr(0.0) // fully deterministic — same input must produce same verdict
+	TempReporter  = floatPtr(0.3) // natural prose without risking fabricated technical details
+)
+
+func floatPtr(f float64) *float64 { return &f }
+
 // ── Built-in Hooks ───────────────────────────────────────────────────────────
 
 // RegisterDefaultHooks registers all built-in behavioral hooks.

@@ -319,3 +319,42 @@ func TestMinMaxInt(t *testing.T) {
 		t.Error("maxInt(5,3) should be 5")
 	}
 }
+
+// ── Role temperature tests ───────────────────────────────────────────────────
+
+func TestRoleTemperatures(t *testing.T) {
+	tests := []struct {
+		name string
+		temp *float64
+		want float64
+	}{
+		{"Scanner", TempScanner, 0.2},
+		{"Reasoner", TempReasoner, 0.2},
+		{"Validator", TempValidator, 0.0},
+		{"Reporter", TempReporter, 0.3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.temp == nil {
+				t.Fatal("temperature pointer should not be nil")
+			}
+			if *tt.temp != tt.want {
+				t.Errorf("Temp%s = %f, want %f", tt.name, *tt.temp, tt.want)
+			}
+		})
+	}
+}
+
+func TestFloatPtr(t *testing.T) {
+	p := floatPtr(0.5)
+	if p == nil || *p != 0.5 {
+		t.Error("floatPtr(0.5) should return pointer to 0.5")
+	}
+
+	// Zero value should work (not nil)
+	p0 := floatPtr(0.0)
+	if p0 == nil || *p0 != 0.0 {
+		t.Error("floatPtr(0.0) should return pointer to 0.0, not nil")
+	}
+}
