@@ -1,5 +1,7 @@
 package reporting
 
+import "github.com/xalgord/xalgorix/v4/internal/reporting/i18n"
+
 // MethodologyPhaseNames maps each phase number in the Xalgorix 22-phase
 // methodology to its display name. The map is the single source of truth
 // consumed by both the PDF report and the autonomous-mode phase-filter
@@ -46,4 +48,21 @@ var OWASPCategories = []struct {
 	{"A08", "Software and Data Integrity Failures"},
 	{"A09", "Security Logging and Monitoring Failures"},
 	{"A10", "Server-Side Request Forgery (SSRF)"},
+}
+
+// Phase is a typed wrapper around the 22-phase methodology index. The
+// zero value (Phase 0) is intentionally invalid; only Phases 1..22 are
+// renderable. Defined as `int` so JSON encoders round-trip naturally
+// when a future API surface ships the phase id.
+type Phase int
+
+// Name returns the localized display name for this phase from the
+// supplied bundle. Phases outside 1..22 return "" so the caller can
+// decide whether to render a placeholder, skip the row, or log a
+// "bad phase" warning — rather than this helper guessing a default.
+func (p Phase) Name(b *i18n.Bundle) string {
+	if p < 1 || p > 22 {
+		return ""
+	}
+	return b.PhaseNames[p]
 }

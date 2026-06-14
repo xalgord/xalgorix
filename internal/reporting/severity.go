@@ -1,6 +1,10 @@
 package reporting
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/xalgord/xalgorix/v4/internal/reporting/i18n"
+)
 
 // SeverityCounts is the per-severity rollup the cover page and the
 // executive-summary stat cards consume. It mirrors the inline counter
@@ -53,4 +57,27 @@ func RollupSeverities(vulns []Vuln) SeverityCounts {
 	}
 	counts.Total = len(vulns)
 	return counts
+}
+
+// SeverityLabel maps a severity string (as stored on Vuln.Severity — the
+// same canonicalized set RollupSeverities recognizes) to its localized
+// display label.
+//
+// Unrecognized values (custom labels, typos, integers-as-strings) fall
+// back to the bundle's SevInfo label so they still render as something
+// readable. This matches RollupSeverities' own convention of routing
+// unknowns to the Info bucket, so the displayed label and the
+// counted bucket always agree.
+func SeverityLabel(sev string, b *i18n.Bundle) string {
+	switch strings.ToLower(sev) {
+	case "critical":
+		return b.SevCritical
+	case "high":
+		return b.SevHigh
+	case "medium":
+		return b.SevMedium
+	case "low":
+		return b.SevLow
+	}
+	return b.SevInfo
 }

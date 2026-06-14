@@ -1,6 +1,10 @@
 package reporting
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/xalgord/xalgorix/v4/internal/reporting/i18n"
+)
 
 // TestRollupSeverities_Empty asserts the zero-vuln rollup is the zero
 // value. The cover-page render relies on this so a freshly created
@@ -109,5 +113,65 @@ func TestRollupSeverities_TotalEqualsLen(t *testing.T) {
 				t.Errorf("bucket sum %d != Total %d", sum, got.Total)
 			}
 		})
+	}
+}
+
+// TestSeverityLabel_BothLanguages is the F-001 anchor test for the
+// "severity is translated" decision. It asserts:
+//   - English bundle: Critical/High/Medium/Low
+//   - Chinese bundle: 严重/高/中/低
+//   - Unknown values fall back to Info in both languages
+//   - Matching is case-insensitive (mirrors RollupSeverities)
+func TestSeverityLabel_BothLanguages(t *testing.T) {
+	en := i18n.Get(i18n.LangEN)
+	zh := i18n.Get(i18n.LangZH)
+
+	cases := []struct {
+		severity string
+		wantEN   string
+		wantZH   string
+	}{
+		{"critical", en.SevCritical, zh.SevCritical}, // 严重
+		{"high", en.SevHigh, zh.SevHigh},             // 高
+		{"medium", en.SevMedium, zh.SevMedium},       // 中
+		{"low", en.SevLow, zh.SevLow},                // 低
+		{"CRITICAL", en.SevCritical, zh.SevCritical}, // case-insensitive
+		{"High", en.SevHigh, zh.SevHigh},
+		{"", en.SevInfo, zh.SevInfo},              // empty → info
+		{"unknown", en.SevInfo, zh.SevInfo},       // unknown → info
+		{"informational", en.SevInfo, zh.SevInfo}, // informational → info
+	}
+	for _, c := range cases {
+		gotEN := SeverityLabel(c.severity, en)
+		if gotEN != c.wantEN {
+			t.Errorf("EN: SeverityLabel(%q) = %q, want %q", c.severity, gotEN, c.wantEN)
+		}
+		gotZH := SeverityLabel(c.severity, zh)
+		if gotZH != c.wantZH {
+			t.Errorf("ZH: SeverityLabel(%q) = %q, want %q", c.severity, gotZH, c.wantZH)
+		}
+	}
+}
+
+// TestSeverityLabel_CriticalValuesAnchored is a sharper version of
+// TestSeverityLabel_BothLanguages that asserts the Chinese bundle's
+// "严重"/"高"/"中"/"低" values explicitly. This guards against a
+// silent re-translation regression: if a future refactor changes the
+// zh bundle's SevCritical to "紧要" or "危急" by accident, this test
+// fails with a clear message even if SeverityLabel itself is correct.
+func TestSeverityLabel_CriticalValuesAnchored(t *testing.T) {
+	zh := i18n.Get(i18n.LangZH)
+
+	if got := SeverityLabel("critical", zh); got != "严重" {
+		t.Errorf("SeverityLabel('critical', zh) = %q, want %q", got, "严重")
+	}
+	if got := SeverityLabel("high", zh); got != "高" {
+		t.Errorf("SeverityLabel('high', zh) = %q, want %q", got, "高")
+	}
+	if got := SeverityLabel("medium", zh); got != "中" {
+		t.Errorf("SeverityLabel('medium', zh) = %q, want %q", got, "中")
+	}
+	if got := SeverityLabel("low", zh); got != "低" {
+		t.Errorf("SeverityLabel('low', zh) = %q, want %q", got, "低")
 	}
 }
