@@ -33,7 +33,7 @@ import (
 // config.Config.ReportLanguage, which defaults to "zh".
 //
 // FontPath (F-001) is an optional override for the embedded Noto Sans
-// CJK SC font. Empty means use the embedded font (always available
+// SC font. Empty means use the embedded font (always available
 // when the binary is built via `make build`).
 type Options struct {
 	LogoPath       string
@@ -67,21 +67,47 @@ func Generate(scan *Scan, opts Options) (string, error) {
 	bundle := i18n.Get(i18n.ParseLang(lang))
 
 	// F-001: load the CJK font. Load() returns the embedded Noto Sans
-	// CJK SC unless opts.FontPath is set, in which case the user
-	// override path takes priority. Errors are explicit — a typo'd
-	// XALGORIX_REPORT_FONT_PATH must surface, not be silently masked
-	// by falling back to the embedded font.
+	// SC (Simplified Chinese TTF subset) unless opts.FontPath is set,
+	// in which case the user override path takes priority. Errors are
+	// explicit — a typo'd XALGORIX_REPORT_FONT_PATH must surface, not
+	// be silently masked by falling back to the embedded font.
 	fontBytes, err := fonts.Load(opts.FontPath)
 	if err != nil {
 		return "", fmt.Errorf("report: load font: %w", err)
 	}
 	// Register the CJK font with fpdf under the family name "noto".
-	// Registering it doesn't change anything yet (the renderer still
-	// uses Helvetica); Task 8 will switch specific text elements to
-	// this font. Registering now is the load-bearing step that proves
-	// fpdf accepts the OTF for our use — if it errored, we'd see it
-	// here at Generate() entry, not deep in the layout pass.
+	// This is the load-bearing step that proves fpdf accepts our TTF —
+	// if it errored, we'd see it here at Generate() entry, not deep
+	// in the layout pass.
 	pdf.AddUTF8FontFromBytes("noto", "", fontBytes)
+
+	// F-001: font shim. In the Chinese PDF, route every text through
+	// the registered "noto" family (Noto Sans SC) because
+	// Helvetica/Courier have no CJK glyphs — emitting Chinese strings
+	// through them would render as tofu boxes. In English, fall
+	// through to the original family name.
+	//
+	// Only the regular weight of "noto" is registered (we ship
+	// NotoSansSC-Regular.ttf, not the bold/italic siblings). fpdf
+	// errors hard ("undefined font: noto B") if you request a style
+	// we did not register, so in the Chinese PDF we ALSO drop any
+	// bold/italic modifier from the requested style. The visual cost
+	// is no bold headings in the Chinese report — an accepted v1
+	// trade-off. If we want bold Chinese headings later, embed
+	// NotoSansSC-Bold.ttf alongside and register it here.
+	family := func(name string) string {
+		if lang == "zh" {
+			return "noto"
+		}
+		return name
+	}
+	style := func(s string) string {
+		if lang == "zh" {
+			// Drop B/I/BI modifiers — only "" is registered for "noto".
+			return ""
+		}
+		return s
+	}
 
 	palette := ThemePalette()
 	darkBg := palette.BG
@@ -146,10 +172,10 @@ func Generate(scan *Scan, opts Options) (string, error) {
 				return
 			}
 		}
-		pdf.SetFont("Helvetica", "B", 16)
+		pdf.SetFont(family("Helvetica"), style("B"), 16)
 		setColor(white)
 		pdf.SetXY(x, y+h/2-4)
-		pdf.CellFormat(w, 8, Initials(brandName), "", 0, "C", false, 0, "")
+		pdf.CellFormat(w, 8, Initials(brandName), style(""), 0, "C", false, 0, "")
 	}
 
 	// Helper: severity color
@@ -179,19 +205,19 @@ func Generate(scan *Scan, opts Options) (string, error) {
 	drawLogoOrInitials(26, 44, 38, 38)
 
 	pdf.SetXY(74, 41)
-	pdf.SetFont("Helvetica", "B", 23)
+	pdf.SetFont(family("Helvetica"), style("B"), 23)
 	setColor(white)
-	pdf.MultiCell(112, 9, bundle.CoverReportName, "", "L", false)
+	pdf.MultiCell(112, 9, bundle.CoverReportName, style(""), "L", false)
 
 	pdf.SetXY(74, 62)
-	pdf.SetFont("Helvetica", "B", 14)
+	pdf.SetFont(family("Helvetica"), style("B"), 14)
 	setColor(coral)
-	pdf.MultiCell(112, 7, DisplayText(brandName, "Target", 60), "", "L", false)
+	pdf.MultiCell(112, 7, DisplayText(brandName, "Target", 60), style(""), "L", false)
 
 	pdf.SetXY(74, 78)
-	pdf.SetFont("Courier", "", 8)
+	pdf.SetFont(family("Courier"), style(""), 8)
 	setColor(gray)
-	pdf.MultiCell(112, 4.5, DisplayText(scan.Target, "No target recorded", 95), "", "L", false)
+	pdf.MultiCell(112, 4.5, DisplayText(scan.Target, "No target recorded", 95), style(""), "L", false)
 
 	pdf.SetY(124)
 	coverRisk := RiskLabel(RiskScore(scan.Vulns))
@@ -212,33 +238,33 @@ func Generate(scan *Scan, opts Options) (string, error) {
 		drawStrokeRect(x, 124, coverCardW, 27, border)
 		drawRect(x, 124, coverCardW, 1.2, c.color)
 		pdf.SetXY(x+4, 131)
-		pdf.SetFont("Helvetica", "", 7.5)
+		pdf.SetFont(family("Helvetica"), style(""), 7.5)
 		setColor(gray)
-		pdf.CellFormat(coverCardW-8, 4, strings.ToUpper(c.label), "", 1, "L", false, 0, "")
+		pdf.CellFormat(coverCardW-8, 4, strings.ToUpper(c.label), style(""), 1, "L", false, 0, "")
 		pdf.SetXY(x+4, 138)
-		pdf.SetFont("Helvetica", "B", 11)
+		pdf.SetFont(family("Helvetica"), style("B"), 11)
 		setColor(c.color)
-		pdf.CellFormat(coverCardW-8, 6, c.value, "", 0, "L", false, 0, "")
+		pdf.CellFormat(coverCardW-8, 6, c.value, style(""), 0, "L", false, 0, "")
 	}
 
 	pdf.SetXY(14, 176)
-	pdf.SetFont("Helvetica", "B", 10)
+	pdf.SetFont(family("Helvetica"), style("B"), 10)
 	setColor(gray)
-	pdf.CellFormat(182, 6, bundle.CoverScanIDLabel, "", 1, "L", false, 0, "")
+	pdf.CellFormat(182, 6, bundle.CoverScanIDLabel, style(""), 1, "L", false, 0, "")
 	pdf.SetX(14)
-	pdf.SetFont("Courier", "", 10)
+	pdf.SetFont(family("Courier"), style(""), 10)
 	setColor(white)
-	pdf.CellFormat(182, 7, DisplayText(scan.ID, bundle.LabelNotRecorded, 90), "", 1, "L", false, 0, "")
+	pdf.CellFormat(182, 7, DisplayText(scan.ID, bundle.LabelNotRecorded, 90), style(""), 1, "L", false, 0, "")
 
 	pdf.SetY(248)
 	drawRect(14, pdf.GetY(), 182, 0.3, border)
 	pdf.Ln(8)
-	pdf.SetFont("Helvetica", "B", 10)
+	pdf.SetFont(family("Helvetica"), style("B"), 10)
 	setColor(white)
-	pdf.CellFormat(182, 5, bundle.CoverBrand, "", 1, "L", false, 0, "")
-	pdf.SetFont("Helvetica", "", 8)
+	pdf.CellFormat(182, 5, bundle.CoverBrand, style(""), 1, "L", false, 0, "")
+	pdf.SetFont(family("Helvetica"), style(""), 8)
 	setColor(gray)
-	pdf.CellFormat(182, 5, bundle.CoverSubtitle, "", 1, "L", false, 0, "")
+	pdf.CellFormat(182, 5, bundle.CoverSubtitle, style(""), 1, "L", false, 0, "")
 	drawRect(0, 294, 210, 3, coral)
 
 	// ─── EXECUTIVE SUMMARY ─────────────────────────────────
@@ -247,9 +273,9 @@ func Generate(scan *Scan, opts Options) (string, error) {
 	drawRect(0, 0, 210, 1.5, coral)
 
 	pdf.SetY(15)
-	pdf.SetFont("Helvetica", "B", 22)
+	pdf.SetFont(family("Helvetica"), style("B"), 22)
 	setColor(coral)
-	pdf.CellFormat(190, 12, bundle.SectionExecSummary, "", 1, "L", false, 0, "")
+	pdf.CellFormat(190, 12, bundle.SectionExecSummary, style(""), 1, "L", false, 0, "")
 	drawRect(10, pdf.GetY()+2, 50, 0.8, coral)
 	pdf.Ln(8)
 
@@ -295,14 +321,14 @@ func Generate(scan *Scan, opts Options) (string, error) {
 		drawRect(x, cy, cardW, 2, c.color)
 
 		pdf.SetXY(x+4, cy+6)
-		pdf.SetFont("Helvetica", "", 9)
+		pdf.SetFont(family("Helvetica"), style(""), 9)
 		setColor(gray)
-		pdf.CellFormat(cardW-8, 5, c.label, "", 1, "L", false, 0, "")
+		pdf.CellFormat(cardW-8, 5, c.label, style(""), 1, "L", false, 0, "")
 
 		pdf.SetXY(x+4, cy+14)
-		pdf.SetFont("Helvetica", "B", 18)
+		pdf.SetFont(family("Helvetica"), style("B"), 18)
 		setColor(c.color)
-		pdf.CellFormat(cardW-8, 10, c.value, "", 0, "L", false, 0, "")
+		pdf.CellFormat(cardW-8, 10, c.value, style(""), 0, "L", false, 0, "")
 	}
 
 	pdf.SetY(y + 2*(cardH+6) + 10)
@@ -328,21 +354,21 @@ func Generate(scan *Scan, opts Options) (string, error) {
 	drawRect(10, riskY, 190, 22, sectionBg)
 	drawRect(10, riskY, 190, 2.5, riskColor)
 	pdf.SetXY(14, riskY+5)
-	pdf.SetFont("Helvetica", "B", 11)
+	pdf.SetFont(family("Helvetica"), style("B"), 11)
 	setColor(gray)
-	pdf.CellFormat(60, 6, bundle.LabelRiskScore, "", 0, "L", false, 0, "")
-	pdf.SetFont("Helvetica", "B", 22)
+	pdf.CellFormat(60, 6, bundle.LabelRiskScore, style(""), 0, "L", false, 0, "")
+	pdf.SetFont(family("Helvetica"), style("B"), 22)
 	setColor(riskColor)
-	pdf.CellFormat(25, 10, fmt.Sprintf("%.1f", score), "", 0, "L", false, 0, "")
-	pdf.SetFont("Helvetica", "B", 14)
-	pdf.CellFormat(50, 10, label, "", 0, "L", false, 0, "")
+	pdf.CellFormat(25, 10, fmt.Sprintf("%.1f", score), style(""), 0, "L", false, 0, "")
+	pdf.SetFont(family("Helvetica"), style("B"), 14)
+	pdf.CellFormat(50, 10, label, style(""), 0, "L", false, 0, "")
 	pdf.SetY(riskY + 26)
 
 	// ── Executive Risk Narrative ──
-	pdf.SetFont("Helvetica", "B", 11)
+	pdf.SetFont(family("Helvetica"), style("B"), 11)
 	setColor(white)
-	pdf.CellFormat(190, 7, bundle.SectionRiskAssess, "", 1, "L", false, 0, "")
-	pdf.SetFont("Helvetica", "", 9)
+	pdf.CellFormat(190, 7, bundle.SectionRiskAssess, style(""), 1, "L", false, 0, "")
+	pdf.SetFont(family("Helvetica"), style(""), 9)
 	setColor(white)
 	narrative := fmt.Sprintf(
 		"The automated penetration test of %s identified %d vulnerabilities "+
@@ -369,13 +395,13 @@ func Generate(scan *Scan, opts Options) (string, error) {
 		)
 	}
 	pdf.SetX(10)
-	pdf.MultiCell(190, 4.5, narrative, "", "L", false)
+	pdf.MultiCell(190, 4.5, narrative, style(""), "L", false)
 	pdf.Ln(6)
 
 	// Scan metadata
-	pdf.SetFont("Helvetica", "B", 13)
+	pdf.SetFont(family("Helvetica"), style("B"), 13)
 	setColor(white)
-	pdf.CellFormat(190, 8, bundle.SectionScanDetails, "", 1, "L", false, 0, "")
+	pdf.CellFormat(190, 8, bundle.SectionScanDetails, style(""), 1, "L", false, 0, "")
 	pdf.Ln(2)
 
 	metaItems := [][2]string{
@@ -395,12 +421,12 @@ func Generate(scan *Scan, opts Options) (string, error) {
 			bgColor = sectionBg
 		}
 		drawRect(10, pdf.GetY(), 190, 8, bgColor)
-		pdf.SetFont("Helvetica", "B", 9)
+		pdf.SetFont(family("Helvetica"), style("B"), 9)
 		setColor(gray)
-		pdf.CellFormat(45, 8, "  "+m[0], "", 0, "L", false, 0, "")
-		pdf.SetFont("Helvetica", "", 9)
+		pdf.CellFormat(45, 8, "  "+m[0], style(""), 0, "L", false, 0, "")
+		pdf.SetFont(family("Helvetica"), style(""), 9)
 		setColor(white)
-		pdf.CellFormat(145, 8, m[1], "", 1, "L", false, 0, "")
+		pdf.CellFormat(145, 8, m[1], style(""), 1, "L", false, 0, "")
 	}
 
 	// ─── METHODOLOGY ──────────────────────────────────────
@@ -409,18 +435,18 @@ func Generate(scan *Scan, opts Options) (string, error) {
 	drawRect(0, 0, 210, 1.5, coral)
 
 	pdf.SetY(15)
-	pdf.SetFont("Helvetica", "B", 22)
+	pdf.SetFont(family("Helvetica"), style("B"), 22)
 	setColor(coral)
-	pdf.CellFormat(190, 12, bundle.SectionMethodology, "", 1, "L", false, 0, "")
+	pdf.CellFormat(190, 12, bundle.SectionMethodology, style(""), 1, "L", false, 0, "")
 	drawRect(10, pdf.GetY()+2, 50, 0.8, coral)
 	pdf.Ln(8)
 
-	pdf.SetFont("Helvetica", "", 9)
+	pdf.SetFont(family("Helvetica"), style(""), 9)
 	setColor(white)
 	pdf.SetX(10)
 	pdf.MultiCell(190, 4.5, "Xalgorix follows a comprehensive 22-phase penetration testing methodology "+
 		"aligned with OWASP, PTES, and industry best practices. Each phase is executed by an autonomous AI agent "+
-		"with tool access to terminal, browser, and specialized security utilities.", "", "L", false)
+		"with tool access to terminal, browser, and specialized security utilities.", style(""), "L", false)
 	pdf.Ln(4)
 
 	// Determine which phases were executed
@@ -464,7 +490,7 @@ func Generate(scan *Scan, opts Options) (string, error) {
 			drawRect(14, rowY+1.5, 4, 4, gray)
 		}
 		pdf.SetXY(22, rowY)
-		pdf.SetFont("Helvetica", "", 8)
+		pdf.SetFont(family("Helvetica"), style(""), 8)
 		if executed {
 			setColor(white)
 		} else {
@@ -474,27 +500,27 @@ func Generate(scan *Scan, opts Options) (string, error) {
 		if executed {
 			status = "SELECTED"
 		}
-		pdf.CellFormat(145, 7, fmt.Sprintf(bundle.PhaseRowFmt, phaseNum, name), "", 0, "L", false, 0, "")
-		pdf.SetFont("Helvetica", "B", 7)
+		pdf.CellFormat(145, 7, fmt.Sprintf(bundle.PhaseRowFmt, phaseNum, name), style(""), 0, "L", false, 0, "")
+		pdf.SetFont(family("Helvetica"), style("B"), 7)
 		if executed {
 			setColor(teal)
 		} else {
 			setColor(gray)
 		}
-		pdf.CellFormat(25, 7, status, "", 1, "R", false, 0, "")
+		pdf.CellFormat(25, 7, status, style(""), 1, "R", false, 0, "")
 	}
 
 	// Legend
 	pdf.Ln(4)
-	pdf.SetFont("Helvetica", "", 7)
+	pdf.SetFont(family("Helvetica"), style(""), 7)
 	setColor(gray)
 	pdf.SetX(10)
 	drawRect(12, pdf.GetY()+1, 3, 3, teal)
 	pdf.SetX(18)
-	pdf.CellFormat(30, 5, "= "+bundle.StatusExecuted, "", 0, "L", false, 0, "")
+	pdf.CellFormat(30, 5, "= "+bundle.StatusExecuted, style(""), 0, "L", false, 0, "")
 	drawRect(50, pdf.GetY()+1, 3, 3, gray)
 	pdf.SetX(56)
-	pdf.CellFormat(30, 5, "= "+bundle.StatusSkipped, "", 1, "L", false, 0, "")
+	pdf.CellFormat(30, 5, "= "+bundle.StatusSkipped, style(""), 1, "L", false, 0, "")
 
 	// ─── RECONNAISSANCE FINDINGS ─────────────────────────
 	recon := CollectReconSummary(scan.Events)
@@ -504,16 +530,16 @@ func Generate(scan *Scan, opts Options) (string, error) {
 		drawRect(0, 0, 210, 1.5, teal)
 
 		pdf.SetY(15)
-		pdf.SetFont("Helvetica", "B", 22)
+		pdf.SetFont(family("Helvetica"), style("B"), 22)
 		setColor(teal)
-		pdf.CellFormat(190, 12, bundle.SectionRecon, "", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 12, bundle.SectionRecon, style(""), 1, "L", false, 0, "")
 		drawRect(10, pdf.GetY()+2, 62, 0.8, teal)
 		pdf.Ln(8)
 
-		pdf.SetFont("Helvetica", "", 9)
+		pdf.SetFont(family("Helvetica"), style(""), 9)
 		setColor(white)
 		pdf.SetX(10)
-		pdf.MultiCell(190, 4.5, "The following non-exploit reconnaissance observations were extracted from the scan feed and tool outputs. These are included for attack-surface documentation and operational handoff.", "", "L", false)
+		pdf.MultiCell(190, 4.5, "The following non-exploit reconnaissance observations were extracted from the scan feed and tool outputs. These are included for attack-surface documentation and operational handoff.", style(""), "L", false)
 		pdf.Ln(5)
 
 		drawReconList := func(title string, items []string) {
@@ -529,11 +555,11 @@ func Generate(scan *Scan, opts Options) (string, error) {
 			headerY := pdf.GetY()
 			drawRect(10, headerY, 190, 8, sectionBg)
 			pdf.SetXY(14, headerY+1)
-			pdf.SetFont("Helvetica", "B", 9)
+			pdf.SetFont(family("Helvetica"), style("B"), 9)
 			setColor(teal)
-			pdf.CellFormat(180, 6, strings.ToUpper(title), "", 1, "L", false, 0, "")
+			pdf.CellFormat(180, 6, strings.ToUpper(title), style(""), 1, "L", false, 0, "")
 			pdf.Ln(2)
-			pdf.SetFont("Courier", "", 7)
+			pdf.SetFont(family("Courier"), style(""), 7)
 			setColor(white)
 			for _, item := range items {
 				if pdf.GetY() > 270 {
@@ -543,7 +569,7 @@ func Generate(scan *Scan, opts Options) (string, error) {
 					pdf.SetY(15)
 				}
 				pdf.SetX(14)
-				pdf.MultiCell(182, 4, "- "+item, "", "L", false)
+				pdf.MultiCell(182, 4, "- "+item, style(""), "L", false)
 			}
 			pdf.Ln(4)
 		}
@@ -563,17 +589,17 @@ func Generate(scan *Scan, opts Options) (string, error) {
 		drawRect(0, 0, 210, 1.5, coral)
 		pdf.SetY(15)
 	}
-	pdf.SetFont("Helvetica", "B", 16)
+	pdf.SetFont(family("Helvetica"), style("B"), 16)
 	setColor(coral)
-	pdf.CellFormat(190, 10, bundle.SectionBlueTeam, "", 1, "L", false, 0, "")
+	pdf.CellFormat(190, 10, bundle.SectionBlueTeam, style(""), 1, "L", false, 0, "")
 	drawRect(10, pdf.GetY()+1, 50, 0.8, teal)
 	pdf.Ln(6)
 
-	pdf.SetFont("Helvetica", "", 8)
+	pdf.SetFont(family("Helvetica"), style(""), 8)
 	setColor(gray)
 	pdf.SetX(10)
 	pdf.MultiCell(190, 4, "The following RFC3339 timestamps enable Blue Team operators to correlate "+
-		"scan activity with SIEM/log sources for use-case development and alert tuning.", "", "L", false)
+		"scan activity with SIEM/log sources for use-case development and alert tuning.", style(""), "L", false)
 	pdf.Ln(3)
 
 	tsItems := [][2]string{
@@ -607,16 +633,16 @@ func Generate(scan *Scan, opts Options) (string, error) {
 			bgColor = sectionBg
 		}
 		drawRect(10, pdf.GetY(), 190, 7, bgColor)
-		pdf.SetFont("Helvetica", "B", 7)
+		pdf.SetFont(family("Helvetica"), style("B"), 7)
 		setColor(gray)
 		titleStr := ts[0]
 		if titleRunes := []rune(titleStr); len(titleRunes) > 75 {
 			titleStr = string(titleRunes[:72]) + "..."
 		}
-		pdf.CellFormat(120, 7, "  "+titleStr, "", 0, "L", false, 0, "")
-		pdf.SetFont("Courier", "", 7)
+		pdf.CellFormat(120, 7, "  "+titleStr, style(""), 0, "L", false, 0, "")
+		pdf.SetFont(family("Courier"), style(""), 7)
 		setColor(teal)
-		pdf.CellFormat(70, 7, ts[1], "", 1, "L", false, 0, "")
+		pdf.CellFormat(70, 7, ts[1], style(""), 1, "L", false, 0, "")
 	}
 
 	// Pre-compute all vuln mappings once for the entire report.
@@ -640,31 +666,31 @@ func Generate(scan *Scan, opts Options) (string, error) {
 		drawRect(0, 0, 210, 1.5, coral)
 
 		pdf.SetY(15)
-		pdf.SetFont("Helvetica", "B", 22)
+		pdf.SetFont(family("Helvetica"), style("B"), 22)
 		setColor(coral)
-		pdf.CellFormat(190, 12, bundle.SectionFindings, "", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 12, bundle.SectionFindings, style(""), 1, "L", false, 0, "")
 		drawRect(10, pdf.GetY()+2, 50, 0.8, coral)
 		pdf.Ln(8)
 
-		pdf.SetFont("Helvetica", "", 8)
+		pdf.SetFont(family("Helvetica"), style(""), 8)
 		setColor(white)
 		pdf.SetX(10)
-		pdf.MultiCell(190, 4, "The following table summarizes all findings with their security framework mappings (CWE, OWASP Top 10 2021). Detailed write-ups follow in the Vulnerability Details section.", "", "L", false)
+		pdf.MultiCell(190, 4, "The following table summarizes all findings with their security framework mappings (CWE, OWASP Top 10 2021). Detailed write-ups follow in the Vulnerability Details section.", style(""), "L", false)
 		pdf.Ln(4)
 
 		// Table header
 		thY := pdf.GetY()
 		drawRect(10, thY, 190, 8, sectionBg)
-		pdf.SetFont("Helvetica", "B", 7)
+		pdf.SetFont(family("Helvetica"), style("B"), 7)
 		setColor(coral)
 		pdf.SetXY(12, thY+1)
-		pdf.CellFormat(10, 6, bundle.LabelID, "", 0, "L", false, 0, "")
-		pdf.CellFormat(68, 6, bundle.LabelFinding, "", 0, "L", false, 0, "")
-		pdf.CellFormat(20, 6, bundle.LabelSeverity, "", 0, "C", false, 0, "")
-		pdf.CellFormat(14, 6, bundle.LabelCVSS, "", 0, "C", false, 0, "")
-		pdf.CellFormat(40, 6, bundle.LabelCVE, "", 0, "L", false, 0, "")
-		pdf.CellFormat(18, 6, bundle.LabelCWE, "", 0, "L", false, 0, "")
-		pdf.CellFormat(20, 6, bundle.LabelOWASP, "", 0, "L", false, 0, "")
+		pdf.CellFormat(10, 6, bundle.LabelID, style(""), 0, "L", false, 0, "")
+		pdf.CellFormat(68, 6, bundle.LabelFinding, style(""), 0, "L", false, 0, "")
+		pdf.CellFormat(20, 6, bundle.LabelSeverity, style(""), 0, "C", false, 0, "")
+		pdf.CellFormat(14, 6, bundle.LabelCVSS, style(""), 0, "C", false, 0, "")
+		pdf.CellFormat(40, 6, bundle.LabelCVE, style(""), 0, "L", false, 0, "")
+		pdf.CellFormat(18, 6, bundle.LabelCWE, style(""), 0, "L", false, 0, "")
+		pdf.CellFormat(20, 6, bundle.LabelOWASP, style(""), 0, "L", false, 0, "")
 		pdf.Ln(8)
 
 		// Table rows
@@ -689,29 +715,29 @@ func Generate(scan *Scan, opts Options) (string, error) {
 			drawRect(10, rowY, 2, 7, sc)
 
 			pdf.SetXY(12, rowY)
-			pdf.SetFont("Helvetica", "B", 7)
+			pdf.SetFont(family("Helvetica"), style("B"), 7)
 			setColor(gray)
-			pdf.CellFormat(10, 7, fmt.Sprintf("F-%02d", i+1), "", 0, "L", false, 0, "")
+			pdf.CellFormat(10, 7, fmt.Sprintf("F-%02d", i+1), style(""), 0, "L", false, 0, "")
 
-			pdf.SetFont("Helvetica", "", 7)
+			pdf.SetFont(family("Helvetica"), style(""), 7)
 			setColor(white)
 			titleStr := v.Title
 			if titleRunes := []rune(titleStr); len(titleRunes) > 40 {
 				titleStr = string(titleRunes[:37]) + "..."
 			}
-			pdf.CellFormat(68, 7, titleStr, "", 0, "L", false, 0, "")
+			pdf.CellFormat(68, 7, titleStr, style(""), 0, "L", false, 0, "")
 
-			pdf.SetFont("Helvetica", "B", 7)
+			pdf.SetFont(family("Helvetica"), style("B"), 7)
 			pdf.SetTextColor(sc[0], sc[1], sc[2])
-			pdf.CellFormat(20, 7, strings.ToUpper(SeverityLabel(v.Severity, bundle)), "", 0, "C", false, 0, "")
+			pdf.CellFormat(20, 7, strings.ToUpper(SeverityLabel(v.Severity, bundle)), style(""), 0, "C", false, 0, "")
 
 			setColor(white)
-			pdf.SetFont("Helvetica", "", 7)
+			pdf.SetFont(family("Helvetica"), style(""), 7)
 			cvssStr := "—"
 			if v.CVSS > 0 {
 				cvssStr = fmt.Sprintf("%.1f", v.CVSS)
 			}
-			pdf.CellFormat(14, 7, cvssStr, "", 0, "C", false, 0, "")
+			pdf.CellFormat(14, 7, cvssStr, style(""), 0, "C", false, 0, "")
 
 			setColor(gray)
 			cveStr := v.CVE
@@ -721,20 +747,20 @@ func Generate(scan *Scan, opts Options) (string, error) {
 			if cveStr == "" {
 				cveStr = "—"
 			}
-			pdf.CellFormat(40, 7, cveStr, "", 0, "L", false, 0, "")
+			pdf.CellFormat(40, 7, cveStr, style(""), 0, "L", false, 0, "")
 
 			setColor(teal)
 			cweStr := mappings.CWEID
 			if cweStr == "" {
 				cweStr = "—"
 			}
-			pdf.CellFormat(18, 7, cweStr, "", 0, "L", false, 0, "")
+			pdf.CellFormat(18, 7, cweStr, style(""), 0, "L", false, 0, "")
 
 			owaspStr := mappings.OWASP
 			if owaspStr == "" {
 				owaspStr = "—"
 			}
-			pdf.CellFormat(20, 7, owaspStr, "", 1, "L", false, 0, "")
+			pdf.CellFormat(20, 7, owaspStr, style(""), 1, "L", false, 0, "")
 		}
 
 		// ─── VULNERABILITY DETAILS ─────────────────────────────
@@ -743,9 +769,9 @@ func Generate(scan *Scan, opts Options) (string, error) {
 		drawRect(0, 0, 210, 1.5, coral)
 
 		pdf.SetY(15)
-		pdf.SetFont("Helvetica", "B", 22)
+		pdf.SetFont(family("Helvetica"), style("B"), 22)
 		setColor(coral)
-		pdf.CellFormat(190, 12, bundle.SectionVulnDetail, "", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 12, bundle.SectionVulnDetail, style(""), 1, "L", false, 0, "")
 		drawRect(10, pdf.GetY()+2, 50, 0.8, coral)
 		pdf.Ln(8)
 
@@ -767,7 +793,7 @@ func Generate(scan *Scan, opts Options) (string, error) {
 
 			// Truncate title to avoid overlapping with severity badge
 			vulnTitle := fmt.Sprintf("#%d  %s", idx+1, v.Title)
-			pdf.SetFont("Helvetica", "B", 10)
+			pdf.SetFont(family("Helvetica"), style("B"), 10)
 			maxTitleW := 150.0 // badge starts at x=170, title starts at x=16, leave 4mm gap
 			for len(vulnTitle) > 0 && pdf.GetStringWidth(vulnTitle) > maxTitleW {
 				runes := []rune(vulnTitle)
@@ -779,39 +805,39 @@ func Generate(scan *Scan, opts Options) (string, error) {
 
 			pdf.SetXY(16, headerY+1)
 			setColor(white)
-			pdf.CellFormat(maxTitleW, 8, vulnTitle, "", 0, "L", false, 0, "")
+			pdf.CellFormat(maxTitleW, 8, vulnTitle, style(""), 0, "L", false, 0, "")
 
 			// Severity badge
 			pdf.SetXY(170, headerY+2)
-			pdf.SetFont("Helvetica", "B", 8)
+			pdf.SetFont(family("Helvetica"), style("B"), 8)
 			drawRect(170, headerY+2, 28, 6, sc)
 			pdf.SetTextColor(255, 255, 255)
-			pdf.CellFormat(28, 6, strings.ToUpper(SeverityLabel(v.Severity, bundle)), "", 0, "C", false, 0, "")
+			pdf.CellFormat(28, 6, strings.ToUpper(SeverityLabel(v.Severity, bundle)), style(""), 0, "C", false, 0, "")
 
 			pdf.SetY(headerY + 12)
 
 			// Verification method badge
 			if v.VerificationMethod != "" {
-				pdf.SetFont("Helvetica", "I", 7)
+				pdf.SetFont(family("Helvetica"), style("I"), 7)
 				setColor(teal)
 				pdf.SetX(14)
-				pdf.CellFormat(0, 5, fmt.Sprintf(bundle.LabelVerified, strings.ToUpper(v.VerificationMethod)), "", 1, "L", false, 0, "")
+				pdf.CellFormat(0, 5, fmt.Sprintf(bundle.LabelVerified, strings.ToUpper(v.VerificationMethod)), style(""), 1, "L", false, 0, "")
 			}
 
 			// Vuln meta — row 1: CVSS + CVSS vector
 			if v.CVSS > 0 {
 				metaY := pdf.GetY()
-				pdf.SetFont("Helvetica", "", 8)
+				pdf.SetFont(family("Helvetica"), style(""), 8)
 				setColor(gray)
 				pdf.SetXY(14, metaY)
-				pdf.CellFormat(15, 5, bundle.LabelCVSSValue, "", 0, "L", false, 0, "")
+				pdf.CellFormat(15, 5, bundle.LabelCVSSValue, style(""), 0, "L", false, 0, "")
 				setColor(sc)
-				pdf.SetFont("Helvetica", "B", 8)
-				pdf.CellFormat(15, 5, fmt.Sprintf("%.1f", v.CVSS), "", 0, "L", false, 0, "")
+				pdf.SetFont(family("Helvetica"), style("B"), 8)
+				pdf.CellFormat(15, 5, fmt.Sprintf("%.1f", v.CVSS), style(""), 0, "L", false, 0, "")
 				if v.CVSSVector != "" {
 					setColor(gray)
-					pdf.SetFont("Helvetica", "", 7)
-					pdf.CellFormat(0, 5, v.CVSSVector, "", 0, "L", false, 0, "")
+					pdf.SetFont(family("Helvetica"), style(""), 7)
+					pdf.CellFormat(0, 5, v.CVSSVector, style(""), 0, "L", false, 0, "")
 				}
 				pdf.Ln(6)
 			}
@@ -823,18 +849,18 @@ func Generate(scan *Scan, opts Options) (string, error) {
 				pdf.SetXY(14, meta2Y)
 				if v.CVE != "" {
 					setColor(gray)
-					pdf.SetFont("Helvetica", "", 8)
-					pdf.CellFormat(12, 5, bundle.LabelCVEValue, "", 0, "L", false, 0, "")
+					pdf.SetFont(family("Helvetica"), style(""), 8)
+					pdf.CellFormat(12, 5, bundle.LabelCVEValue, style(""), 0, "L", false, 0, "")
 					setColor(white)
-					cveText := DisplayText(v.CVE, "", 80)
-					pdf.CellFormat(90, 5, cveText, "", 0, "L", false, 0, "")
+					cveText := DisplayText(v.CVE, style(""), 80)
+					pdf.CellFormat(90, 5, cveText, style(""), 0, "L", false, 0, "")
 				}
 				if v.Method != "" {
 					setColor(gray)
-					pdf.SetFont("Helvetica", "", 8)
-					pdf.CellFormat(18, 5, bundle.LabelMethod, "", 0, "L", false, 0, "")
+					pdf.SetFont(family("Helvetica"), style(""), 8)
+					pdf.CellFormat(18, 5, bundle.LabelMethod, style(""), 0, "L", false, 0, "")
 					setColor(white)
-					pdf.CellFormat(20, 5, v.Method, "", 0, "L", false, 0, "")
+					pdf.CellFormat(20, 5, v.Method, style(""), 0, "L", false, 0, "")
 				}
 				pdf.Ln(6)
 			}
@@ -848,19 +874,19 @@ func Generate(scan *Scan, opts Options) (string, error) {
 				if vulnMappings.CWEID != "" {
 					// CWE badge
 					badgeW := pdf.GetStringWidth(vulnMappings.CWEID) + 6
-					pdf.SetFont("Helvetica", "B", 7)
+					pdf.SetFont(family("Helvetica"), style("B"), 7)
 					drawRect(pdf.GetX(), meta3Y, badgeW, 5.5, palette.Muted)
 					setColor(teal)
-					pdf.CellFormat(badgeW, 5.5, vulnMappings.CWEID, "", 0, "C", false, 0, "")
+					pdf.CellFormat(badgeW, 5.5, vulnMappings.CWEID, style(""), 0, "C", false, 0, "")
 					pdf.SetX(pdf.GetX() + 2)
 					if vulnMappings.CWEName != "" {
-						pdf.SetFont("Helvetica", "", 7)
+						pdf.SetFont(family("Helvetica"), style(""), 7)
 						setColor(gray)
 						nameStr := vulnMappings.CWEName
 						if nameRunes := []rune(nameStr); len(nameRunes) > 45 {
 							nameStr = string(nameRunes[:42]) + "..."
 						}
-						pdf.CellFormat(0, 5.5, nameStr, "", 0, "L", false, 0, "")
+						pdf.CellFormat(0, 5.5, nameStr, style(""), 0, "L", false, 0, "")
 					}
 				}
 				pdf.Ln(7)
@@ -871,10 +897,10 @@ func Generate(scan *Scan, opts Options) (string, error) {
 						owaspLabel = vulnMappings.OWASP + " — " + vulnMappings.OWASPName
 					}
 					badgeW := pdf.GetStringWidth(owaspLabel) + 6
-					pdf.SetFont("Helvetica", "B", 7)
+					pdf.SetFont(family("Helvetica"), style("B"), 7)
 					drawRect(pdf.GetX(), pdf.GetY(), badgeW, 5.5, palette.Muted)
 					setColor(coral)
-					pdf.CellFormat(badgeW, 5.5, owaspLabel, "", 0, "C", false, 0, "")
+					pdf.CellFormat(badgeW, 5.5, owaspLabel, style(""), 0, "C", false, 0, "")
 					pdf.Ln(7)
 				}
 			}
@@ -925,14 +951,14 @@ func Generate(scan *Scan, opts Options) (string, error) {
 				drawRect(10, secY, 190, 8, sectionBg)
 
 				pdf.SetXY(14, secY+1)
-				pdf.SetFont("Helvetica", "B", 8)
+				pdf.SetFont(family("Helvetica"), style("B"), 8)
 				setColor(coral)
-				pdf.CellFormat(0, 6, sec.label, "", 0, "L", false, 0, "")
+				pdf.CellFormat(0, 6, sec.label, style(""), 0, "L", false, 0, "")
 
 				pdf.SetY(secY + 9)
 
 				// Content
-				pdf.SetFont("Helvetica", "", 9)
+				pdf.SetFont(family("Helvetica"), style(""), 9)
 				if sec.label == "POC SCRIPT" || sec.label == "ENDPOINT" || sec.label == "EXPLOITATION PROOF" {
 					// Code-style content with dynamic height
 					codeY := pdf.GetY()
@@ -956,17 +982,17 @@ func Generate(scan *Scan, opts Options) (string, error) {
 					}
 					drawRect(14, codeY, 182, blockHeight, codeBg)
 					pdf.SetXY(17, codeY+3)
-					pdf.SetFont("Courier", "", 7)
+					pdf.SetFont(family("Courier"), style(""), 7)
 					if sec.label == "EXPLOITATION PROOF" {
 						setColor([3]int{255, 200, 100}) // Gold/amber for exploitation proof
 					} else {
 						setColor(cyan)
 					}
-					pdf.MultiCell(175, 4, content, "", "L", false)
+					pdf.MultiCell(175, 4, content, style(""), "L", false)
 				} else {
 					setColor(white)
 					pdf.SetX(14)
-					pdf.MultiCell(182, 5, sec.content, "", "L", false)
+					pdf.MultiCell(182, 5, sec.content, style(""), "L", false)
 				}
 				pdf.Ln(4)
 			}
@@ -1011,13 +1037,13 @@ func Generate(scan *Scan, opts Options) (string, error) {
 		drawRect(0, 0, 210, 1.5, coral)
 
 		pdf.SetY(15)
-		pdf.SetFont("Helvetica", "B", 22)
+		pdf.SetFont(family("Helvetica"), style("B"), 22)
 		setColor(coral)
-		pdf.CellFormat(190, 12, bundle.SectionEndpoints, "", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 12, bundle.SectionEndpoints, style(""), 1, "L", false, 0, "")
 		drawRect(10, pdf.GetY()+2, 50, 0.8, coral)
 		pdf.Ln(8)
 
-		pdf.SetFont("Helvetica", "", 9)
+		pdf.SetFont(family("Helvetica"), style(""), 9)
 		setColor(white)
 		// Show first 30 endpoints
 		displayEndpoints := endpoints
@@ -1031,15 +1057,15 @@ func Generate(scan *Scan, opts Options) (string, error) {
 				drawRect(0, 0, 210, 1.5, coral)
 				pdf.SetY(15)
 			}
-			pdf.SetFont("Courier", "", 8)
+			pdf.SetFont(family("Courier"), style(""), 8)
 			setColor(cyan)
-			pdf.CellFormat(190, 5, "- "+ep, "", 1, "L", false, 0, "")
+			pdf.CellFormat(190, 5, "- "+ep, style(""), 1, "L", false, 0, "")
 		}
 		if len(endpoints) > 30 {
 			pdf.Ln(2)
-			pdf.SetFont("Helvetica", "", 9)
+			pdf.SetFont(family("Helvetica"), style(""), 9)
 			setColor(gray)
-			pdf.CellFormat(190, 5, fmt.Sprintf("... and %d more endpoints", len(endpoints)-30), "", 1, "L", false, 0, "")
+			pdf.CellFormat(190, 5, fmt.Sprintf("... and %d more endpoints", len(endpoints)-30), style(""), 1, "L", false, 0, "")
 		}
 	}
 
@@ -1049,17 +1075,17 @@ func Generate(scan *Scan, opts Options) (string, error) {
 	drawRect(0, 0, 210, 1.5, coral)
 
 	pdf.SetY(15)
-	pdf.SetFont("Helvetica", "B", 22)
+	pdf.SetFont(family("Helvetica"), style("B"), 22)
 	setColor(red)
-	pdf.CellFormat(190, 12, bundle.SectionDisclaimer, "", 1, "L", false, 0, "")
+	pdf.CellFormat(190, 12, bundle.SectionDisclaimer, style(""), 1, "L", false, 0, "")
 	drawRect(10, pdf.GetY()+2, 50, 0.8, teal)
 	pdf.Ln(10)
 
 	disclaimer := bundle.Disclaimer
 
-	pdf.SetFont("Helvetica", "", 10)
+	pdf.SetFont(family("Helvetica"), style(""), 10)
 	setColor(white)
-	pdf.MultiCell(182, 5, disclaimer, "", "L", false)
+	pdf.MultiCell(182, 5, disclaimer, style(""), "L", false)
 
 	// ─── REFERENCE INDEX APPENDIX ──────────────────────────
 	if len(scan.Vulns) > 0 {
@@ -1068,34 +1094,34 @@ func Generate(scan *Scan, opts Options) (string, error) {
 		drawRect(0, 0, 210, 1.5, teal)
 
 		pdf.SetY(15)
-		pdf.SetFont("Helvetica", "B", 22)
+		pdf.SetFont(family("Helvetica"), style("B"), 22)
 		setColor(teal)
-		pdf.CellFormat(190, 12, bundle.SectionRefIndex, "", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 12, bundle.SectionRefIndex, style(""), 1, "L", false, 0, "")
 		drawRect(10, pdf.GetY()+2, 50, 0.8, teal)
 		pdf.Ln(8)
 
-		pdf.SetFont("Helvetica", "", 8)
+		pdf.SetFont(family("Helvetica"), style(""), 8)
 		setColor(white)
 		pdf.SetX(10)
-		pdf.MultiCell(190, 4, "The mappings below are inferred from each finding's vulnerability class and are provided as a consolidated index for traceability and compliance reporting.", "", "L", false)
+		pdf.MultiCell(190, 4, "The mappings below are inferred from each finding's vulnerability class and are provided as a consolidated index for traceability and compliance reporting.", style(""), "L", false)
 		pdf.Ln(5)
 
 		// ── CWE Reference Table ──
-		pdf.SetFont("Helvetica", "B", 13)
+		pdf.SetFont(family("Helvetica"), style("B"), 13)
 		setColor(teal)
-		pdf.CellFormat(190, 8, bundle.SectionCWERef, "", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 8, bundle.SectionCWERef, style(""), 1, "L", false, 0, "")
 		pdf.Ln(2)
 
 		// Table header
 		cweThY := pdf.GetY()
 		drawRect(10, cweThY, 190, 8, sectionBg)
-		pdf.SetFont("Helvetica", "B", 7)
+		pdf.SetFont(family("Helvetica"), style("B"), 7)
 		setColor(teal)
 		pdf.SetXY(12, cweThY+1)
-		pdf.CellFormat(15, 6, bundle.LabelFinding, "", 0, "L", false, 0, "")
-		pdf.CellFormat(22, 6, bundle.LabelCWE, "", 0, "L", false, 0, "")
-		pdf.CellFormat(80, 6, bundle.LabelName, "", 0, "L", false, 0, "")
-		pdf.CellFormat(63, 6, bundle.LabelTitle, "", 0, "L", false, 0, "")
+		pdf.CellFormat(15, 6, bundle.LabelFinding, style(""), 0, "L", false, 0, "")
+		pdf.CellFormat(22, 6, bundle.LabelCWE, style(""), 0, "L", false, 0, "")
+		pdf.CellFormat(80, 6, bundle.LabelName, style(""), 0, "L", false, 0, "")
+		pdf.CellFormat(63, 6, bundle.LabelTitle, style(""), 0, "L", false, 0, "")
 		pdf.Ln(8)
 
 		for i, v := range scan.Vulns {
@@ -1114,19 +1140,19 @@ func Generate(scan *Scan, opts Options) (string, error) {
 			drawRect(10, rowY, 190, 7, rowBg)
 
 			pdf.SetXY(12, rowY)
-			pdf.SetFont("Helvetica", "B", 7)
+			pdf.SetFont(family("Helvetica"), style("B"), 7)
 			setColor(gray)
-			pdf.CellFormat(15, 7, fmt.Sprintf("F-%02d", i+1), "", 0, "L", false, 0, "")
+			pdf.CellFormat(15, 7, fmt.Sprintf("F-%02d", i+1), style(""), 0, "L", false, 0, "")
 
 			setColor(teal)
 			cweStr := mappings.CWEID
 			if cweStr == "" {
 				cweStr = "—"
 			}
-			pdf.CellFormat(22, 7, cweStr, "", 0, "L", false, 0, "")
+			pdf.CellFormat(22, 7, cweStr, style(""), 0, "L", false, 0, "")
 
 			setColor(white)
-			pdf.SetFont("Helvetica", "", 7)
+			pdf.SetFont(family("Helvetica"), style(""), 7)
 			cweName := mappings.CWEName
 			if cweName == "" {
 				cweName = "—"
@@ -1134,14 +1160,14 @@ func Generate(scan *Scan, opts Options) (string, error) {
 			if cweRunes := []rune(cweName); len(cweRunes) > 48 {
 				cweName = string(cweRunes[:45]) + "..."
 			}
-			pdf.CellFormat(80, 7, cweName, "", 0, "L", false, 0, "")
+			pdf.CellFormat(80, 7, cweName, style(""), 0, "L", false, 0, "")
 
 			setColor(gray)
 			titleStr := v.Title
 			if titleRunes := []rune(titleStr); len(titleRunes) > 38 {
 				titleStr = string(titleRunes[:35]) + "..."
 			}
-			pdf.CellFormat(63, 7, titleStr, "", 1, "L", false, 0, "")
+			pdf.CellFormat(63, 7, titleStr, style(""), 1, "L", false, 0, "")
 		}
 
 		pdf.Ln(8)
@@ -1154,9 +1180,9 @@ func Generate(scan *Scan, opts Options) (string, error) {
 			pdf.SetY(15)
 		}
 
-		pdf.SetFont("Helvetica", "B", 13)
+		pdf.SetFont(family("Helvetica"), style("B"), 13)
 		setColor(teal)
-		pdf.CellFormat(190, 8, bundle.SectionOWASPRef, "", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 8, bundle.SectionOWASPRef, style(""), 1, "L", false, 0, "")
 		pdf.Ln(2)
 
 		// owaspCounts was pre-computed above
@@ -1164,13 +1190,13 @@ func Generate(scan *Scan, opts Options) (string, error) {
 		// Table header
 		owThY := pdf.GetY()
 		drawRect(10, owThY, 190, 8, sectionBg)
-		pdf.SetFont("Helvetica", "B", 7)
+		pdf.SetFont(family("Helvetica"), style("B"), 7)
 		setColor(teal)
 		pdf.SetXY(12, owThY+1)
-		pdf.CellFormat(16, 6, bundle.LabelID, "", 0, "L", false, 0, "")
-		pdf.CellFormat(120, 6, bundle.LabelCategory, "", 0, "L", false, 0, "")
-		pdf.CellFormat(20, 6, bundle.LabelFindings, "", 0, "C", false, 0, "")
-		pdf.CellFormat(24, 6, bundle.LabelStatus, "", 0, "C", false, 0, "")
+		pdf.CellFormat(16, 6, bundle.LabelID, style(""), 0, "L", false, 0, "")
+		pdf.CellFormat(120, 6, bundle.LabelCategory, style(""), 0, "L", false, 0, "")
+		pdf.CellFormat(20, 6, bundle.LabelFindings, style(""), 0, "C", false, 0, "")
+		pdf.CellFormat(24, 6, bundle.LabelStatus, style(""), 0, "C", false, 0, "")
 		pdf.Ln(8)
 
 		for i, cat := range OWASPCategories {
@@ -1192,38 +1218,38 @@ func Generate(scan *Scan, opts Options) (string, error) {
 			}
 
 			pdf.SetXY(12, rowY)
-			pdf.SetFont("Helvetica", "B", 7)
+			pdf.SetFont(family("Helvetica"), style("B"), 7)
 			if hasFindings {
 				setColor(coral)
 			} else {
 				setColor(gray)
 			}
-			pdf.CellFormat(16, 7, cat.ID, "", 0, "L", false, 0, "")
+			pdf.CellFormat(16, 7, cat.ID, style(""), 0, "L", false, 0, "")
 
-			pdf.SetFont("Helvetica", "", 7)
+			pdf.SetFont(family("Helvetica"), style(""), 7)
 			if hasFindings {
 				setColor(white)
 			} else {
 				setColor(gray)
 			}
-			pdf.CellFormat(120, 7, cat.Name, "", 0, "L", false, 0, "")
+			pdf.CellFormat(120, 7, cat.Name, style(""), 0, "L", false, 0, "")
 
-			pdf.SetFont("Helvetica", "B", 7)
+			pdf.SetFont(family("Helvetica"), style("B"), 7)
 			if hasFindings {
 				setColor(red)
-				pdf.CellFormat(20, 7, fmt.Sprintf("%d", count), "", 0, "C", false, 0, "")
-				pdf.SetFont("Helvetica", "B", 6)
+				pdf.CellFormat(20, 7, fmt.Sprintf("%d", count), style(""), 0, "C", false, 0, "")
+				pdf.SetFont(family("Helvetica"), style("B"), 6)
 				drawRect(166, rowY+1, 22, 5, red)
 				pdf.SetTextColor(255, 255, 255)
 				pdf.SetXY(166, rowY+1)
-				pdf.CellFormat(22, 5, bundle.StatusFound, "", 0, "C", false, 0, "")
+				pdf.CellFormat(22, 5, bundle.StatusFound, style(""), 0, "C", false, 0, "")
 			} else {
 				setColor(gray)
-				pdf.CellFormat(20, 7, "0", "", 0, "C", false, 0, "")
-				pdf.SetFont("Helvetica", "", 6)
+				pdf.CellFormat(20, 7, "0", style(""), 0, "C", false, 0, "")
+				pdf.SetFont(family("Helvetica"), style(""), 6)
 				setColor(teal)
 				pdf.SetXY(166, rowY+1)
-				pdf.CellFormat(22, 5, bundle.StatusClear, "", 0, "C", false, 0, "")
+				pdf.CellFormat(22, 5, bundle.StatusClear, style(""), 0, "C", false, 0, "")
 			}
 			pdf.Ln(7)
 		}
@@ -1238,9 +1264,9 @@ func Generate(scan *Scan, opts Options) (string, error) {
 				pdf.SetY(15)
 			}
 
-			pdf.SetFont("Helvetica", "B", 13)
+			pdf.SetFont(family("Helvetica"), style("B"), 13)
 			setColor(teal)
-			pdf.CellFormat(190, 8, bundle.SectionPTESMap, "", 1, "L", false, 0, "")
+			pdf.CellFormat(190, 8, bundle.SectionPTESMap, style(""), 1, "L", false, 0, "")
 			pdf.Ln(2)
 
 			ptesPhases := []string{
@@ -1254,12 +1280,12 @@ func Generate(scan *Scan, opts Options) (string, error) {
 			// Table header
 			ptThY := pdf.GetY()
 			drawRect(10, ptThY, 190, 8, sectionBg)
-			pdf.SetFont("Helvetica", "B", 7)
+			pdf.SetFont(family("Helvetica"), style("B"), 7)
 			setColor(teal)
 			pdf.SetXY(12, ptThY+1)
-			pdf.CellFormat(100, 6, bundle.LabelPhase, "", 0, "L", false, 0, "")
-			pdf.CellFormat(30, 6, bundle.LabelFindings, "", 0, "C", false, 0, "")
-			pdf.CellFormat(50, 6, bundle.LabelStatus, "", 0, "C", false, 0, "")
+			pdf.CellFormat(100, 6, bundle.LabelPhase, style(""), 0, "L", false, 0, "")
+			pdf.CellFormat(30, 6, bundle.LabelFindings, style(""), 0, "C", false, 0, "")
+			pdf.CellFormat(50, 6, bundle.LabelStatus, style(""), 0, "C", false, 0, "")
 			pdf.Ln(8)
 
 			for j, phase := range ptesPhases {
@@ -1280,26 +1306,26 @@ func Generate(scan *Scan, opts Options) (string, error) {
 				}
 
 				pdf.SetXY(12, rowY)
-				pdf.SetFont("Helvetica", "", 7)
+				pdf.SetFont(family("Helvetica"), style(""), 7)
 				if hasFindings {
 					setColor(white)
 				} else {
 					setColor(gray)
 				}
-				pdf.CellFormat(100, 7, phase, "", 0, "L", false, 0, "")
+				pdf.CellFormat(100, 7, phase, style(""), 0, "L", false, 0, "")
 
-				pdf.SetFont("Helvetica", "B", 7)
+				pdf.SetFont(family("Helvetica"), style("B"), 7)
 				if hasFindings {
 					setColor(coral)
-					pdf.CellFormat(30, 7, fmt.Sprintf("%d", count), "", 0, "C", false, 0, "")
-					pdf.SetFont("Helvetica", "B", 6)
+					pdf.CellFormat(30, 7, fmt.Sprintf("%d", count), style(""), 0, "C", false, 0, "")
+					pdf.SetFont(family("Helvetica"), style("B"), 6)
 					setColor(white)
-					pdf.CellFormat(50, 7, bundle.StatusTested, "", 0, "C", false, 0, "")
+					pdf.CellFormat(50, 7, bundle.StatusTested, style(""), 0, "C", false, 0, "")
 				} else {
 					setColor(gray)
-					pdf.CellFormat(30, 7, "0", "", 0, "C", false, 0, "")
-					pdf.SetFont("Helvetica", "", 6)
-					pdf.CellFormat(50, 7, "—", "", 0, "C", false, 0, "")
+					pdf.CellFormat(30, 7, "0", style(""), 0, "C", false, 0, "")
+					pdf.SetFont(family("Helvetica"), style(""), 6)
+					pdf.CellFormat(50, 7, "—", style(""), 0, "C", false, 0, "")
 				}
 				pdf.Ln(7)
 			}

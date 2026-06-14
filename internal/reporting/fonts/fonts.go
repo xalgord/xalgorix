@@ -17,11 +17,19 @@ import (
 	"os"
 )
 
-// embeddedOTF holds the Noto Sans CJK SC Regular OTF bytes, embedded
-// into the binary at compile time. The Makefile's download-font
-// target places the file at the path below before go build runs.
+// embeddedOTF holds the Noto Sans SC Regular TTF bytes, embedded into
+// the binary at compile time. The Makefile's download-font target
+// places the file at the path below before go build runs.
 //
-//go:embed NotoSansCJKsc-Regular.otf
+// We embed the Simplified Chinese web subset (Noto Sans SC) rather
+// than the full CJK family (Noto Sans CJK SC) because fpdf's UTF8
+// font parser rejects OTF files — and the notofonts/noto-cjk
+// project distributes the full family only as OTF. The SC TTF
+// subset has all the glyphs we need to render a Chinese security
+// report; the trade-off is no coverage for Japanese / Korean /
+// Traditional Chinese characters, which we do not emit.
+//
+//go:embed NotoSansSC-Regular.ttf
 var embeddedOTF []byte
 
 // Load returns the font bytes the PDF renderer should register with

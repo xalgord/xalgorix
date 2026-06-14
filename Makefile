@@ -27,10 +27,10 @@ build: webui download-font
 
 # F-001: download the CJK font used by the Chinese PDF report bundle.
 # Idempotent — the script is a no-op if the file is already in place.
-download-font: internal/reporting/fonts/NotoSansCJKsc-Regular.otf
+download-font: internal/reporting/fonts/NotoSansSC-Regular.ttf
 
-internal/reporting/fonts/NotoSansCJKsc-Regular.otf:
-	@echo "▶ download-font: fetching Noto Sans CJK SC (F-001 CJK font)"
+internal/reporting/fonts/NotoSansSC-Regular.ttf:
+	@echo "▶ download-font: fetching Noto Sans SC (F-001 CJK font, TTF)"
 	@bash scripts/download-font.sh
 
 run:

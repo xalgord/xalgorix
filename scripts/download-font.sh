@@ -23,18 +23,20 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 FONT_DIR="internal/reporting/fonts"
-FONT_FILE="$FONT_DIR/NotoSansCJKsc-Regular.otf"
+FONT_FILE="$FONT_DIR/NotoSansSC-Regular.ttf"
 MIN_SIZE_BYTES=5000000  # ~5MB; smaller is almost certainly a 404 or wrong file
 
-# Apache 2.0 licensed Noto Sans CJK SC — the Simplified Chinese subset of
-# the full Noto Sans CJK family maintained by Google and the notofonts
-# project. The full font family is also distributed under the same
-# license by Adobe as "Source Han Sans".
+# Noto Sans SC (Simplified Chinese web subset) in TTF format. The
+# full CJK family (Noto Sans CJK SC) is OTF-only on the notofonts
+# project, and fpdf's UTF8 font parser REJECTS OTF files (its
+# parseFile() returns "not supported" for the OTTO magic — see
+# utf8fontfile.go in github.com/go-pdf/fpdf). Switching to the SC
+# subset TTF: same Apache 2.0 license, ~10MB, fpdf-compatible.
 #
-# Source: https://github.com/notofonts/noto-cjk
+# Source: Google Fonts CDN (https://fonts.google.com/noto/specimen/Noto+Sans+SC)
 # License: SIL Open Font License 1.1 (https://scripts.sil.org/OFL)
 #         — Apache 2.0 compatible.
-URL="https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf"
+URL="https://fonts.gstatic.com/s/notosanssc/v40/k3kCo84MPvpLmixcA63oeAL7Iqp5IZJF9bmaG9_FnYw.ttf"
 
 # --- idempotency check -----------------------------------------------------
 if [ -f "$FONT_FILE" ]; then
@@ -68,14 +70,29 @@ if [ "$ACTUAL_SIZE" -lt "$MIN_SIZE_BYTES" ]; then
   exit 1
 fi
 
-# OTF magic: first 4 bytes should be "OTTO". TrueType-flavored OTFs
-# (which is what Noto CJK uses) carry this signature.
-MAGIC="$(head -c 4 "$TMP_FILE")"
-if [ "$MAGIC" != "OTTO" ]; then
-  echo "  ✗ downloaded file is not an OTF (magic bytes: ${MAGIC:-<empty>})" >&2
-  echo "    check that the URL still points to NotoSansCJKsc-Regular.otf" >&2
+# TTF magic: first 4 bytes should be 0x00010000 ("\x00\x01\x00\x00" in little-endian
+# file read as bytes). TrueType-flavored TTFs (which is what Noto Sans SC
+# is) carry this signature. We accept any non-empty 4-byte signature
+# since OTTO (OTF) is the only other common magic; the size check
+# above already filtered out 404s and HTML error pages.
+MAGIC="$(head -c 4 "$TMP_FILE" | od -An -t x1 | tr -d ' \n')"
+if [ -z "$MAGIC" ] || [ "${#MAGIC}" -lt 8 ]; then
+  echo "  ✗ downloaded file is too small to inspect (magic: $MAGIC)" >&2
   exit 1
 fi
+case "$MAGIC" in
+  00010000) ;;  # TTF / TrueType
+  4f54544f)   # OTTO / OTF — we do not embed OTF (fpdf can't parse it)
+    echo "  ✗ downloaded file is OTF (magic: OTTO); fpdf's UTF8 parser rejects OTF" >&2
+    echo "    check that the URL still points to a .ttf file" >&2
+    exit 1
+    ;;
+  *)
+    echo "  ✗ downloaded file has unexpected magic bytes: $MAGIC" >&2
+    echo "    check that the URL still points to NotoSansSC-Regular.ttf" >&2
+    exit 1
+    ;;
+esac
 
 # --- land atomically --------------------------------------------------------
 mv "$TMP_FILE" "$FONT_FILE"
