@@ -18,9 +18,22 @@ func newBundleZh() *Bundle {
 		Lang: LangZH,
 
 		// Cover & brand
-		CoverBrand:       "Xalgorix",
-		CoverSubtitle:    "自主 AI 驱动的安全评估",
-		CoverScanIDLabel: "扫描 ID",
+		CoverBrand:           "Xalgorix",
+		CoverSubtitle:        "自主 AI 驱动的安全评估",
+		CoverScanIDLabel:     "扫描 ID",
+		CoverReportName:      "安全评估报告",
+		LabelTotalVulns:      "漏洞总数",
+		LabelToolCalls:       "工具调用次数",
+		LabelTotalTokens:     "Token 总数",
+		LabelScanStart:       "扫描开始",
+		LabelScanEnd:         "扫描结束",
+		LabelReconIPs:        "已解析的 IP 地址",
+		LabelReconPorts:      "开放端口与服务",
+		LabelReconTechs:      "已识别的技术栈",
+		LabelReconURLs:       "观察到的 URL 与端点",
+		CategoryIntelGather:  "情报收集",
+		CategoryVulnAnalysis: "漏洞分析",
+		LabelNotRecorded:     "未记录",
 
 		// Section titles
 		SectionExecSummary: "执行摘要",

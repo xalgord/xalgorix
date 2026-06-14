@@ -68,9 +68,22 @@ type Bundle struct {
 	Lang Lang
 
 	// ── Cover & top-level brand ──────────────────────────────────────
-	CoverBrand       string // e.g. "Xalgorix"
-	CoverSubtitle    string // e.g. "Autonomous AI-powered security assessment"
-	CoverScanIDLabel string // e.g. "SCAN ID"
+	CoverBrand           string // e.g. "Xalgorix"
+	CoverSubtitle        string // e.g. "Autonomous AI-powered security assessment"
+	CoverScanIDLabel     string // e.g. "SCAN ID"
+	CoverReportName      string // e.g. "Security Assessment Report"
+	LabelTotalVulns      string // e.g. "Total Vulnerabilities"
+	LabelToolCalls       string // e.g. "Tool Calls"
+	LabelTotalTokens     string // e.g. "Total Tokens"
+	LabelScanStart       string // e.g. "Scan Start"
+	LabelScanEnd         string // e.g. "Scan End"
+	LabelReconIPs        string // e.g. "Resolved IP Addresses"
+	LabelReconPorts      string // e.g. "Open Ports & Services"
+	LabelReconTechs      string // e.g. "Detected Technologies"
+	LabelReconURLs       string // e.g. "Observed URLs & Endpoints"
+	CategoryIntelGather  string // methodology category: "Intelligence Gathering"
+	CategoryVulnAnalysis string // methodology category: "Vulnerability Analysis"
+	LabelNotRecorded     string // e.g. "not recorded" — placeholder when scan.ID empty
 
 	// ── Section titles (big headings) ────────────────────────────────
 	SectionExecSummary string

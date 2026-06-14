@@ -11,9 +11,22 @@ func newBundleEn() *Bundle {
 		Lang: LangEN,
 
 		// Cover & brand
-		CoverBrand:       "Xalgorix",
-		CoverSubtitle:    "Autonomous AI-powered security assessment",
-		CoverScanIDLabel: "SCAN ID",
+		CoverBrand:           "Xalgorix",
+		CoverSubtitle:        "Autonomous AI-powered security assessment",
+		CoverScanIDLabel:     "SCAN ID",
+		CoverReportName:      "Security Assessment Report",
+		LabelTotalVulns:      "Total Vulnerabilities",
+		LabelToolCalls:       "Tool Calls",
+		LabelTotalTokens:     "Total Tokens",
+		LabelScanStart:       "Scan Start",
+		LabelScanEnd:         "Scan End",
+		LabelReconIPs:        "Resolved IP Addresses",
+		LabelReconPorts:      "Open Ports & Services",
+		LabelReconTechs:      "Detected Technologies",
+		LabelReconURLs:       "Observed URLs & Endpoints",
+		CategoryIntelGather:  "Intelligence Gathering",
+		CategoryVulnAnalysis: "Vulnerability Analysis",
+		LabelNotRecorded:     "not recorded",
 
 		// Section titles
 		SectionExecSummary: "Executive Summary",
