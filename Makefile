@@ -19,11 +19,19 @@ webui: webui/node_modules
 webui-dev: webui/node_modules
 	cd webui && npm run dev
 
-build: webui
+build: webui download-font
 	@echo "Building $(BINARY)..."
 	@mkdir -p $(BUILD_DIR)
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY) ./cmd/xalgorix/
 	@echo "Built: $(BUILD_DIR)/$(BINARY)"
+
+# F-001: download the CJK font used by the Chinese PDF report bundle.
+# Idempotent — the script is a no-op if the file is already in place.
+download-font: internal/reporting/fonts/NotoSansCJKsc-Regular.otf
+
+internal/reporting/fonts/NotoSansCJKsc-Regular.otf:
+	@echo "▶ download-font: fetching Noto Sans CJK SC (F-001 CJK font)"
+	@bash scripts/download-font.sh
 
 run:
 	go run ./cmd/xalgorix/ $(ARGS)

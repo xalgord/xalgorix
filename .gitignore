@@ -54,6 +54,10 @@ webui/dist/
 webui/.vite/
 webui/.turbo/
 
+# F-001: CJK font downloaded at build time. ~10MB OTF, embedded via
+# //go:embed; rebuilding without re-downloading is fine.
+internal/reporting/fonts/*.otf
+
 # Local-only ephemeral files used by release/commit tooling
 .commit_msg.tmp
 .pr_body.tmp
