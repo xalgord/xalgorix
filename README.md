@@ -424,6 +424,13 @@ Some settings require a restart because they affect process startup or server bi
 | `CAIDO_PORT`                    | `0`     | Caido proxy port. `0` means auto-detect. |
 | `CAIDO_API_TOKEN`               | none    | Caido API token.                         |
 
+### Reporting
+
+| Variable                          | Default | Description                                                                                            |
+| --------------------------------- | ------- | ------------------------------------------------------------------------------------------------------ |
+| `XALGORIX_REPORT_LANGUAGE`        | `zh`    | PDF report language: `en` or `zh`. Anything else (including unset) is rejected at startup with a clear error. Default is `zh` so fresh installs ship Chinese reports out of the box; set `en` to opt back into English. |
+| `XALGORIX_REPORT_FONT_PATH`       | none    | Optional override path to a CJK `.ttf`/`.otf` for the PDF report. Empty means use the embedded Noto Sans SC font (downloaded at build time via `make download-font`). A typo or unreadable file is surfaced as a startup error — Xalgorix does NOT silently fall back to the embedded default. |
+
 ### Rate Limits, Proxy, and Runtime
 
 | Variable                       | Default      | Description                                        |
