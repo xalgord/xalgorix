@@ -148,7 +148,11 @@ func fixedScan(companyName string) *Scan {
 func renderFixture(t *testing.T, scan *Scan) ([]byte, string) {
 	t.Helper()
 	dir := t.TempDir()
-	out, err := Generate(scan, Options{ScanDir: dir})
+	// F-001: explicitly request English so this fixture's byte-level
+	// SHA256 check (testdata/cover.sha256) stays stable. Pre-F-001
+	// the empty Options would default to English; post-F-001 the
+	// default would be Chinese, so we pin it.
+	out, err := Generate(scan, Options{ScanDir: dir, ReportLanguage: "en"})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

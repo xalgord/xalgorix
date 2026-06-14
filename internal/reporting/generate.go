@@ -6,6 +6,9 @@ import (
 	"strings"
 
 	"github.com/go-pdf/fpdf"
+
+	"github.com/xalgord/xalgorix/v4/internal/reporting/fonts"
+	"github.com/xalgord/xalgorix/v4/internal/reporting/i18n"
 )
 
 // Options configures a single Generate invocation.
@@ -21,10 +24,23 @@ import (
 // previous (*Server).generateReport behavior exactly.
 //
 // FallbackDir is consulted only when ScanDir is empty.
+//
+// ReportLanguage (F-001) selects the i18n bundle. Allowed values:
+// "en", "zh"; anything else (including "") falls back to "en" inside
+// Generate so pre-F-001 callers that pass Options{} keep getting the
+// English report their snapshot tests expect. Callers that want the
+// new Chinese-first default should populate this from
+// config.Config.ReportLanguage, which defaults to "zh".
+//
+// FontPath (F-001) is an optional override for the embedded Noto Sans
+// CJK SC font. Empty means use the embedded font (always available
+// when the binary is built via `make build`).
 type Options struct {
-	LogoPath    string
-	ScanDir     string
-	FallbackDir string
+	LogoPath       string
+	ScanDir        string
+	FallbackDir    string
+	ReportLanguage string
+	FontPath       string
 }
 
 // Generate renders the branded PDF report for scan and writes it to disk.
@@ -38,6 +54,34 @@ type Options struct {
 func Generate(scan *Scan, opts Options) (string, error) {
 	pdf := fpdf.New("P", "mm", "A4", "")
 	pdf.SetAutoPageBreak(true, 20)
+
+	// F-001: pick the i18n bundle. An empty ReportLanguage (or anything
+	// outside the allowed set) resolves to English so callers that pass
+	// Options{} keep producing English reports — only the config-driven
+	// flow that populates ReportLanguage from cfg.ReportLanguage (which
+	// defaults to "zh") gets Chinese by default.
+	lang := opts.ReportLanguage
+	if lang != "en" && lang != "zh" {
+		lang = "en"
+	}
+	bundle := i18n.Get(i18n.ParseLang(lang))
+
+	// F-001: load the CJK font. Load() returns the embedded Noto Sans
+	// CJK SC unless opts.FontPath is set, in which case the user
+	// override path takes priority. Errors are explicit — a typo'd
+	// XALGORIX_REPORT_FONT_PATH must surface, not be silently masked
+	// by falling back to the embedded font.
+	fontBytes, err := fonts.Load(opts.FontPath)
+	if err != nil {
+		return "", fmt.Errorf("report: load font: %w", err)
+	}
+	// Register the CJK font with fpdf under the family name "noto".
+	// Registering it doesn't change anything yet (the renderer still
+	// uses Helvetica); Task 8 will switch specific text elements to
+	// this font. Registering now is the load-bearing step that proves
+	// fpdf accepts the OTF for our use — if it errored, we'd see it
+	// here at Generate() entry, not deep in the layout pass.
+	pdf.AddUTF8FontFromBytes("noto", "", fontBytes)
 
 	palette := ThemePalette()
 	darkBg := palette.BG
@@ -194,7 +238,7 @@ func Generate(scan *Scan, opts Options) (string, error) {
 	pdf.CellFormat(182, 5, "Xalgorix", "", 1, "L", false, 0, "")
 	pdf.SetFont("Helvetica", "", 8)
 	setColor(gray)
-	pdf.CellFormat(182, 5, "Autonomous AI-powered security assessment", "", 1, "L", false, 0, "")
+	pdf.CellFormat(182, 5, bundle.CoverSubtitle, "", 1, "L", false, 0, "")
 	drawRect(0, 294, 210, 3, coral)
 
 	// ─── EXECUTIVE SUMMARY ─────────────────────────────────
@@ -205,7 +249,7 @@ func Generate(scan *Scan, opts Options) (string, error) {
 	pdf.SetY(15)
 	pdf.SetFont("Helvetica", "B", 22)
 	setColor(coral)
-	pdf.CellFormat(190, 12, "Executive Summary", "", 1, "L", false, 0, "")
+	pdf.CellFormat(190, 12, bundle.SectionExecSummary, "", 1, "L", false, 0, "")
 	drawRect(10, pdf.GetY()+2, 50, 0.8, coral)
 	pdf.Ln(8)
 
