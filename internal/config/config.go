@@ -35,6 +35,15 @@ type Config struct {
 	DisableBrowser bool   // XALGORIX_DISABLE_BROWSER
 	MaxIterations  int    // XALGORIX_MAX_ITERATIONS — 0 = unlimited
 
+	// Reporting (F-001: Chinese PDF report).
+	// ReportLanguage picks the language bundle for PDF report generation.
+	// Allowed values: "" (default to "zh"), "en", "zh". Anything else is
+	// rejected by Validate() with a clear error.
+	ReportLanguage string // XALGORIX_REPORT_LANGUAGE — "en" | "zh", default "zh"
+	// ReportFontPath is an OPTIONAL override for the embedded CJK font.
+	// When empty, Generate() uses the //go:embed'd Noto Sans CJK SC.
+	ReportFontPath string // XALGORIX_REPORT_FONT_PATH — optional .ttf/.otf path
+
 	// ScanRetentionDays controls automatic pruning of old scan output
 	// directories under DataDir. XALGORIX_SCAN_RETENTION_DAYS — when > 0, a
 	// background job deletes scan directories whose finished/started time is
@@ -193,6 +202,12 @@ func load() *Config {
 		DisableBrowser: envOrBool("XALGORIX_DISABLE_BROWSER", false),
 		MaxIterations:  envOrInt("XALGORIX_MAX_ITERATIONS", 0),
 
+		// Reporting (F-001). Default language is "zh" so a fresh install
+		// produces Chinese reports out of the box; set
+		// XALGORIX_REPORT_LANGUAGE=en to opt back into English.
+		ReportLanguage: envOr("XALGORIX_REPORT_LANGUAGE", "zh"),
+		ReportFontPath: envOr("XALGORIX_REPORT_FONT_PATH", ""),
+
 		// Scan retention: 0 disables automatic pruning (keep forever).
 		ScanRetentionDays: envOrInt("XALGORIX_SCAN_RETENTION_DAYS", 0),
 
@@ -316,6 +331,12 @@ func (c *Config) Validate() error {
 	}
 	if c.APIKey == "" {
 		return fmt.Errorf("XALGORIX_API_KEY is required. Set it in ~/.xalgorix.env")
+	}
+	// F-001: validate the report language. Empty is allowed (load() defaults
+	// it to "zh"); anything outside the allowed set is a hard error so the
+	// operator notices a typo instead of silently getting Chinese reports.
+	if c.ReportLanguage != "" && c.ReportLanguage != "en" && c.ReportLanguage != "zh" {
+		return fmt.Errorf("XALGORIX_REPORT_LANGUAGE=%q not supported; use 'en' or 'zh' (or leave unset for the default 'zh')", c.ReportLanguage)
 	}
 	return nil
 }

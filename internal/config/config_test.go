@@ -212,6 +212,33 @@ func TestConfig_Validate(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("expected no error with DataDir, LLM, and APIKey set, got: %v", err)
 	}
+
+	// F-001: report language defaults. Empty is allowed (load() will
+	// default it to "zh"). Explicit "en" and "zh" both pass. Anything
+	// else is a hard error so a typo doesn't silently produce Chinese.
+	cfg.ReportLanguage = ""
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error with empty ReportLanguage, got: %v", err)
+	}
+	cfg.ReportLanguage = "en"
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error with ReportLanguage='en', got: %v", err)
+	}
+	cfg.ReportLanguage = "zh"
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error with ReportLanguage='zh', got: %v", err)
+	}
+	cfg.ReportLanguage = "jp"
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for ReportLanguage='jp' (not in allowed set)")
+	}
+	cfg.ReportLanguage = "fr"
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for ReportLanguage='fr' (not in allowed set)")
+	}
+	// Restore a valid value so any later test that shares state isn't
+	// surprised by a leftover invalid setting.
+	cfg.ReportLanguage = "zh"
 }
 
 func TestConfig_WorkspacePath(t *testing.T) {
