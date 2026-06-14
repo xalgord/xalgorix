@@ -179,16 +179,16 @@ var skillAliases = map[string]string{
 	// reference. Without these aliases the agent's natural lookups
 	// (read_skill name=lfi / path-traversal) silently failed, which is a
 	// frequent cause of missed file-read findings (e.g. //etc/passwd).
-	"lfi":                     "performing-directory-traversal-testing",
-	"local-file-inclusion":    "performing-directory-traversal-testing",
-	"rfi":                     "performing-directory-traversal-testing",
-	"remote-file-inclusion":   "performing-directory-traversal-testing",
-	"path-traversal":          "performing-directory-traversal-testing",
-	"path-traversal-lfi-rfi":  "performing-directory-traversal-testing",
-	"directory-traversal":     "performing-directory-traversal-testing",
-	"file-read":               "performing-directory-traversal-testing",
-	"arbitrary-file-read":     "performing-directory-traversal-testing",
-	"etc-passwd":              "performing-directory-traversal-testing",
+	"lfi":                    "performing-directory-traversal-testing",
+	"local-file-inclusion":   "performing-directory-traversal-testing",
+	"rfi":                    "performing-directory-traversal-testing",
+	"remote-file-inclusion":  "performing-directory-traversal-testing",
+	"path-traversal":         "performing-directory-traversal-testing",
+	"path-traversal-lfi-rfi": "performing-directory-traversal-testing",
+	"directory-traversal":    "performing-directory-traversal-testing",
+	"file-read":              "performing-directory-traversal-testing",
+	"arbitrary-file-read":    "performing-directory-traversal-testing",
+	"etc-passwd":             "performing-directory-traversal-testing",
 
 	// ── OS command injection / RCE ───────────────────────────────────
 	// "command-injection" previously resolved to a Modbus/ICS detection
@@ -203,18 +203,18 @@ var skillAliases = map[string]string{
 	"modbus-command-injection": "detecting-modbus-command-injection-attacks",
 
 	// ── Authentication & authorization ───────────────────────────────
-	"jwt":               "exploiting-jwt-algorithm-confusion-attack",
-	"jwt-attack":        "exploiting-jwt-algorithm-confusion-attack",
+	"jwt":                "exploiting-jwt-algorithm-confusion-attack",
+	"jwt-attack":         "exploiting-jwt-algorithm-confusion-attack",
 	"authentication-jwt": "exploiting-jwt-algorithm-confusion-attack",
-	"jwt-signing":       "implementing-jwt-signing-and-verification",
-	"oauth":             "exploiting-oauth-misconfiguration",
-	"oauth-misconfig":   "exploiting-oauth-misconfiguration",
-	"oauth2-attacks":    "exploiting-oauth-misconfiguration",
-	"oauth-token-theft": "detecting-oauth-token-theft",
-	"forced-browsing":   "bypassing-authentication-with-forced-browsing",
-	"brute-force":       "detecting-rdp-brute-force-attacks",
-	"passwordless":      "implementing-passwordless-authentication-with-fido2",
-	"fido2":             "implementing-passwordless-authentication-with-fido2",
+	"jwt-signing":        "implementing-jwt-signing-and-verification",
+	"oauth":              "exploiting-oauth-misconfiguration",
+	"oauth-misconfig":    "exploiting-oauth-misconfiguration",
+	"oauth2-attacks":     "exploiting-oauth-misconfiguration",
+	"oauth-token-theft":  "detecting-oauth-token-theft",
+	"forced-browsing":    "bypassing-authentication-with-forced-browsing",
+	"brute-force":        "detecting-rdp-brute-force-attacks",
+	"passwordless":       "implementing-passwordless-authentication-with-fido2",
+	"fido2":              "implementing-passwordless-authentication-with-fido2",
 
 	// ── Reconnaissance ───────────────────────────────────────────────
 	"recon":             "conducting-external-reconnaissance-with-osint",
@@ -283,10 +283,10 @@ var skillAliases = map[string]string{
 	"burp":             "intercepting-mobile-traffic-with-burpsuite",
 
 	// ── File upload testing ──────────────────────────────────────────
-	"file-upload":         "exploiting-file-upload-vulnerabilities",
-	"upload":              "exploiting-file-upload-vulnerabilities",
-	"upload-bypass":       "exploiting-file-upload-vulnerabilities",
-	"webshell-upload":     "exploiting-file-upload-vulnerabilities",
+	"file-upload":           "exploiting-file-upload-vulnerabilities",
+	"upload":                "exploiting-file-upload-vulnerabilities",
+	"upload-bypass":         "exploiting-file-upload-vulnerabilities",
+	"webshell-upload":       "exploiting-file-upload-vulnerabilities",
 	"insecure-file-uploads": "exploiting-file-upload-vulnerabilities",
 
 	// ── CMS-specific testing ────────────────────────────────────────

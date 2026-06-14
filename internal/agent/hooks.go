@@ -430,7 +430,6 @@ func extractEndpointFromCmd(cmd string) string {
 	return ""
 }
 
-
 // extractHostFromCmd extracts the target host from a command for dirbusting tracking.
 func extractHostFromCmd(cmd string) string {
 	for _, token := range strings.Fields(cmd) {

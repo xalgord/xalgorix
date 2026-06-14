@@ -1580,7 +1580,7 @@ type Server struct {
 	cancelScan           context.CancelFunc      // cancels the current scan session context
 	running              atomic.Bool
 	stopReq              atomic.Bool
-	restartWhenIdle      atomic.Bool // SIGUSR1 sets this; a watcher restarts once scans drain
+	restartWhenIdle      atomic.Bool  // SIGUSR1 sets this; a watcher restarts once scans drain
 	httpServer           *http.Server // set in Start; used to trigger graceful restart from the API
 	dataDir              string
 	currentScanDir       string
