@@ -1,0 +1,91 @@
+{
+  "$schema": "./feature_list.schema.json",
+  "project": "xalgorix",
+  "schema_version": 1,
+  "features": [
+    {
+      "id": "F-001",
+      "name": "Chinese PDF report (中文 PDF 报告)",
+      "description": "Add a Chinese-language PDF report that replaces the English one when XALGORIX_REPORT_LANGUAGE=zh (default). Bakes Noto Sans CJK SC font into the binary; users can override via XALGORIX_REPORT_FONT_PATH.",
+      "status": "done",
+      "priority": 1,
+      "dependencies": [],
+      "spec_dir": ".kiro/specs/F-001",
+      "spec_required": true,
+      "acceptance_criteria": [
+        "Default behavior (no env var set) produces a Chinese PDF",
+        "Setting XALGORIX_REPORT_LANGUAGE=en produces an English PDF (regression)",
+        "All section titles, methodology phases, severity labels, findings, and disclaimer are in Chinese",
+        "Technical terms (SQLi/XSS/CVE) and severity translation rules documented",
+        "Noto Sans CJK SC Regular is auto-downloaded at build time and embedded via //go:embed",
+        "XALGORIX_REPORT_FONT_PATH overrides the embedded font",
+        "go test -race ./internal/reporting/... passes",
+        "At least one unit test covers the language branch selection"
+      ],
+      "evidence": {
+        "branch": "feature/F-001-zh-pdf",
+        "commits": [
+          "77c5bee",
+          "1f1f25c",
+          "cef1eba",
+          "695e7ed",
+          "518c101",
+          "5ad3ff5",
+          "9bdf4ac",
+          "7d2d969",
+          "efb1af4",
+          "576c855",
+          "e9bc6dc",
+          "41ca5bb"
+        ],
+        "test_output": "go test -race ./internal/reporting/... → PASS (reporting 3.3s, fonts 1.1s, i18n 1.0s); all 4 language-branch tests + 6 i18n + 4 fonts + 2 contract tests pass under -race; deterministic English cover-page SHA256 golden preserved across the refactor; binary size 30M (+10M, within 15M tolerance).",
+        "manual_smoke": "testdata/chinese_smoke.pdf is a 62KB PDF saved by TestGenerate_Chinese_Smoke; raw-byte scan finds 65+ CJK codepoints; decompressed stream inspection earlier in Task 9 found 571 CJK characters across 7 streams covering cover, exec summary, methodology (22 phases), findings summary, vuln detail, disclaimer, and reference index."
+      },
+      "touches_safety_critical": false,
+      "notes": "Spec lives at .kiro/specs/F-001/; font source is Google Fonts (Noto Sans CJK SC, Apache 2.0). v1 trade-off: no bold Chinese headings (fpdf rejects unregistered font styles; only regular weight is shipped). Future enhancement could embed NotoSansSC-Bold.ttf to add bold headings. The full CJK family (Noto Sans CJK SC) is OTF-only on notofonts/noto-cjk and fpdf's UTF8 parser rejects OTF — switched to the SC TTF subset which has all the glyphs the report needs."
+    },
+    {
+      "id": "F-002",
+      "name": "TODO: <one-line feature title>",
+      "description": "TODO: 2-3 sentences.",
+      "status": "pending",
+      "priority": 2,
+      "dependencies": ["F-001"],
+      "spec_dir": ".kiro/specs/F-002",
+      "spec_required": true,
+      "acceptance_criteria": [
+        "TODO"
+      ],
+      "evidence": {
+        "branch": null,
+        "commits": [],
+        "test_output": null,
+        "manual_smoke": null
+      },
+      "touches_safety_critical": false,
+      "notes": ""
+    },
+    {
+      "id": "F-003",
+      "name": "TODO: <one-line feature title>",
+      "description": "TODO: 2-3 sentences.",
+      "status": "pending",
+      "priority": 3,
+      "dependencies": [],
+      "spec_dir": null,
+      "spec_required": false,
+      "acceptance_criteria": [
+        "TODO: small fix or polish; spec not required"
+      ],
+      "evidence": {
+        "branch": null,
+        "commits": [],
+        "test_output": null,
+        "manual_smoke": null
+      },
+      "touches_safety_critical": false,
+      "notes": ""
+    }
+  ],
+  "active_feature_id": null
+}

@@ -17,12 +17,14 @@ build/
 !webui/tsconfig.app.json
 !webui/tsconfig.node.json
 !internal/web/static/.eslintrc.json
+!feature_list.json
 xalgorix-data/
 *_assessment/
 
 # AI agent config (local only)
 .agent/
-CLAUDE.md
+# CLAUDE.md — tracked on the fork as the project's agent-harness router
+# (un-ignore here: remove the next line, or replace it with `# CLAUDE.md`)
 ralph
 
 # IDE
@@ -59,8 +61,10 @@ webui/.turbo/
 .pr_body.tmp
 .release_notes.tmp
 
-# Local-only spec/design docs (Kiro). Internal authoring scratch space —
-# not part of the published source.
-.kiro/
+# Local-only spec/design docs (Kiro). On the fork these are tracked
+# as the project's spec-driven workflow artifact (.kiro/specs/<id>/
+# requirements.md, design.md, tasks.md) — feature definitions live
+# here so a fresh agent session can re-derive context. To re-ignore
+# per-line, add the line back below.
 node_modules
 research/
