@@ -752,3 +752,188 @@ func TestCurlPreference_IgnoresOtherTools(t *testing.T) {
 		t.Error("SendRequestCalls should remain 0 for non-send_request tools")
 	}
 }
+
+// ── repeat-detector tests (issue #158) ───────────────────────────────────────
+
+// fireRepeat simulates one iteration's hook sequence for a tool call:
+// OnToolCall (tracking) → OnStuckCheck (nudge/force-skip decision).
+func fireRepeat(state *ScanState, toolName string, args map[string]string) HookResult {
+	callArgs := map[string]string{"tool_name": toolName}
+	for k, v := range args {
+		callArgs[k] = v
+	}
+	hookStuckTracker(state, callArgs)
+	return hookStuckNudge(state, callArgs)
+}
+
+func TestRepeatDetector_SameCallForceSkipsAfterThreshold(t *testing.T) {
+	state := NewScanState()
+	args := map[string]string{"command": "curl -sk https://example.com/csp"}
+
+	// Iterations 1..2: below soft-nudge threshold → no skip.
+	for i := 1; i <= RepeatCallSoftNudge-1; i++ {
+		res := fireRepeat(state, "terminal_execute", args)
+		if res.ForceSkip {
+			t.Fatalf("iteration %d: did not expect ForceSkip yet", i)
+		}
+		if state.ConsecutiveSameCall != i {
+			t.Fatalf("iteration %d: ConsecutiveSameCall = %d, want %d", i, state.ConsecutiveSameCall, i)
+		}
+	}
+
+	// Iteration RepeatCallSoftNudge: should force-skip + nudge, then reset.
+	res := fireRepeat(state, "terminal_execute", args)
+	if !res.ForceSkip {
+		t.Fatal("expected ForceSkip at soft-nudge threshold")
+	}
+	if res.Nudge == "" {
+		t.Fatal("expected a non-empty pivot nudge")
+	}
+	if !strings.Contains(res.Nudge, "REPEATED CALL") {
+		t.Errorf("nudge should mention REPEATED CALL, got: %s", res.Nudge)
+	}
+	if state.ConsecutiveSameCall != 0 {
+		t.Errorf("ConsecutiveSameCall should reset to 0 after nudge, got %d", state.ConsecutiveSameCall)
+	}
+
+	// Hard-skip threshold should also fire and reset.
+	state.ConsecutiveSameCall = RepeatCallHardSkip - 1
+	res = fireRepeat(state, "terminal_execute", args)
+	if !res.ForceSkip || !strings.Contains(res.Nudge, "repeatedly re-issued") {
+		t.Errorf("expected hard-skip nudge at %d, got ForceSkip=%v nudge=%q", RepeatCallHardSkip, res.ForceSkip, res.Nudge)
+	}
+	if state.ConsecutiveSameCall != 0 {
+		t.Errorf("ConsecutiveSameCall should reset after hard skip, got %d", state.ConsecutiveSameCall)
+	}
+}
+
+func TestRepeatDetector_DifferentCallResets(t *testing.T) {
+	state := NewScanState()
+
+	fireRepeat(state, "terminal_execute", map[string]string{"command": "curl https://a.example.com"})
+	fireRepeat(state, "terminal_execute", map[string]string{"command": "curl https://b.example.com"})
+
+	if state.ConsecutiveSameCall != 1 {
+		t.Fatalf("alternating commands must reset counter to 1, got %d", state.ConsecutiveSameCall)
+	}
+	// Two different calls must never trip the detector.
+	res := fireRepeat(state, "terminal_execute", map[string]string{"command": "curl https://c.example.com"})
+	if res.ForceSkip {
+		t.Fatal("different calls must not trigger ForceSkip")
+	}
+}
+
+func TestRepeatDetector_ArgOrderIndependent(t *testing.T) {
+	// Same key/values, different map iteration order must hash identically.
+	a := map[string]string{"command": "nmap -sV example.com", "timeout": "30"}
+	b := map[string]string{"timeout": "30", "command": "nmap -sV example.com"}
+	if hashToolArgs("terminal_execute", a) != hashToolArgs("terminal_execute", b) {
+		t.Fatal("hashToolArgs must be insensitive to arg insertion order")
+	}
+	if hashToolArgs("terminal_execute", a) == hashToolArgs("send_request", a) {
+		t.Fatal("different tool names must hash differently")
+	}
+}
+
+func TestRepeatDetector_NotesDoNotResetCounter(t *testing.T) {
+	state := NewScanState()
+	args := map[string]string{"command": "curl https://example.com/csp"}
+
+	// Two identical terminal calls to build the counter.
+	fireRepeat(state, "terminal_execute", args)
+	fireRepeat(state, "terminal_execute", args)
+	if state.ConsecutiveSameCall != 2 {
+		t.Fatalf("expected ConsecutiveSameCall=2, got %d", state.ConsecutiveSameCall)
+	}
+
+	// An add_note call between iterations must NOT reset the terminal-loop
+	// counter (notes are not progress on the test itself).
+	hookStuckTracker(state, map[string]string{"tool_name": "add_note", "content": "tried csp"})
+	if state.ConsecutiveSameCall != 2 {
+		t.Errorf("add_note must not reset ConsecutiveSameCall, got %d", state.ConsecutiveSameCall)
+	}
+
+	// Third identical terminal call trips the detector.
+	res := fireRepeat(state, "terminal_execute", args)
+	if !res.ForceSkip {
+		t.Fatal("identical call after an intervening note must still force-skip")
+	}
+}
+
+func TestRepeatDetector_IdenticalResultForceSkips(t *testing.T) {
+	state := NewScanState()
+	out := "[exit code: 1]\nbash: foobar: command not found"
+
+	for i := 1; i < RepeatResultHardSkip; i++ {
+		hookResultRepeatTracker(state, map[string]string{
+			"tool_name": "terminal_execute",
+			"output":    out,
+			"error":     "",
+		})
+		if state.ConsecutiveSameResult != i {
+			t.Fatalf("iter %d: ConsecutiveSameResult=%d, want %d", i, state.ConsecutiveSameResult, i)
+		}
+		// No force-skip until threshold reached (checked via hookStuckNudge).
+		if nudge := hookStuckNudge(state, map[string]string{"tool_name": "terminal_execute"}); nudge.ForceSkip {
+			t.Fatalf("did not expect force-skip before %d", RepeatResultHardSkip)
+		}
+	}
+
+	// Reach the threshold.
+	hookResultRepeatTracker(state, map[string]string{
+		"tool_name": "terminal_execute",
+		"output":    out,
+		"error":     "",
+	})
+	res := hookStuckNudge(state, map[string]string{"tool_name": "terminal_execute"})
+	if !res.ForceSkip {
+		t.Fatal("expected ForceSkip on identical-output threshold")
+	}
+	if !strings.Contains(res.Nudge, "NO PROGRESS") {
+		t.Errorf("expected NO PROGRESS nudge, got: %s", res.Nudge)
+	}
+	if state.ConsecutiveSameResult != 0 {
+		t.Errorf("ConsecutiveSameResult should reset after nudge, got %d", state.ConsecutiveSameResult)
+	}
+}
+
+func TestRepeatDetector_ResultTrackerIgnoresNotesAndFinish(t *testing.T) {
+	state := NewScanState()
+	for _, tool := range []string{"add_note", "read_notes", "finish"} {
+		before := state.ConsecutiveSameResult
+		hookResultRepeatTracker(state, map[string]string{
+			"tool_name": tool,
+			"output":    "anything",
+			"error":     "",
+		})
+		if state.ConsecutiveSameResult != before {
+			t.Errorf("%q must not feed the result-repeat counter (was %d, now %d)", tool, before, state.ConsecutiveSameResult)
+		}
+	}
+}
+
+func TestRepeatDetector_ResetOnSuccessLeavesRepeatCounters(t *testing.T) {
+	state := NewScanState()
+	state.ConsecutiveSameCall = 3
+	state.ConsecutiveSameResult = 4
+	state.LastToolName = "terminal_execute"
+	state.LastResultFP = "abc"
+
+	// A "healthy" response that re-issues the same call is exactly the loop
+	// we want to keep detecting, so OnHealthyResponse must NOT reset these.
+	hookResetOnSuccess(state, nil)
+
+	if state.ConsecutiveSameCall != 3 {
+		t.Errorf("ConsecutiveSameCall must survive OnHealthyResponse, got %d", state.ConsecutiveSameCall)
+	}
+	if state.ConsecutiveSameResult != 4 {
+		t.Errorf("ConsecutiveSameResult must survive OnHealthyResponse, got %d", state.ConsecutiveSameResult)
+	}
+	if state.LastToolName != "terminal_execute" || state.LastResultFP != "abc" {
+		t.Error("LastToolName/LastResultFP must survive OnHealthyResponse")
+	}
+	// Sanity: the error counters ARE reset by OnHealthyResponse.
+	if state.ConsecutiveErrors != 0 || state.NoToolCount != 0 {
+		t.Error("ConsecutiveErrors/NoToolCount should be reset by OnHealthyResponse")
+	}
+}

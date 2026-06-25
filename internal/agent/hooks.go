@@ -6,6 +6,7 @@ package agent
 
 import (
 	"fmt"
+	"hash/fnv"
 	"net/url"
 	"sort"
 	"strings"
@@ -77,6 +78,19 @@ type ScanState struct {
 	EmptyResponseCount int
 	NoToolCount        int
 	RefusalCount       int // consecutive responses that look like a model-side safety refusal
+
+	// Repeated-call loop detection (orthogonal to the browser/search stuck
+	// tracking above). Catches the agent regenerating the same tool call with
+	// identical args — e.g. looping on terminal_execute with the same failing
+	// command (issue #158). Only applied to tools NOT already covered by the
+	// browser/search stuck logic, so it cannot conflict with StuckDomain.
+	// These counters are NOT reset by OnHealthyResponse: a "healthy" response
+	// that re-issues the same call is exactly the loop we want to catch.
+	LastToolName          string
+	LastToolArgsHash      string
+	ConsecutiveSameCall   int // same (tool, normalized args) called back-to-back
+	LastResultFP          string
+	ConsecutiveSameResult int // same result-output fingerprint back-to-back
 
 	// CumulativeRateLimitWait tracks the total time spent parked in the
 	// provider-rate-limit backoff loop across the whole scan. It bounds an
@@ -180,6 +194,14 @@ const (
 	StuckBrowserThreshold = 60 // browser actions before nudge
 	StuckSearchThreshold  = 45 // web searches before nudge
 	StuckHardLimit        = 80 // total stuck iterations before force-skip
+
+	// Repeated-call detection — fires on any non-browser/search tool that is
+	// re-issued with identical args (or produces identical output) across
+	// consecutive iterations. Thresholds are intentionally low: a genuinely
+	// identical call is never productive, so we nudge fast and skip fast.
+	RepeatCallSoftNudge  = 3 // identical (tool,args) → soft pivot nudge + skip
+	RepeatCallHardSkip   = 5 // identical (tool,args) → strong force-skip nudge
+	RepeatResultHardSkip = 4 // identical result output across calls → force-skip
 )
 
 // ── Per-Role Temperatures ────────────────────────────────────────────────────
@@ -206,6 +228,7 @@ func RegisterDefaultHooks(reg *HookRegistry) {
 	reg.Register(OnStuckCheck, hookStuckNudge)
 	reg.Register(OnToolResult, hookWAFDetector)
 	reg.Register(OnToolResult, hookTechDetector)
+	reg.Register(OnToolResult, hookResultRepeatTracker)
 	reg.Register(OnFinishAttempt, hookFinishGatekeeper)
 	reg.Register(OnEmptyResponse, hookEmptyResponseHandler)
 	reg.Register(OnNoToolResponse, hookNoToolHandler)
@@ -552,6 +575,39 @@ Switch to curl NOW: curl -sk -X POST <URL> -H "Content-Type: application/json" -
 	return HookResult{}
 }
 
+// hashToolArgs returns a stable hash of (toolName, args) so two calls with
+// the same tool and the same argument values collide regardless of map
+// iteration order. Arg keys are sorted before hashing. The hash is a short
+// hex string — collision-tolerant for loop detection, not security.
+func hashToolArgs(name string, args map[string]string) string {
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	h := fnv.New64a()
+	h.Write([]byte(name))
+	h.Write([]byte{0}) // separator so ("ab","c") != ("a","bc")
+	for _, k := range keys {
+		h.Write([]byte(k))
+		h.Write([]byte{0})
+		h.Write([]byte(args[k]))
+		h.Write([]byte{0})
+	}
+	return fmt.Sprintf("%016x", h.Sum64())
+}
+
+// resultFingerprint returns a short, stable fingerprint of a tool result so
+// we can detect the agent getting the same output across consecutive calls
+// (even when the args differ slightly). Uses the error string (if any) plus
+// a truncated FNV of the output.
+func resultFingerprint(output, errStr string) string {
+	h := fnv.New64a()
+	h.Write([]byte(output))
+	return fmt.Sprintf("%s|%016x", errStr, h.Sum64())
+}
+
 // ── hookStuckTracker ─────────────────────────────────────────────────────────
 // Tracks consecutive browser/search actions and domain stickiness.
 // Updates counters on ScanState — the actual nudge/force-skip is in hookStuckNudge.
@@ -592,15 +648,54 @@ func hookStuckTracker(state *ScanState, args map[string]string) HookResult {
 			state.StuckIterations++
 		}
 	default:
-		// A non-browser, non-search tool call = real progress, reset counters
+		// A non-browser, non-search tool call = real progress for the
+		// browser/search stuck counters, so reset those. But track whether
+		// the agent is re-issuing the *same* call (issue #158): a loop on
+		// terminal_execute with identical args never touches the browser
+		// counters above, so without this it runs until MaxIterations.
 		if toolName != "add_note" && toolName != "read_notes" {
 			state.ConsecutiveBrowser = 0
 			state.ConsecutiveSearch = 0
 			state.StuckIterations = 0
 			state.StuckDomain = ""
+
+			// Repeated-call tracking. add_note/read_notes are excluded so
+			// legitimate note-taking between identical test calls doesn't
+			// itself count as a "different" call that resets the counter.
+			argsHash := hashToolArgs(toolName, args)
+			if toolName == state.LastToolName && argsHash == state.LastToolArgsHash {
+				state.ConsecutiveSameCall++
+			} else {
+				state.LastToolName = toolName
+				state.LastToolArgsHash = argsHash
+				state.ConsecutiveSameCall = 1
+			}
 		}
 	}
 
+	return HookResult{}
+}
+
+// ── hookResultRepeatTracker ──────────────────────────────────────────────────
+// Fires on OnToolResult. Fingerprints the result output and counts how many
+// consecutive tool results have been identical — a signal that the agent is
+// not making progress even if it varies its arguments slightly (issue #158).
+// The actual nudge/force-skip is issued by hookStuckNudge on the next
+// OnStuckCheck. Note-readers/note-writers are ignored: an add_note result is
+// not a "test result" and must not feed this counter.
+func hookResultRepeatTracker(state *ScanState, args map[string]string) HookResult {
+	toolName := args["tool_name"]
+	if toolName == "add_note" || toolName == "read_notes" || toolName == "finish" {
+		return HookResult{}
+	}
+
+	fp := resultFingerprint(args["output"], args["error"])
+	if fp == state.LastResultFP {
+		state.ConsecutiveSameResult++
+	} else {
+		state.LastResultFP = fp
+		state.ConsecutiveSameResult = 1
+	}
 	return HookResult{}
 }
 
@@ -610,6 +705,54 @@ func hookStuckTracker(state *ScanState, args map[string]string) HookResult {
 func hookStuckNudge(state *ScanState, args map[string]string) HookResult {
 	if state.ReconOnlyMode {
 		return HookResult{}
+	}
+
+	// ── Repeated identical tool call (issue #158) ──
+	// The agent re-issued the same tool with the same args across consecutive
+	// iterations. This is never productive — repeating an identical action
+	// cannot yield a different result — so nudge hard and force-skip the
+	// redundant call. Checked BEFORE the browser hard-limit so a terminal/
+	// http/other-tool loop is caught regardless of StuckIterations.
+	if state.ConsecutiveSameCall >= RepeatCallSoftNudge {
+		hard := state.ConsecutiveSameCall >= RepeatCallHardSkip
+		verb := "repeated"
+		if hard {
+			verb = "repeatedly re-issued"
+		}
+		msg := fmt.Sprintf(`⛔ REPEATED CALL: You have %s %q with identical arguments %d times in a row and received the same failing result. Repeating an identical action will NOT produce a different outcome.
+
+DO NOT call %q with those same arguments again. Instead:
+1. Re-read the tool's last output — it is failing for a specific reason (exit code 1, command not found, permission denied, bad quoting, wrong path). Fix the ROOT CAUSE.
+2. Try a genuinely different command or a different tool (e.g. switch between terminal_execute / send_request / browser_action).
+3. If you have exhausted this line of testing, add_note what you tried and move to the next target or call finish.
+
+Your next tool call MUST differ from the last one.`, verb, state.LastToolName, state.ConsecutiveSameCall, state.LastToolName)
+
+		// Reset so the nudge doesn't fire every iteration; a new identical
+		// run will re-accumulate.
+		state.ConsecutiveSameCall = 0
+		return HookResult{
+			Nudge:       msg,
+			ForceSkip:   true,
+			EmitMessage: msg,
+		}
+	}
+
+	// ── Repeated identical tool OUTPUT across calls (issue #158) ──
+	// Args vary but the result is byte-identical several times in a row — the
+	// agent is spinning without progress. Force a pivot.
+	if state.ConsecutiveSameResult >= RepeatResultHardSkip {
+		msg := fmt.Sprintf(`⛔ NO PROGRESS: Your last %d tool calls produced byte-identical output. You are looping without making progress.
+
+Change your approach: target a different endpoint, use a different payload/technique, or consult a skill (read_skill). If this avenue is exhausted, add_note your findings and move on.
+
+Do not repeat the action that produced this output.`, state.ConsecutiveSameResult)
+		state.ConsecutiveSameResult = 0
+		return HookResult{
+			Nudge:       msg,
+			ForceSkip:   true,
+			EmitMessage: msg,
+		}
 	}
 
 	// Hard limit: force-skip after too many stuck iterations

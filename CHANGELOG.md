@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased] — Loop-breaker for repeated identical tool calls
+
+### Fixed
+- **Endless loop on repeated identical tool calls (#158).** The agent could spin indefinitely, regenerating the same tool call (most commonly `terminal_execute`) with identical arguments and an identical failing result — observed reaching iteration 2106+ with no progress. Stuck detection in `internal/agent/hooks.go` only accumulated for `browser_action` and `web_search`; the default branch of `hookStuckTracker` reset all stuck counters for every other tool, so a loop on `terminal_execute` (or any non-browser/search tool) never tripped a nudge or force-skip and ran until `MaxIterations` (default 0 = unlimited) or process kill.
+  - New `ScanState` fields track consecutive identical `(tool, args)` and consecutive byte-identical tool outputs; these counters are deliberately NOT reset by `OnHealthyResponse` (a "healthy" response re-issuing the same call is exactly the loop).
+  - New thresholds `RepeatCallSoftNudge=3`, `RepeatCallHardSkip=5`, `RepeatResultHardSkip=4`.
+  - `hashToolArgs()` (order-independent FNV-64a) and `resultFingerprint()` detect identical `(tool, args)` and identical output across iterations.
+  - `hookStuckTracker`'s default branch now counts consecutive identical calls; `add_note`/`read_notes` are excluded so legitimate note-taking between identical test calls doesn't reset the counter.
+  - New `hookResultRepeatTracker` on `OnToolResult` counts byte-identical outputs (ignores `add_note`/`read_notes`/`finish`).
+  - `hookStuckNudge` force-skips + nudges ahead of the browser hard-limit on repeated identical call (soft/hard) and repeated identical output; counters reset after firing.
+
+### Notes
+- No change to `agent.go` (existing `ForceSkip`→skip / `Nudge`→user-message machinery already consumes the result) and no change to the `MaxIterations` default (legitimate wildcard scans run thousands of iterations).
+- Known follow-up, not fixed here: the three block branches in `agent.go` (`shouldBlockForActivityPolicy` / `shouldBlockForPhaseRestriction` / `shouldBlockForOutOfScope`, ~L1547-1581) still do not increment any stuck counter.
+
 ## [Unreleased]
 
 ### Added
