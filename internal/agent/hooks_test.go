@@ -514,9 +514,9 @@ func TestFloatPtr(t *testing.T) {
 
 func TestTestDepthRatio(t *testing.T) {
 	tests := []struct {
-		name                                                  string
-		total, injection, accessControl, dirbusting           int
-		want                                                  float64
+		name                                        string
+		total, injection, accessControl, dirbusting int
+		want                                        float64
 	}{
 		{"no endpoints", 0, 0, 0, 0, 0.0},
 		{"3 endpoints, full coverage", 3, 3, 3, 3, 3.0},

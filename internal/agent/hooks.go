@@ -189,16 +189,17 @@ func (r *HookRegistry) Fire(event string, state *ScanState, args map[string]stri
 }
 
 // ── Thresholds ───────────────────────────────────────────────────────────────
+//
+// Repeat-call thresholds (RepeatCallSoftNudge / RepeatCallHardSkip /
+// RepeatResultHardSkip) are intentionally low: a genuinely identical tool call
+// is never productive, so we nudge and force-skip fast. See hookStuckNudge,
+// hookStuckTracker and hookResultRepeatTracker for how they're consumed.
 
 const (
 	StuckBrowserThreshold = 60 // browser actions before nudge
 	StuckSearchThreshold  = 45 // web searches before nudge
 	StuckHardLimit        = 80 // total stuck iterations before force-skip
 
-	// Repeated-call detection — fires on any non-browser/search tool that is
-	// re-issued with identical args (or produces identical output) across
-	// consecutive iterations. Thresholds are intentionally low: a genuinely
-	// identical call is never productive, so we nudge fast and skip fast.
 	RepeatCallSoftNudge  = 3 // identical (tool,args) → soft pivot nudge + skip
 	RepeatCallHardSkip   = 5 // identical (tool,args) → strong force-skip nudge
 	RepeatResultHardSkip = 4 // identical result output across calls → force-skip
