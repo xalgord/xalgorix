@@ -317,7 +317,7 @@ If the process is listening but the page still does not load remotely, allow TCP
 3. Create a scan from New Scan.
 4. Choose a scan mode.
 5. Select methodology phases when you want a focused run.
-6. Set severity filters when only certain severities should be reported.
+6. Set severity filters when only certain severities should be reported live. The filter affects the real-time dashboard feed and notifications only; the PDF report and `/api/findings` always include every vulnerability the agent discovered.
 7. Add company name and upload a logo for branded reports.
 8. Monitor progress from Overview, Scan Detail, or Live Feed.
 9. Open finding details, download reports, or manage historical scans from Scans and Reports.
@@ -494,6 +494,8 @@ Model names are not hard-coded to this list. The Settings page accepts typed mod
 | `GET`    | `/api/scans`                 | List scans.                                   |
 | `GET`    | `/api/scans/:id`             | Get scan detail.                              |
 | `DELETE` | `/api/scans/:id`             | Delete a scan and its report data.            |
+| `GET`    | `/api/findings`              | List all findings (deduplicated across scans). |
+| `GET`    | `/api/findings/summary`      | Severity tally across all scans.             |
 | `GET`    | `/api/report/:id`            | Download a PDF report.                        |
 | `GET`    | `/api/instances`             | List live and historical instances.           |
 | `GET`    | `/api/instances/:id/events`  | Get buffered event history.                   |
