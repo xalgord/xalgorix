@@ -4031,7 +4031,15 @@ func (s *Server) processEvent(evt agent.Event, sess *scanSession) {
 					vs := vulnToSummary(latest)
 					log.Printf("[VULN] Latest vuln: %s %s (CVSS %.1f)", vs.Severity, vs.Title, vs.CVSS)
 
-					// Severity filter enforcement strictly at the UI layer
+					// Severity filter is a DISPLAY/BROADCAST gate, NOT a
+					// persistence gate. Every vuln the agent reports must be
+					// persisted to the scan record (and thus the on-disk
+					// scan.json + the PDF report) so the report reflects
+					// everything found — not just the severities the operator
+					// chose to surface live. Filtering here previously dropped
+					// below-threshold vulns from the record entirely, causing
+					// "report shows no findings but logs show critical" (#157
+					// customer feedback).
 					allowed := true
 					if len(sess.severityFilter) > 0 {
 						allowed = false
@@ -4044,8 +4052,11 @@ func (s *Server) processEvent(evt agent.Event, sess *scanSession) {
 						log.Printf("[VULN] Severity filter active: filter=%v, allowed=%v", sess.severityFilter, allowed)
 					}
 
-					if allowed {
-						if appendVulnSummaryUnique(&sess.record.Vulns, vs) {
+					// Always persist to the record (report + on-disk source of truth).
+					if appendVulnSummaryUnique(&sess.record.Vulns, vs) {
+						log.Printf("[VULN] Vuln persisted to record: %s %s", vs.Severity, vs.Title)
+						// Broadcast + notify only when the severity filter allows it.
+						if allowed {
 							wsEvt.Vulns = []VulnSummary{vs}
 							log.Printf("[VULN] Vuln broadcast real-time: %s %s", vs.Severity, vs.Title)
 
@@ -4103,11 +4114,12 @@ func (s *Server) processEvent(evt agent.Event, sess *scanSession) {
 						} else if s.telegramConfigured() {
 							log.Printf("[TELEGRAM] Skipping %s vuln notification (min severity: %s)", vs.Severity, s.telegramMinSeverity)
 						}
-						} else {
-							log.Printf("[VULN] Skipping duplicate vuln already present in session record: %s %s", vs.ID, vs.Title)
 						}
 					} else {
-						log.Printf("[VULN] Vuln filtered out by severity: %s (filter: %v)", vs.Severity, sess.severityFilter)
+						log.Printf("[VULN] Skipping duplicate vuln already present in session record: %s %s", vs.ID, vs.Title)
+					}
+					if !allowed {
+						log.Printf("[VULN] Vuln persisted but NOT broadcast (filtered out by severity: %s, filter: %v)", vs.Severity, sess.severityFilter)
 					}
 				}
 			}

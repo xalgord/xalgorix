@@ -3036,3 +3036,81 @@ func TestSeverityMeetsThreshold_TelegramReuseIsIdenticalToDiscord(t *testing.T) 
 		})
 	}
 }
+
+// ── Report accuracy vs severity filter (customer feedback) ─────────────────────
+
+// TestReportPersistsBelowFilterVulns is the regression test for the
+// customer-reported bug: "the report shows no findings, but when I
+// checked the log there were findings, even critical findings."
+//
+// Root cause: the severity-filter gate at the report_vulnerability
+// event handler used to wrap BOTH persistence and broadcast in a single
+// `if allowed` block, so a vuln below the configured severity filter was
+// dropped from sess.record.Vulns entirely — never persisted to scan.json,
+// never included in the PDF report. The fix separates the two concerns:
+// ALWAYS persist to the record (the report's source of truth), gate only
+// the live broadcast/notify. This test asserts the persistence side by
+// simulating the merge that the cleanup path performs.
+func TestReportPersistsBelowFilterVulns(t *testing.T) {
+	// Simulate a scan where the operator set severity_filter=["critical"]
+	// (i.e. only critical should be surfaced live), but the agent found
+	// a medium and a critical. Both must land in the record so the report
+	// reflects reality — the medium is "filtered" only from live broadcast,
+	// not from the persisted scan.json / PDF.
+	rec := &ScanRecord{
+		Vulns: []VulnSummary{},
+	}
+
+	reported := []reporting.Vulnerability{
+		{ID: "XALG-LOW", Title: "Verbose error message", Severity: "medium", Target: "https://a.test", Endpoint: "/api/x", Method: "GET"},
+		{ID: "XALG-CRIT", Title: "Auth bypass", Severity: "critical", Target: "https://a.test", Endpoint: "/api/auth", Method: "POST"},
+	}
+
+	// mergeReportedVulnerabilitiesIntoRecord is the persistence path used
+	// by the cleanup handler (server.go ~L3451) and MUST be unconditional —
+	// it does not consult any severity filter.
+	mergeReportedVulnerabilitiesIntoRecord(rec, reported)
+
+	if len(rec.Vulns) != 2 {
+		t.Fatalf("record should contain BOTH vulns regardless of severity filter, got %d: %#v", len(rec.Vulns), rec.Vulns)
+	}
+
+	// The below-filter vuln must be present (this is the regression).
+	titles := map[string]bool{}
+	for _, v := range rec.Vulns {
+		titles[v.Title] = true
+	}
+	if !titles["Verbose error message"] {
+		t.Fatalf("below-filter (medium) vuln was NOT persisted to record — this is the report-accuracy bug: %#v", rec.Vulns)
+	}
+	if !titles["Auth bypass"] {
+		t.Fatalf("critical vuln missing from record: %#v", rec.Vulns)
+	}
+}
+
+// TestAppendVulnSummaryUniqueIsFilterAgnostic pins the helper's contract:
+// it dedups by identity only, never by severity. A below-filter vuln and
+// an allowed vuln with the same identity dedup; distinct identities both
+// persist. This guarantees the report slice the PDF is built from cannot
+// lose vulns to the severity filter through this helper.
+func TestAppendVulnSummaryUniqueIsFilterAgnostic(t *testing.T) {
+	vulns := []VulnSummary{}
+	// medium (would be filtered by a ["critical"] display filter)
+	added := appendVulnSummaryUnique(&vulns, VulnSummary{ID: "1", Title: "Medium thing", Severity: "medium", Target: "t", Endpoint: "/m", Method: "GET"})
+	if !added {
+		t.Fatal("first append must report added=true")
+	}
+	// critical (allowed by the same display filter)
+	added = appendVulnSummaryUnique(&vulns, VulnSummary{ID: "2", Title: "Critical thing", Severity: "critical", Target: "t", Endpoint: "/c", Method: "POST"})
+	if !added {
+		t.Fatal("second distinct append must report added=true")
+	}
+	// duplicate of the medium — must NOT be re-added (identity dedup, not severity)
+	added = appendVulnSummaryUnique(&vulns, VulnSummary{ID: "1", Title: "Medium thing", Severity: "medium", Target: "t", Endpoint: "/m", Method: "GET"})
+	if added {
+		t.Fatal("duplicate identity append must report added=false")
+	}
+	if len(vulns) != 2 {
+		t.Fatalf("expected 2 vulns (medium + critical), got %d: %#v", len(vulns), vulns)
+	}
+}

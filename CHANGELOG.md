@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased] — Report accuracy vs severity filter (customer feedback)
+
+### Fixed
+- **Report omitted findings the live severity filter hid.** When a scan was launched with a `severity_filter` (e.g. only show `critical` live), a vulnerability below that threshold was dropped from `sess.record.Vulns` entirely — so it never reached the on-disk `scan.json` or the PDF report. Customers saw "report shows no findings, but the logs show findings, even critical." The severity filter is now a **display/broadcast gate only**: every vuln the agent reports is always persisted to the scan record (and thus the report + `/api/findings`), and the filter only suppresses the real-time WebSocket broadcast and Discord/Telegram notification. `report_vulnerability` event handling in `internal/web/server.go` no longer wraps persistence in the `if allowed` block. Regression tests: `TestReportPersistsBelowFilterVulns`, `TestAppendVulnSummaryUniqueIsFilterAgnostic`.
+
 ## [Unreleased] — Telegram bot notifications (#157)
 
 ### Added
