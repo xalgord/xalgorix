@@ -566,13 +566,88 @@ func inferCurrentPhase(evt WSEvent, allowed []int) int {
 		if phaseAllowed(allowed, 7) {
 			return 7
 		}
-	// NOTE: we deliberately do NOT infer phases 4/5/8/9 from tool-arg keywords
-	// like "authorization", "cookie", "login", "session", "/api/", or "graphql".
-	// Those tokens appear in ORDINARY requests on almost every target (an authed
-	// scan sends an Authorization header from the first recon request), so they
-	// caused the progress bar to false-jump to a late phase (e.g. "8. IDOR/BAC")
-	// during early reconnaissance. Those phases now advance only via the agent's
-	// own phase narration (parsePhaseMention above), which is a real signal.
+	// Phase 8: IDOR & Broken Access Control — detect from IDOR/BAC testing patterns
+	case strings.Contains(args, "idor") || strings.Contains(args, "broken access") ||
+		strings.Contains(args, "access control") || strings.Contains(args, "horizontal") ||
+		strings.Contains(args, "vertical privilege") || strings.Contains(args, "privilege escalation"):
+		if phaseAllowed(allowed, 8) {
+			return 8
+		}
+	// Phase 9: API & GraphQL Testing
+	case strings.Contains(args, "graphql") || strings.Contains(args, "introspection") ||
+		strings.Contains(args, "__schema") || strings.Contains(args, "batch query") ||
+		strings.Contains(args, "rest api") || strings.Contains(args, "swagger") ||
+		strings.Contains(args, "openapi"):
+		if phaseAllowed(allowed, 9) {
+			return 9
+		}
+	// Phase 10: File Upload Testing
+	case strings.Contains(args, "file upload") || strings.Contains(args, "multipart") ||
+		strings.Contains(args, "upload.php") || strings.Contains(args, "webshell") ||
+		strings.Contains(args, "shell.php"):
+		if phaseAllowed(allowed, 10) {
+			return 10
+		}
+	// Phase 11: Deserialization & RCE
+	case strings.Contains(args, "deserialize") || strings.Contains(args, "rce") ||
+		strings.Contains(args, "command injection") || strings.Contains(args, "code execution") ||
+		strings.Contains(args, "pickle") || strings.Contains(args, "ysoserial"):
+		if phaseAllowed(allowed, 11) {
+			return 11
+		}
+	// Phase 12: Race Conditions & Business Logic
+	case strings.Contains(args, "race condition") || strings.Contains(args, "concurrent") ||
+		strings.Contains(args, "business logic") || strings.Contains(args, "turbo intruder") ||
+		strings.Contains(args, "time-of-check"):
+		if phaseAllowed(allowed, 12) {
+			return 12
+		}
+	// Phase 13: Subdomain Takeover
+	case strings.Contains(args, "subdomain takeover") || strings.Contains(args, "dangling") ||
+		strings.Contains(args, "cname") || strings.Contains(args, "can-i-take-over-xyz") ||
+		strings.Contains(args, "nuclei takeover"):
+		if phaseAllowed(allowed, 13) {
+			return 13
+		}
+	// Phase 14: Open Redirect Testing
+	case strings.Contains(args, "open redirect") || strings.Contains(args, "url redirect") ||
+		strings.Contains(args, "redirect=") || strings.Contains(args, "next=") ||
+		strings.Contains(args, "returnurl=") || strings.Contains(args, "return_to="):
+		if phaseAllowed(allowed, 14) {
+			return 14
+		}
+	// Phase 16: Cloud & Infrastructure
+	case strings.Contains(args, "s3 bucket") || strings.Contains(args, "aws") ||
+		strings.Contains(args, "gcp") || strings.Contains(args, "azure") ||
+		strings.Contains(args, "cloud storage") || strings.Contains(args, "terraform"):
+		if phaseAllowed(allowed, 16) {
+			return 16
+		}
+	// Phase 17: WebSocket Testing
+	case strings.Contains(args, "websocket") || strings.Contains(args, "ws://") ||
+		strings.Contains(args, "wss://") || strings.Contains(args, "socket.io"):
+		if phaseAllowed(allowed, 17) {
+			return 17
+		}
+	// Phase 20: Exploit Verification
+	case strings.Contains(args, "exploit") || strings.Contains(args, "verify exploit") ||
+		strings.Contains(args, "proof of concept") || strings.Contains(args, "poc"):
+		if phaseAllowed(allowed, 20) {
+			return 20
+		}
+	// Phase 21: Novel Vulnerability Discovery
+	case strings.Contains(args, "novel") || strings.Contains(args, "fuzzing") ||
+		strings.Contains(args, "mutation") || strings.Contains(args, "edge case"):
+		if phaseAllowed(allowed, 21) {
+			return 21
+		}
+	// NOTE: we deliberately do NOT infer phases 4/5 from tool-arg keywords
+	// like "authorization", "cookie", "login", or "session". Those tokens
+	// appear in ORDINARY requests on almost every target (an authed scan
+	// sends an Authorization header from the first recon request), so they
+	// caused the progress bar to false-jump to a late phase during early
+	// reconnaissance. Those phases advance via the agent's own phase
+	// narration (parsePhaseMention above), which is a real signal.
 	case strings.Contains(args, "nmap") || strings.Contains(args, "naabu") ||
 		strings.Contains(args, "masscan") || strings.Contains(args, "dig ") ||
 		strings.Contains(args, "nslookup") || strings.Contains(args, "host ") ||
