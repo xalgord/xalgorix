@@ -4,9 +4,125 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/go-pdf/fpdf"
 )
+
+// naText is the ASCII placeholder used where a value is absent (CVSS/CVE/CWE
+// columns, etc.). It replaces the em dash previously used as a literal — the
+// core-font (cp1252) PDF renderer would otherwise emit mojibake for it.
+const naText = "-"
+
+// asciiPunct maps the non-ASCII punctuation/symbols the LLM commonly emits to
+// safe ASCII equivalents. The PDF is rendered with fpdf's standard Helvetica/
+// Courier fonts, which are single-byte (cp1252): writing raw UTF-8 bytes makes
+// an em dash "—" (0xE2 0x80 0x94) render as "â€". Transliterating to ASCII up
+// front keeps the exported PDF readable and mojibake-free while leaving the
+// HTML report (real UTF-8) untouched.
+var asciiPunct = map[rune]string{
+	'\u2010': "-", '\u2011': "-", '\u2012': "-", '\u2013': "-", '\u2014': "-",
+	'\u2015': "-", '\u2212': "-",
+	'\u2018': "'", '\u2019': "'", '\u201A': "'", '\u201B': "'",
+	'\u2032': "'", '\u2035': "'",
+	'\u201C': "\"", '\u201D': "\"", '\u201E': "\"", '\u201F': "\"",
+	'\u2033': "\"", '\u2036': "\"", '\u00AB': "\"", '\u00BB': "\"",
+	'\u2039': "'", '\u203A': "'",
+	'\u2026': "...", '\u2022': "*", '\u00B7': "*", '\u2023': "*", '\u25E6': "*",
+	'\u2192': "->", '\u21D2': "=>", '\u2190': "<-", '\u21D0': "<=",
+	'\u2194': "<->", '\u21D4': "<=>",
+	'\u00A0': " ", '\u2009': " ", '\u200A': " ", '\u202F': " ", '\u2007': " ",
+	'\u00D7': "x", '\u2044': "/",
+	'\u2713': "[x]", '\u2714': "[x]", '\u2705': "[x]",
+	'\u2717': "[!]", '\u2718': "[!]", '\u274C': "[!]", '\u26A0': "[!]",
+}
+
+// sanitizeForPDF transliterates non-ASCII text to an ASCII-safe form so the
+// core-font PDF renderer never produces mojibake. ASCII (including newlines
+// and tabs) passes through untouched; known punctuation/symbols are mapped to
+// ASCII equivalents; any remaining printable non-ASCII rune becomes '?' and
+// non-printable runes are dropped.
+func sanitizeForPDF(s string) string {
+	if s == "" {
+		return s
+	}
+	isASCII := true
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			isASCII = false
+			break
+		}
+	}
+	if isASCII {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r < 0x80:
+			b.WriteRune(r)
+		case asciiPunct[r] != "":
+			b.WriteString(asciiPunct[r])
+		case r == '\uFEFF' || unicode.Is(unicode.Mn, r):
+			// BOM / combining marks: drop.
+		case unicode.IsPrint(r):
+			b.WriteByte('?')
+		}
+	}
+	return b.String()
+}
+
+// sanitizeScanForPDF returns a copy of scan with every text field
+// transliterated to ASCII-safe form for the PDF renderer. It never mutates the
+// caller's struct (the same *Scan feeds the UTF-8 HTML report).
+func sanitizeScanForPDF(s *Scan) *Scan {
+	c := *s
+	c.ID = sanitizeForPDF(s.ID)
+	c.Name = sanitizeForPDF(s.Name)
+	c.Target = sanitizeForPDF(s.Target)
+	c.CompanyName = sanitizeForPDF(s.CompanyName)
+	c.Status = sanitizeForPDF(s.Status)
+
+	c.Vulns = make([]Vuln, len(s.Vulns))
+	for i, v := range s.Vulns {
+		v.Title = sanitizeForPDF(v.Title)
+		v.Target = sanitizeForPDF(v.Target)
+		v.Endpoint = sanitizeForPDF(v.Endpoint)
+		v.CVSSVector = sanitizeForPDF(v.CVSSVector)
+		v.Description = sanitizeForPDF(v.Description)
+		v.Impact = sanitizeForPDF(v.Impact)
+		v.Method = sanitizeForPDF(v.Method)
+		v.CVE = sanitizeForPDF(v.CVE)
+		v.CWE = sanitizeForPDF(v.CWE)
+		v.OWASP = sanitizeForPDF(v.OWASP)
+		v.TechnicalAnalysis = sanitizeForPDF(v.TechnicalAnalysis)
+		v.PoCDescription = sanitizeForPDF(v.PoCDescription)
+		v.PoCScript = sanitizeForPDF(v.PoCScript)
+		v.Remediation = sanitizeForPDF(v.Remediation)
+		v.Fix = sanitizeForPDF(v.Fix)
+		v.ExploitationProof = sanitizeForPDF(v.ExploitationProof)
+		v.VerificationMethod = sanitizeForPDF(v.VerificationMethod)
+		c.Vulns[i] = v
+	}
+
+	c.Events = make([]Event, len(s.Events))
+	for i, e := range s.Events {
+		e.Content = sanitizeForPDF(e.Content)
+		e.Output = sanitizeForPDF(e.Output)
+		e.Error = sanitizeForPDF(e.Error)
+		e.ToolName = sanitizeForPDF(e.ToolName)
+		if e.ToolArgs != nil {
+			na := make(map[string]string, len(e.ToolArgs))
+			for k, val := range e.ToolArgs {
+				na[k] = sanitizeForPDF(val)
+			}
+			e.ToolArgs = na
+		}
+		c.Events[i] = e
+	}
+	return &c
+}
 
 // Options configures a single Generate invocation.
 //
@@ -36,6 +152,12 @@ type Options struct {
 // type names rewritten for the local Vuln / Event / Scan transport
 // types.
 func Generate(scan *Scan, opts Options) (string, error) {
+	// The PDF is rendered with fpdf's core cp1252 fonts, which mojibake raw
+	// UTF-8. Work from an ASCII-transliterated copy so every downstream write
+	// is safe; the caller's original struct (used by the UTF-8 HTML report) is
+	// left untouched.
+	scan = sanitizeScanForPDF(scan)
+
 	pdf := fpdf.New("P", "mm", "A4", "")
 	pdf.SetAutoPageBreak(true, 20)
 
@@ -663,7 +785,7 @@ func Generate(scan *Scan, opts Options) (string, error) {
 
 			setColor(white)
 			pdf.SetFont("Helvetica", "", 7)
-			cvssStr := "—"
+			cvssStr := naText
 			if v.CVSS > 0 {
 				cvssStr = fmt.Sprintf("%.1f", v.CVSS)
 			}
@@ -675,20 +797,20 @@ func Generate(scan *Scan, opts Options) (string, error) {
 				cveStr = cveStr[:19] + "..."
 			}
 			if cveStr == "" {
-				cveStr = "—"
+				cveStr = naText
 			}
 			pdf.CellFormat(40, 7, cveStr, "", 0, "L", false, 0, "")
 
 			setColor(teal)
 			cweStr := mappings.CWEID
 			if cweStr == "" {
-				cweStr = "—"
+				cweStr = naText
 			}
 			pdf.CellFormat(18, 7, cweStr, "", 0, "L", false, 0, "")
 
 			owaspStr := mappings.OWASP
 			if owaspStr == "" {
-				owaspStr = "—"
+				owaspStr = naText
 			}
 			pdf.CellFormat(20, 7, owaspStr, "", 1, "L", false, 0, "")
 		}
@@ -757,7 +879,7 @@ func Generate(scan *Scan, opts Options) (string, error) {
 					pdf.CellFormat(0, 5, fmt.Sprintf("Verified via: %s", strings.ToUpper(v.VerificationMethod)), "", 1, "L", false, 0, "")
 				} else {
 					pdf.SetTextColor(200, 120, 0)
-					pdf.CellFormat(0, 5, fmt.Sprintf("UNVERIFIED — manual review required (reported via %s)", strings.ToUpper(v.VerificationMethod)), "", 1, "L", false, 0, "")
+					pdf.CellFormat(0, 5, fmt.Sprintf("UNVERIFIED - manual review required (reported via %s)", strings.ToUpper(v.VerificationMethod)), "", 1, "L", false, 0, "")
 				}
 			}
 
@@ -831,7 +953,7 @@ func Generate(scan *Scan, opts Options) (string, error) {
 					pdf.SetXY(14, pdf.GetY())
 					owaspLabel := vulnMappings.OWASP
 					if vulnMappings.OWASPName != "" {
-						owaspLabel = vulnMappings.OWASP + " — " + vulnMappings.OWASPName
+						owaspLabel = vulnMappings.OWASP + " - " + vulnMappings.OWASPName
 					}
 					badgeW := pdf.GetStringWidth(owaspLabel) + 6
 					pdf.SetFont("Helvetica", "B", 7)
@@ -1104,7 +1226,7 @@ https://github.com/xalgord/xalgorix`
 			setColor(teal)
 			cweStr := mappings.CWEID
 			if cweStr == "" {
-				cweStr = "—"
+				cweStr = naText
 			}
 			pdf.CellFormat(22, 7, cweStr, "", 0, "L", false, 0, "")
 
@@ -1112,7 +1234,7 @@ https://github.com/xalgord/xalgorix`
 			pdf.SetFont("Helvetica", "", 7)
 			cweName := mappings.CWEName
 			if cweName == "" {
-				cweName = "—"
+				cweName = naText
 			}
 			if cweRunes := []rune(cweName); len(cweRunes) > 48 {
 				cweName = string(cweRunes[:45]) + "..."
@@ -1282,7 +1404,7 @@ https://github.com/xalgord/xalgorix`
 					setColor(gray)
 					pdf.CellFormat(30, 7, "0", "", 0, "C", false, 0, "")
 					pdf.SetFont("Helvetica", "", 6)
-					pdf.CellFormat(50, 7, "—", "", 0, "C", false, 0, "")
+					pdf.CellFormat(50, 7, naText, "", 0, "C", false, 0, "")
 				}
 				pdf.Ln(7)
 			}
