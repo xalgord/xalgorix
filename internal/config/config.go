@@ -17,7 +17,8 @@ import (
 // Config holds all Xalgorix configuration.
 type Config struct {
 	// LLM settings
-	LLM             string   // XALGORIX_LLM — model name (e.g. "openai/gpt-5.4", "anthropic/claude-sonnet-4-20250514")
+	LLM             string   // XALGORIX_LLM — provider-native model ID (for example, "gpt-5.4" or "zai-org/glm-4.5")
+	LLMProvider     string   // XALGORIX_LLM_PROVIDER — explicit provider ID; keeps provider routing separate from the model name
 	APIBase         string   // XALGORIX_API_BASE — API endpoint
 	APIKey          string   // XALGORIX_API_KEY — API key
 	LLMProfile      string   // XALGORIX_LLM_PROFILE — active credential pointer "<provider>:<profileId>" (v4.4.22+)
@@ -246,6 +247,7 @@ func load() *Config {
 	cfg := &Config{
 		// LLM
 		LLM:             envOr("XALGORIX_LLM", ""),
+		LLMProvider:     envOr("XALGORIX_LLM_PROVIDER", ""),
 		APIBase:         envOr("XALGORIX_API_BASE", ""),
 		APIKey:          envOr("XALGORIX_API_KEY", ""),
 		LLMProfile:      envOr("XALGORIX_LLM_PROFILE", ""),
@@ -400,7 +402,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("DataDir is empty — Data_Dir resolution failed; check XALGORIX_DATA_DIR or HOME and verify the binary can create ~/.xalgorix/data with mode 0o700")
 	}
 	if c.LLM == "" {
-		return fmt.Errorf("XALGORIX_LLM is required. Set it to a model like 'openai/gpt-5.4' or 'anthropic/claude-sonnet-4-20250514'")
+		return fmt.Errorf("XALGORIX_LLM is required. Set it to a provider-native model ID such as 'gpt-5.4' or 'claude-sonnet-4-20250514'")
 	}
 	if c.APIKey == "" {
 		return fmt.Errorf("XALGORIX_API_KEY is required. Set it in ~/.xalgorix.env")

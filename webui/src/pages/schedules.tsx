@@ -566,7 +566,7 @@ export default function SchedulesPage() {
               <Label htmlFor="sched-model">Model override</Label>
               <Input
                 id="sched-model"
-                placeholder={llmQuery.data?.model || "provider/model-name"}
+                placeholder={llmQuery.data?.model || "model-name"}
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
               />

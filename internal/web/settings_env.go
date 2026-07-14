@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -117,7 +118,8 @@ func allEnvSettingDefinitions() []envSettingDefinition {
 		autoInstallDefault = "true"
 	}
 	return []envSettingDefinition{
-		{Key: "XALGORIX_LLM", Label: "LLM model", Category: "LLM", Description: "Default model used by scans and post-scan chat.", Placeholder: "minimax/MiniMax-M3", InputType: "text"},
+		{Key: "XALGORIX_LLM", Label: "LLM model", Category: "LLM", Description: "Provider-native model ID used by scans and post-scan chat.", Placeholder: "MiniMax-M3", InputType: "text"},
+		{Key: "XALGORIX_LLM_PROVIDER", Label: "LLM provider", Category: "LLM", Description: "Explicit provider ID used to route the selected model without adding a provider prefix to its model name.", Placeholder: "ollama", InputType: "text"},
 		{Key: "XALGORIX_API_KEY", Label: "LLM API key", Category: "LLM", Description: "Provider API key for the configured model.", Placeholder: "sk-...", InputType: "secret", Sensitive: true},
 		{Key: "XALGORIX_API_BASE", Label: "API base URL", Category: "LLM", Description: "Optional custom provider endpoint. Leave blank to use provider defaults.", Placeholder: "https://api.openai.com/v1", InputType: "url"},
 		{Key: "XALGORIX_LLM_PROFILE", Label: "Active LLM profile", Category: "LLM", Description: "Active credential pointer (\"<provider>:<profileId>\"). Set by the LLM Settings tab; takes precedence over XALGORIX_API_KEY/XALGORIX_LLM when present.", Placeholder: "openai:default", InputType: "text"},
@@ -305,6 +307,9 @@ func (s *Server) applyCatalogLLMSettings(ctx context.Context, req llmSettingsReq
 	}
 
 	updates := map[string]string{}
+	if provider != "" {
+		updates["XALGORIX_LLM_PROVIDER"] = provider
+	}
 
 	// API_KEY path: persist the credential AS a profile, then point
 	// XALGORIX_LLM_PROFILE at it. We also continue to write the
@@ -383,6 +388,15 @@ func (s *Server) applyCatalogLLMSettings(ctx context.Context, req llmSettingsReq
 		}
 	}
 
+	// Credential-free providers must clear any previously active credential
+	// profile. Otherwise a stale cloud profile keeps winning over the newly
+	// selected local provider in the composite resolver.
+	if authMethod == "none" {
+		activeProfileKey = ""
+		updates["XALGORIX_LLM_PROFILE"] = ""
+		updates["XALGORIX_API_KEY"] = ""
+	}
+
 	// activeProfileKey wins as the source of truth for
 	// XALGORIX_LLM_PROFILE. Either the api_key branch above set
 	// it, or the operator picked an existing profile from the
@@ -405,7 +419,7 @@ func (s *Server) applyCatalogLLMSettings(ctx context.Context, req llmSettingsReq
 
 	// Legacy env-var sync. Always written when the operator
 	// supplied a model so the legacy path stays runnable.
-	if model := strings.TrimSpace(req.Model); model != "" {
+	if model := bareModelForProvider(strings.TrimSpace(req.Model), provider); model != "" {
 		updates["XALGORIX_LLM"] = model
 	}
 
@@ -423,6 +437,9 @@ func (s *Server) applyCatalogLLMSettings(ctx context.Context, req llmSettingsReq
 			if entry, ok, err := s.catalog.Get(ctx, provider); err == nil && ok {
 				base = strings.TrimSpace(entry.BaseURL)
 			}
+		}
+		if authMethod == "none" {
+			base = containerReachableLocalBase(base)
 		}
 		if base != "" {
 			updates["XALGORIX_API_BASE"] = base
@@ -458,6 +475,34 @@ func (s *Server) applyCatalogLLMSettings(ctx context.Context, req llmSettingsReq
 		return err
 	}
 	return nil
+}
+
+func bareModelForProvider(model, provider string) string {
+	model = strings.TrimSpace(model)
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider != "" {
+		prefix := provider + "/"
+		if strings.HasPrefix(strings.ToLower(model), prefix) {
+			return strings.TrimSpace(model[len(prefix):])
+		}
+	}
+	return model
+}
+
+func containerReachableLocalBase(raw string) string {
+	if _, err := os.Stat("/.dockerenv"); err != nil {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1") {
+		return raw
+	}
+	port := strings.TrimSpace(u.Port())
+	u.Host = "host.docker.internal"
+	if port != "" {
+		u.Host += ":" + port
+	}
+	return u.String()
 }
 
 func (s *Server) handleEnvironmentSettings(w http.ResponseWriter, r *http.Request) {
@@ -501,11 +546,9 @@ func (s *Server) llmSettings(ctx context.Context) llmSettingsResponse {
 		Profiles:                []llmProfileSummary{},
 	}
 
-	// Provider derivation: prefer cfg.LLMProfile (the explicit
-	// catalog pointer); fall back to parsing the legacy
-	// "<provider>/<model>" prefix in cfg.LLM. Both can be empty
-	// on a fresh install.
-	provider := ""
+	// Provider derivation: prefer the explicit provider, then the active
+	// profile, and finally a legacy "<provider>/<model>" model value.
+	provider := strings.TrimSpace(s.cfg.LLMProvider)
 	if key := strings.TrimSpace(s.cfg.LLMProfile); key != "" {
 		if i := strings.Index(key, ":"); i > 0 {
 			provider = key[:i]
@@ -517,6 +560,7 @@ func (s *Server) llmSettings(ctx context.Context) llmSettingsResponse {
 		}
 	}
 	resp.Provider = provider
+	resp.Model = bareModelForProvider(s.cfg.LLM, provider)
 
 	// AuthMethod derivation: dispatch precedence mirrors the
 	// resolver. cfg.LLMProfile present + Profile.Type drives the
@@ -535,6 +579,16 @@ func (s *Server) llmSettings(ctx context.Context) llmSettingsResponse {
 	}
 	if authMethod == "" && s.cfg.APIKey != "" {
 		authMethod = "api_key"
+	}
+	if authMethod == "" && provider != "" && s.catalog != nil {
+		if entry, ok, err := s.catalog.Get(ctx, provider); err == nil && ok {
+			for _, method := range entry.AuthMethods {
+				if method == "none" {
+					authMethod = "none"
+					break
+				}
+			}
+		}
 	}
 	resp.AuthMethod = authMethod
 
@@ -666,6 +720,8 @@ func (s *Server) applyEnvironmentToRuntimeConfig(values map[string]string) {
 		switch key {
 		case "XALGORIX_LLM":
 			s.cfg.LLM = value
+		case "XALGORIX_LLM_PROVIDER":
+			s.cfg.LLMProvider = value
 		case "XALGORIX_API_BASE":
 			s.cfg.APIBase = value
 		case "XALGORIX_API_KEY":

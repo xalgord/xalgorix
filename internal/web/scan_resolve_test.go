@@ -47,3 +47,25 @@ func TestResolveScanCredentialsUsesActiveLLMProfile(t *testing.T) {
 		t.Fatalf("URL = %q, want %q", ep.URL, wantURL)
 	}
 }
+
+func TestResolveScanCredentialsUsesCredentialFreeProviderAndBareModel(t *testing.T) {
+	s := &Server{catalog: providers.NewService()}
+	cfg := &config.Config{
+		LLMProvider: "ollama",
+		LLM:         "deepseek-v4-pro:cloud",
+		APIBase:     "http://host.docker.internal:11434/v1",
+	}
+	ep, err := s.resolveScanCredentials(context.Background(), ScanRequest{}, cfg)
+	if err != nil {
+		t.Fatalf("resolveScanCredentials: %v", err)
+	}
+	if ep.Model != "deepseek-v4-pro:cloud" {
+		t.Fatalf("Model = %q, want deepseek-v4-pro:cloud", ep.Model)
+	}
+	if ep.URL != "http://host.docker.internal:11434/v1/chat/completions" {
+		t.Fatalf("URL = %q", ep.URL)
+	}
+	if ep.APIKey != "" || ep.AccessToken != "" {
+		t.Fatalf("credential-free endpoint contains credentials")
+	}
+}

@@ -588,7 +588,8 @@ Some settings require a restart because they affect process startup or server bi
 
 | Variable                             | Default          | Description                                            |
 | ------------------------------------ | ---------------- | ------------------------------------------------------ |
-| `XALGORIX_LLM`                       | none             | Required model name, usually with provider prefix.     |
+| `XALGORIX_LLM`                       | none             | Provider-native model ID used for LLM requests.        |
+| `XALGORIX_LLM_PROVIDER`              | none             | Provider selected by the dashboard, stored separately from the model ID. |
 | `XALGORIX_API_KEY`                   | none             | Required LLM provider API key.                         |
 | `XALGORIX_API_BASE`                  | provider default | Custom OpenAI-compatible API base URL.                 |
 | `XALGORIX_REASONING_EFFORT`          | `high`           | Reasoning effort: `low`, `medium`, `high`, or `xhigh`. |

@@ -180,7 +180,7 @@ export default function SettingsPage() {
       apiKey: llm.data.apiKey ?? "",
       apiBase: llm.data.apiBase ?? "",
       apiBaseOverride: "",
-      model: llm.data.model ?? "",
+      model: bareModelForProvider(llm.data.model ?? "", llm.data.provider ?? ""),
       reasoningEffort: llm.data.reasoningEffort || "high",
       llmMaxRetries: llm.data.llmMaxRetries ?? 5,
       memoryCompressorTimeout: llm.data.memoryCompressorTimeout ?? 30,
@@ -331,6 +331,9 @@ export default function SettingsPage() {
       // the model changes. Prefer an explicitly-selected profile key.
       req.activeProfileKey =
         llmForm.activeProfileKey || `${llmForm.provider}:${profileId}`;
+    }
+    if (llmForm.authMethod === "none") {
+      req.activeProfileKey = "";
     }
     if (!isMaskedSettingValue(llmForm.geminiApiKey)) {
       req.geminiApiKey = llmForm.geminiApiKey;
@@ -1272,7 +1275,7 @@ function CatalogModelField({
           onSuccess: (result) => {
             setDiscoveredModels(result.models);
             if (result.models.length > 0) {
-              onChange(`${provider.id}/${result.models[0]}`);
+              onChange(result.models[0]);
             }
           },
         },
@@ -1285,7 +1288,7 @@ function CatalogModelField({
   const models = discoveredModels;
   const options = models.map((model) => ({
     label: model,
-    value: `${provider.id}/${model}`,
+    value: model,
   }));
   const selected = options.some((option) => option.value === value)
     ? value
@@ -1324,7 +1327,7 @@ function CatalogModelField({
           id={options.length === 0 ? "llm-model" : undefined}
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          placeholder={`${provider.id}/model-name`}
+          placeholder="model-name"
           aria-label={`Custom model for ${provider.displayName}`}
           className="font-mono"
         />
@@ -1361,7 +1364,7 @@ function CatalogModelField({
                     setDiscoveredModels(result.models);
                     setManualEntry(false);
                     if (result.models.length > 0) {
-                      onChange(`${provider.id}/${result.models[0]}`);
+                      onChange(result.models[0]);
                     }
                   },
                 },
@@ -1387,6 +1390,13 @@ function CatalogModelField({
       )}
     </div>
   );
+}
+
+function bareModelForProvider(model: string, provider: string): string {
+  const prefix = `${provider.toLowerCase()}/`;
+  return model.toLowerCase().startsWith(prefix)
+    ? model.slice(prefix.length)
+    : model;
 }
 
 function EnvironmentRow({

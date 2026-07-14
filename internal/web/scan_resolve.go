@@ -38,6 +38,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/xalgord/xalgorix/v4/internal/auth"
 	"github.com/xalgord/xalgorix/v4/internal/config"
 	"github.com/xalgord/xalgorix/v4/internal/llm"
 )
@@ -217,16 +218,17 @@ func isZeroEndpoint(ep llm.Endpoint) bool {
 	return ep.URL == "" && ep.Model == "" && ep.APIKey == "" && ep.AccessToken == ""
 }
 
-// bareModelFromConfigLLM strips an optional "<provider>/" prefix from
-// the configured XALGORIX_LLM value, returning the bare model name.
+// modelForConfiguredProvider strips a matching legacy "<provider>/" prefix
+// from XALGORIX_LLM while preserving provider-native IDs that contain a slash.
 // Mirrors the legacy resolver's model derivation
 // (internal/llm/resolver.go) so the active-profile path and the
 // legacy path agree on the outbound model string. Returns "" when
 // cfg.LLM is empty so callers fall back to the catalog default.
-func bareModelFromConfigLLM(llmValue string) string {
+func modelForConfiguredProvider(llmValue, provider string) string {
 	model := strings.TrimSpace(llmValue)
-	if idx := strings.Index(model, "/"); idx >= 0 {
-		model = model[idx+1:]
+	prefix := strings.ToLower(strings.TrimSpace(provider)) + "/"
+	if prefix != "/" && strings.HasPrefix(strings.ToLower(model), prefix) {
+		model = model[len(prefix):]
 	}
 	return strings.TrimSpace(model)
 }
@@ -251,6 +253,28 @@ func bareModelFromConfigLLM(llmValue string) string {
 //
 // Validates: Requirements 2.1, 2.2, 2.3, 11.3.
 func (s *Server) legacyOrCatalogDefaultEndpoint(ctx context.Context, cfg *config.Config) llm.Endpoint {
+	// Credential-free providers are persisted independently from model names.
+	// Resolve them before profile-based routing so a previous cloud credential
+	// can never override an explicitly selected local provider.
+	if cfg != nil && strings.TrimSpace(cfg.LLMProvider) != "" && strings.TrimSpace(cfg.LLMProfile) == "" && s.catalog != nil {
+		if entry, ok, err := s.catalog.Get(ctx, strings.TrimSpace(cfg.LLMProvider)); err == nil && ok {
+			allowsNone := false
+			for _, method := range entry.AuthMethods {
+				if method == "none" {
+					allowsNone = true
+					break
+				}
+			}
+			if allowsNone {
+				if strings.TrimSpace(cfg.APIBase) != "" {
+					entry.BaseURL = strings.TrimSpace(cfg.APIBase)
+				}
+				if ep, berr := llm.BuildCatalogEndpoint(entry, auth.Profile{}, strings.TrimSpace(cfg.LLM), cfg.APIBase); berr == nil {
+					return ep
+				}
+			}
+		}
+	}
 	// Branch 0 — active credential pointer (cfg.LLMProfile) wins.
 	// This mirrors the composite resolver's defaultCatalogPick
 	// (internal/llm/resolver.go): when XALGORIX_LLM_PROFILE names a
@@ -270,7 +294,7 @@ func (s *Server) legacyOrCatalogDefaultEndpoint(ctx context.Context, cfg *config
 				// default so XALGORIX_LLM=google/gemini-test-model
 				// routes to gemini-test-model rather than the
 				// catalog's first listed model.
-				preferModel := bareModelFromConfigLLM(cfg.LLM)
+				preferModel := modelForConfiguredProvider(cfg.LLM, prof.Provider)
 				if ep, berr := llm.BuildCatalogEndpoint(entry, prof, preferModel, cfg.APIBase); berr == nil {
 					return ep
 				}

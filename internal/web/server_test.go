@@ -1977,8 +1977,11 @@ func TestLLMSettings_CatalogShape_APIKeyCreatesProfile(t *testing.T) {
 
 	// Legacy env vars must still be written for the legacyResolver
 	// fallback path.
-	if s.cfg.LLM != "openai/gpt-4o" {
-		t.Fatalf("legacy LLM = %q, want openai/gpt-4o", s.cfg.LLM)
+	if s.cfg.LLM != "gpt-4o" {
+		t.Fatalf("LLM = %q, want gpt-4o", s.cfg.LLM)
+	}
+	if s.cfg.LLMProvider != "openai" {
+		t.Fatalf("LLMProvider = %q, want openai", s.cfg.LLMProvider)
 	}
 	if s.cfg.APIKey != "sk-test-12345" {
 		t.Fatalf("legacy APIKey not synced: %q", s.cfg.APIKey)
@@ -2006,6 +2009,55 @@ func TestLLMSettings_CatalogShape_APIKeyCreatesProfile(t *testing.T) {
 	profiles, ok := resp["profiles"].([]any)
 	if !ok || len(profiles) != 1 {
 		t.Fatalf("profiles list malformed: %#v", resp["profiles"])
+	}
+}
+
+func TestLLMSettings_CredentialFreeProviderClearsProfileAndStoresBareModel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, ".xalgorix.env"), []byte(""), 0o600); err != nil {
+		t.Fatalf("seed env file: %v", err)
+	}
+	s := newTestServer(t, &config.Config{
+		LLM: "novita/old-model", LLMProvider: "novita", LLMProfile: "novita:default", APIKey: "secret",
+		ReasoningEffort: "high", RateLimitRequests: 60, RateLimitWindow: 60,
+	})
+
+	rr := httptest.NewRecorder()
+	body := strings.NewReader(`{"provider":"ollama","authMethod":"none","model":"ollama/deepseek-v4-pro:cloud"}`)
+	s.handleLLMSettings(rr, httptest.NewRequest(http.MethodPost, "/api/settings/llm", body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST code = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if s.cfg.LLMProvider != "ollama" || s.cfg.LLM != "deepseek-v4-pro:cloud" {
+		t.Fatalf("provider/model = %q/%q, want ollama/deepseek-v4-pro:cloud", s.cfg.LLMProvider, s.cfg.LLM)
+	}
+	if s.cfg.LLMProfile != "" || s.cfg.APIKey != "" {
+		t.Fatalf("credential state not cleared: profile=%q apiKey=%q", s.cfg.LLMProfile, s.cfg.APIKey)
+	}
+	wantBase := "http://localhost:11434/v1"
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		wantBase = "http://host.docker.internal:11434/v1"
+	}
+	if strings.TrimSpace(s.cfg.APIBase) != wantBase {
+		t.Fatalf("APIBase = %q, want %q", s.cfg.APIBase, wantBase)
+	}
+
+	settings := s.llmSettings(context.Background())
+	if settings.Provider != "ollama" || settings.AuthMethod != "none" || settings.Model != "deepseek-v4-pro:cloud" {
+		t.Fatalf("settings = provider=%q auth=%q model=%q", settings.Provider, settings.AuthMethod, settings.Model)
+	}
+}
+
+func TestLLMSettingsPreservesProviderNativeModelPath(t *testing.T) {
+	s := newTestServer(t, &config.Config{
+		LLM: "zai-org/glm-4.5", LLMProvider: "novita",
+		ReasoningEffort: "high", RateLimitRequests: 60, RateLimitWindow: 60,
+	})
+
+	settings := s.llmSettings(context.Background())
+	if settings.Model != "zai-org/glm-4.5" {
+		t.Fatalf("Model = %q, want provider-native path", settings.Model)
 	}
 }
 

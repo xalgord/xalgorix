@@ -200,6 +200,21 @@ func defaultCatalogPick(c *compositeResolver) func(ctx context.Context) (catalog
 // gate on every call so the choice tracks runtime mutations to
 // the active credential pointer.
 func (c *compositeResolver) Resolve(ctx context.Context) (Endpoint, error) {
+	// Credential-free catalog providers are selected explicitly through
+	// XALGORIX_LLM_PROVIDER. They do not need or create an Auth Profile, and
+	// the model remains the provider's bare model ID.
+	if c.cfg != nil && strings.TrimSpace(c.cfg.LLMProvider) != "" && strings.TrimSpace(c.cfg.LLMProfile) == "" && c.cat != nil {
+		entry, ok, err := c.cat.Get(ctx, strings.TrimSpace(c.cfg.LLMProvider))
+		if err != nil {
+			return Endpoint{}, err
+		}
+		if ok && providerAllowsNoAuth(entry) {
+			if strings.TrimSpace(c.cfg.APIBase) != "" {
+				entry.BaseURL = strings.TrimSpace(c.cfg.APIBase)
+			}
+			return BuildCatalogEndpoint(entry, auth.Profile{}, strings.TrimSpace(c.cfg.LLM), c.cfg.APIBase)
+		}
+	}
 	// Branch 1 — explicit active credential pointer wins.
 	if c.cfg != nil && strings.TrimSpace(c.cfg.LLMProfile) != "" && c.cat != nil && c.prof != nil {
 		cr := &catalogResolver{cat: c.cat, prof: c.prof, pick: c.pick, fallbackBase: c.cfg.APIBase}
@@ -208,16 +223,16 @@ func (c *compositeResolver) Resolve(ctx context.Context) (Endpoint, error) {
 			// Custom Provider and LiteLLM catalog entries have
 			// empty Models lists, so BuildCatalogEndpoint returns
 			// an endpoint with Model="". Fall back to the
-			// operator's configured model (XALGORIX_LLM) stripped
-			// of any "provider/" prefix — mirrors the same logic
+			// operator's configured model (XALGORIX_LLM), removing only
+			// a matching legacy "provider/" prefix — mirrors the same logic
 			// in scan_resolve.go legacyOrCatalogDefaultEndpoint
 			// Branch 0.
 			if ep.Model == "" && c.cfg.LLM != "" {
-				model := c.cfg.LLM
-				if idx := strings.Index(model, "/"); idx >= 0 {
-					model = model[idx+1:]
+				provider := c.cfg.LLMProvider
+				if provider == "" {
+					provider, _, _ = strings.Cut(c.cfg.LLMProfile, ":")
 				}
-				ep.Model = strings.TrimSpace(model)
+				ep.Model = modelForProvider(c.cfg.LLM, provider)
 			}
 			return ep, nil
 		}
@@ -240,6 +255,24 @@ func (c *compositeResolver) Resolve(ctx context.Context) (Endpoint, error) {
 	return Endpoint{}, &ConfigError{
 		Msg: "no provider configured: set XALGORIX_LLM_PROFILE to a saved credential or set XALGORIX_LLM + XALGORIX_API_KEY",
 	}
+}
+
+func providerAllowsNoAuth(entry providers.Entry) bool {
+	for _, method := range entry.AuthMethods {
+		if method == "none" {
+			return true
+		}
+	}
+	return false
+}
+
+func modelForProvider(model, provider string) string {
+	model = strings.TrimSpace(model)
+	prefix := strings.ToLower(strings.TrimSpace(provider)) + "/"
+	if prefix != "/" && strings.HasPrefix(strings.ToLower(model), prefix) {
+		return strings.TrimSpace(model[len(prefix):])
+	}
+	return model
 }
 
 // Resolve on legacyResolver reproduces v4.4.21

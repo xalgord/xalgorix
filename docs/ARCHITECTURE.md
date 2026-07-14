@@ -168,7 +168,8 @@ Read from `~/.xalgorix.env` (and process env). Key variables:
 
 | Variable | Purpose |
 | --- | --- |
-| `XALGORIX_LLM` | model name (routed via the provider catalog) |
+| `XALGORIX_LLM` | provider-native model ID |
+| `XALGORIX_LLM_PROVIDER` | provider selected by the dashboard for catalog routing |
 | `XALGORIX_API_KEY` / `XALGORIX_API_BASE` | LLM credentials / custom endpoint |
 | `XALGORIX_BIND` | dashboard listen address, default `127.0.0.1` (set `0.0.0.0` to expose; port defaults to `9137`) |
 | `XALGORIX_PASSWORD` / `XALGORIX_PASSWORD_HASH` | dashboard auth |

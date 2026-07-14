@@ -694,7 +694,7 @@ export default function NewScanPage() {
               <Label htmlFor="model">Model override</Label>
               <Input
                 id="model"
-                placeholder={llmQuery.data?.model || "provider/model-name"}
+                placeholder={llmQuery.data?.model || "model-name"}
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
               />
