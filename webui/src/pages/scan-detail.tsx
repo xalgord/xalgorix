@@ -9,6 +9,7 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -65,6 +66,8 @@ import {
   Sparkles,
   ListChecks,
   ArrowRight,
+  Loader2,
+  Send,
 } from "lucide-react";
 import { LiveFeed, type FeedFilter } from "@/components/live-feed";
 import { Pagination, DEFAULT_PAGE_SIZE } from "@/components/Pagination";
@@ -342,6 +345,8 @@ export default function ScanDetailPage() {
           <EventsTab
             events={mergedEvents}
             scanId={scan.id}
+            instanceId={eventInstanceId}
+            status={status}
             target={scan.target}
           />
         </TabsContent>
@@ -1021,23 +1026,148 @@ function DetailSection({
 function EventsTab({
   events,
   scanId,
+  instanceId,
+  status,
   target,
 }: {
   events: FeedEvent[];
   scanId: string;
+  instanceId: string;
+  status: string;
   target: string;
 }) {
   const [filter, setFilter] = useState<FeedFilter>("all");
   return (
-    <LiveFeed
-      events={events}
-      filter={filter}
-      onFilterChange={setFilter}
-      exportFilePrefix={`xalgorix-${target || scanId}-events`}
-      exportScope={scanId}
-      emptyTitle="No events yet"
-      emptyDescription="Once the scan starts producing output it will stream here."
-    />
+    <div className="space-y-3">
+      <LiveFeed
+        events={events}
+        filter={filter}
+        onFilterChange={setFilter}
+        exportFilePrefix={`xalgorix-${target || scanId}-events`}
+        exportScope={scanId}
+        emptyTitle="No events yet"
+        emptyDescription="Once the scan starts producing output it will stream here."
+      />
+      {status === "running" && (
+        <ScanGuidanceComposer instanceId={instanceId} />
+      )}
+    </div>
+  );
+}
+
+const GUIDANCE_SUGGESTIONS = [
+  "Focus next on authentication and session handling.",
+  "Prioritize IDOR and broken access control checks.",
+  "Verify the strongest finding with reproducible evidence.",
+  "Summarize progress, then continue with the highest-risk gap.",
+];
+
+function ScanGuidanceComposer({ instanceId }: { instanceId: string }) {
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const [feedback, setFeedback] = useState<{
+    kind: "success" | "error";
+    text: string;
+  } | null>(null);
+
+  const trimmed = message.trim();
+
+  async function sendGuidance() {
+    if (!trimmed || sending) return;
+    setSending(true);
+    setFeedback(null);
+    try {
+      const result = await api.chat(trimmed, instanceId);
+      setMessage("");
+      setFeedback({
+        kind: "success",
+        text: result.response || "Guidance queued for the next agent iteration.",
+      });
+    } catch (err) {
+      setFeedback({
+        kind: "error",
+        text: err instanceof Error ? err.message : "Could not send guidance.",
+      });
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm">Guide this scan</CardTitle>
+        <CardDescription>
+          Send a priority or correction to this agent. It will pick it up on
+          its next iteration without interrupting the scan.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap gap-2" aria-label="Guidance suggestions">
+          {GUIDANCE_SUGGESTIONS.map((suggestion) => (
+            <Button
+              key={suggestion}
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-auto whitespace-normal py-1.5 text-left text-xs"
+              onClick={() => {
+                setMessage(suggestion);
+                setFeedback(null);
+              }}
+              disabled={sending}
+            >
+              {suggestion}
+            </Button>
+          ))}
+        </div>
+        <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-end">
+          <Textarea
+            value={message}
+            onChange={(event) => {
+              setMessage(event.target.value);
+              setFeedback(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void sendGuidance();
+              }
+            }}
+            placeholder="Example: Re-check the admin API with the second account before moving on."
+            aria-label="Message to the running scan agent"
+            rows={3}
+            maxLength={4000}
+            disabled={sending}
+          />
+          <Button
+            type="button"
+            onClick={() => void sendGuidance()}
+            disabled={!trimmed || sending}
+            className="shrink-0 sm:w-auto"
+          >
+            {sending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
+            Send
+          </Button>
+        </div>
+        <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+          <span
+            aria-live="polite"
+            className={cn(
+              feedback?.kind === "success" && "text-emerald-400",
+              feedback?.kind === "error" && "text-red-400",
+            )}
+          >
+            {feedback?.text || "Enter to send · Shift+Enter for a new line"}
+          </span>
+          <span className="mono shrink-0">{message.length}/4000</span>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

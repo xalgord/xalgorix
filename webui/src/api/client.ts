@@ -343,7 +343,7 @@ export const api = {
     ),
 
   chat: (message: string, instanceId?: string) =>
-    http<{ reply?: string; error?: string }>("/api/chat", {
+    http<{ response: string }>("/api/chat", {
       method: "POST",
       json: { message, instance_id: instanceId },
     }),

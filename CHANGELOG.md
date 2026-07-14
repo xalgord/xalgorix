@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased] — Per-scan live guidance
+
+### Added
+- **Operators can guide an agent while its scan is running.** The individual scan Events tab now includes a per-instance message composer with focused guidance suggestions, keyboard submission, delivery feedback, and responsive layout. Messages are routed to the exact running `instance_id`, queued for the agent's next iteration without interrupting its active work, and then surface in the same instance event stream. The WebUI client response type now also matches the existing `/api/chat` response contract.
+
 ## [Unreleased] — Markdown rendering in finding details
 
 ### Fixed
