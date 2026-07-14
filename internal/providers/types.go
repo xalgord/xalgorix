@@ -34,9 +34,9 @@ package providers
 //     is shown when Flow is non-empty; "none" hides credential
 //     entry entirely (used by local-runtime providers like Ollama).
 //
-//   - Models is the best-effort suggestion list. The LLM tab
-//     prefills the Model input from Models[0] when picking the
-//     provider; operators always retain free-text override.
+//   - Models is retained for wire compatibility with older clients. Built-in
+//     entries leave it empty: the dashboard discovers models from provider
+//     APIs and falls back to manual entry when discovery is unavailable.
 //
 //   - Flow / ClientID / AuthorizationEndpoint / TokenEndpoint /
 //     DeviceAuthorizationEndpoint / Scopes mirror the v4.4.21

@@ -1028,6 +1028,13 @@ func (s *Server) Start() error {
 		}
 		s.handleListProviders(w, r)
 	})
+	mux.HandleFunc("/api/providers/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/models") {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleDiscoverProviderModels(w, r)
+	})
 	mux.HandleFunc("/api/auth/profiles", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

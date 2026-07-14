@@ -124,7 +124,7 @@ func TestCodexReuse_AccountIDFromJWTFallback(t *testing.T) {
 }
 
 // TestCodexReuse_MissingFileIsNotFound maps a missing credential file to
-// ErrNotFound (HTTP 404).
+// ErrCodexCredentialsNotFound (HTTP 404).
 func TestCodexReuse_MissingFileIsNotFound(t *testing.T) {
 	d, entry, _ := newCodexReuseFixture(t)
 	prev := codexCredentialPathFn
@@ -132,8 +132,8 @@ func TestCodexReuse_MissingFileIsNotFound(t *testing.T) {
 	t.Cleanup(func() { codexCredentialPathFn = prev })
 
 	_, err := d.Complete(context.Background(), entry, CompleteInput{})
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("err = %v, want ErrNotFound", err)
+	if !errors.Is(err, ErrCodexCredentialsNotFound) {
+		t.Fatalf("err = %v, want ErrCodexCredentialsNotFound", err)
 	}
 }
 
@@ -149,7 +149,7 @@ func TestCodexReuse_NoAccessTokenIsNotFound(t *testing.T) {
 	t.Cleanup(func() { codexCredentialPathFn = prev })
 
 	_, err := d.Complete(context.Background(), entry, CompleteInput{})
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("err = %v, want ErrNotFound", err)
+	if !errors.Is(err, ErrCodexCredentialsNotFound) {
+		t.Fatalf("err = %v, want ErrCodexCredentialsNotFound", err)
 	}
 }

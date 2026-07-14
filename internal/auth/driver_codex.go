@@ -114,7 +114,8 @@ type codexAuthFile struct {
 
 // Complete imports ~/.codex/auth.json into Profile_Store. Read-only on
 // the source file (O_RDONLY|O_NOFOLLOW); any open/read/parse failure that
-// means "no usable credential" surfaces as ErrNotFound → HTTP 404.
+// means "no usable credential" surfaces as ErrCodexCredentialsNotFound →
+// HTTP 404.
 func (d *codexReuseDriver) Complete(ctx context.Context, e providers.Entry, in CompleteInput) (Profile, error) {
 	if err := ctx.Err(); err != nil {
 		return Profile{}, err
@@ -122,18 +123,18 @@ func (d *codexReuseDriver) Complete(ctx context.Context, e providers.Entry, in C
 
 	path := codexCredentialPathFn()
 	if path == "" {
-		return Profile{}, ErrNotFound
+		return Profile{}, ErrCodexCredentialsNotFound
 	}
 
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
-		return Profile{}, ErrNotFound
+		return Profile{}, ErrCodexCredentialsNotFound
 	}
 	defer func() { _ = f.Close() }()
 
 	body, err := io.ReadAll(f)
 	if err != nil {
-		return Profile{}, ErrNotFound
+		return Profile{}, ErrCodexCredentialsNotFound
 	}
 
 	var raw codexAuthFile
@@ -145,7 +146,7 @@ func (d *codexReuseDriver) Complete(ctx context.Context, e providers.Entry, in C
 	if access == "" {
 		// No access token (e.g. an api-key-mode CLI login) — nothing to
 		// import as an OAuth profile. Treat as "re-run codex login" → 404.
-		return Profile{}, ErrNotFound
+		return Profile{}, ErrCodexCredentialsNotFound
 	}
 	refresh := strings.TrimSpace(raw.Tokens.RefreshToken)
 

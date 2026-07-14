@@ -71,6 +71,12 @@ var ErrReauthRequired = errors.New("oauth refresh required")
 // Validates: Requirement 9.2.
 var ErrNotFound = errors.New("claude cli credentials not found")
 
+// ErrCodexCredentialsNotFound is returned by the codex_cli_reuse driver when
+// ~/.codex/auth.json is missing, unreadable, or does not contain a usable
+// ChatGPT access token. It is distinct so the HTTP layer never reports a
+// Claude-specific error for a Codex sign-in.
+var ErrCodexCredentialsNotFound = errors.New("codex cli credentials not found")
+
 // ErrInvalidGrant is the sentinel each driver's exchange callback
 // returns from refreshWithSink when the upstream token endpoint
 // responded with the OAuth 2.0 invalid_grant error. The shared

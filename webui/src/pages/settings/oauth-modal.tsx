@@ -282,8 +282,21 @@ export default function OAuthModal({
         )}
 
         {error && (
-          <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-            {error}
+          <div className="space-y-1 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+            <p>{error}</p>
+            {provider === "codex" &&
+              error === "codex cli credentials not found" && (
+                <p className="text-xs text-muted-foreground">
+                  Run <code className="font-mono">codex login</code> as the
+                  Xalgorix service user, or make the host file
+                  <code className="mx-1 font-mono">~/.codex/auth.json</code>
+                  available at
+                  <code className="ml-1 font-mono">
+                    /root/.codex/auth.json
+                  </code>
+                  .
+                </p>
+              )}
           </div>
         )}
 
@@ -385,6 +398,17 @@ export default function OAuthModal({
                 </code>
                 . The token never leaves this host.
               </p>
+              {provider === "codex" && (
+                <p className="text-xs text-muted-foreground">
+                  Expected file:
+                  <code className="mx-1 font-mono">~/.codex/auth.json</code>.
+                  In Docker, mount it read-only at
+                  <code className="ml-1 font-mono">
+                    /root/.codex/auth.json
+                  </code>
+                  .
+                </p>
+              )}
               <div className="flex justify-end">
                 <Button
                   size="sm"

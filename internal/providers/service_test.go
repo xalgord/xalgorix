@@ -106,6 +106,22 @@ func TestService_RoundTripsBuiltin(t *testing.T) {
 	}
 }
 
+func TestBuiltin_NovitaConfiguration(t *testing.T) {
+	entry, ok := LookupBuiltin("novita")
+	if !ok {
+		t.Fatal("Novita provider is missing from the built-in catalog")
+	}
+	if entry.BaseURL != "https://api.novita.ai/openai/v1" {
+		t.Errorf("Novita BaseURL = %q, want https://api.novita.ai/openai/v1", entry.BaseURL)
+	}
+	if entry.HeaderStyle != "openai" {
+		t.Errorf("Novita HeaderStyle = %q, want openai", entry.HeaderStyle)
+	}
+	if len(entry.AuthMethods) != 1 || entry.AuthMethods[0] != "api_key" {
+		t.Errorf("Novita AuthMethods = %v, want [api_key]", entry.AuthMethods)
+	}
+}
+
 // TestService_GetUnknown asserts an unknown id returns
 // (zero, false, nil) without an error so callers can branch
 // cleanly.

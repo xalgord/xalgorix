@@ -27,6 +27,7 @@ import {
   useAgentMail,
   useAuthProfiles,
   useDeleteAuthProfile,
+  useDiscoverProviderModels,
   useEnvironmentSettings,
   useLLMSettings,
   useProviders,
@@ -260,14 +261,18 @@ export default function SettingsPage() {
   function changeProvider(providerId: string) {
     const entry = sortedProviders.find((p) => p.id === providerId);
     const methods = entry?.authMethods ?? ["api_key"];
-    const firstModel = entry?.models?.[0] ?? "";
     setLLMForm((current) => ({
       ...current,
       provider: providerId,
       authMethod: (methods[0] as LLMFormState["authMethod"]) ?? "api_key",
-      // Prefill the model field with the catalog suggestion so the
-      // user sees a working default. They can still override it.
-      model: firstModel ? `${providerId}/${firstModel}` : current.model,
+      // Never carry a model across providers. The selected provider is
+      // discovered automatically when possible; otherwise the operator
+      // enters the model explicitly.
+      model: "",
+      activeProfileKey: "",
+      apiKey: "",
+      hasApiKey: false,
+      apiBaseOverride: "",
       // apiBase resets to the catalog default; "custom" leaves the
       // current free-text base intact.
       apiBase: entry?.id === "custom" ? current.apiBase : entry?.baseURL ?? "",
@@ -439,6 +444,33 @@ export default function SettingsPage() {
                   </div>
                 )}
 
+                {selectedProvider && (
+                  <CatalogModelField
+                    provider={selectedProvider}
+                    value={llmForm.model}
+                    profileKey={
+                      llmForm.authMethod === "none"
+                        ? ""
+                        : llmForm.activeProfileKey.startsWith(
+                              `${selectedProvider.id}:`,
+                            )
+                          ? llmForm.activeProfileKey
+                          : (providerProfiles[0]?.key ??
+                            (providerProfiles[0]
+                              ? `${providerProfiles[0].provider}:${providerProfiles[0].profileId}`
+                              : ""))
+                    }
+                    autoDiscover={
+                      llmForm.authMethod === "none" ||
+                      providerProfiles.length > 0 ||
+                      llm.data?.provider === selectedProvider.id
+                    }
+                    onChange={(model) =>
+                      setLLMForm({ ...llmForm, model })
+                    }
+                  />
+                )}
+
                 {/* Auth-method-specific form */}
                 {selectedProvider && llmForm.authMethod === "api_key" && (
                   <div className="grid gap-3 lg:grid-cols-2">
@@ -456,18 +488,6 @@ export default function SettingsPage() {
                       <p className="text-xs text-muted-foreground">
                         Keep the masked value to preserve the saved key.
                       </p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="llm-model">Model</Label>
-                      <Input
-                        id="llm-model"
-                        value={llmForm.model}
-                        onChange={(e) =>
-                          setLLMForm({ ...llmForm, model: e.target.value })
-                        }
-                        placeholder={selectedProvider.models?.[0] ?? "provider/model"}
-                        className="font-mono"
-                      />
                     </div>
                     {selectedProvider.id === "custom" ? (
                       <>
@@ -555,20 +575,8 @@ export default function SettingsPage() {
                   <div className="space-y-3 rounded-md border border-border bg-muted/30 p-4">
                     <p className="text-sm">
                       {selectedProvider.displayName} runs locally — no
-                      credential required. Just confirm the model below.
+                      credential required. Select or enter the model above.
                     </p>
-                    <div className="space-y-2">
-                      <Label htmlFor="llm-model-local">Model</Label>
-                      <Input
-                        id="llm-model-local"
-                        value={llmForm.model}
-                        onChange={(e) =>
-                          setLLMForm({ ...llmForm, model: e.target.value })
-                        }
-                        placeholder={selectedProvider.models?.[0] ?? "model"}
-                        className="font-mono"
-                      />
-                    </div>
                   </div>
                 )}
 
@@ -1229,6 +1237,154 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function CatalogModelField({
+  provider,
+  value,
+  profileKey,
+  autoDiscover,
+  onChange,
+}: {
+  provider: CatalogEntry;
+  value: string;
+  profileKey: string;
+  autoDiscover: boolean;
+  onChange: (value: string) => void;
+}) {
+  const discovery = useDiscoverProviderModels();
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
+  const [manualEntry, setManualEntry] = useState(false);
+  useEffect(() => {
+    setDiscoveredModels([]);
+    setManualEntry(false);
+    discovery.reset();
+    if (
+      autoDiscover &&
+      provider.id !== "custom" &&
+      provider.baseURL
+    ) {
+      discovery.mutate(
+        { provider: provider.id, profile: profileKey || undefined },
+        {
+          onSuccess: (result) => {
+            setDiscoveredModels(result.models);
+            if (result.models.length > 0) {
+              onChange(`${provider.id}/${result.models[0]}`);
+            }
+          },
+        },
+      );
+    }
+    // The provider/profile pair is the discovery identity. Mutation methods
+    // are intentionally excluded so query state updates do not rescan.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider.id, profileKey, autoDiscover]);
+  const models = discoveredModels;
+  const options = models.map((model) => ({
+    label: model,
+    value: `${provider.id}/${model}`,
+  }));
+  const selected = options.some((option) => option.value === value)
+    ? value
+    : options[0]?.value;
+
+  return (
+    <div className="space-y-2">
+      <Label htmlFor="llm-model">Model</Label>
+      {options.length > 0 && !manualEntry ? (
+        <Select
+          value={selected}
+          onValueChange={(next) => {
+            if (next === "__custom__") {
+              setManualEntry(true);
+              onChange("");
+            } else {
+              onChange(next);
+            }
+          }}
+        >
+          <SelectTrigger id="llm-model" className="font-mono">
+            <SelectValue placeholder="Select a model" />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+            <SelectItem value="__custom__">Custom model…</SelectItem>
+          </SelectContent>
+        </Select>
+      ) : null}
+      {(options.length === 0 || manualEntry) && (
+        <Input
+          id={options.length === 0 ? "llm-model" : undefined}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={`${provider.id}/model-name`}
+          aria-label={`Custom model for ${provider.displayName}`}
+          className="font-mono"
+        />
+      )}
+      {manualEntry && options.length > 0 && (
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            setManualEntry(false);
+            onChange(options[0].value);
+          }}
+        >
+          Choose a discovered model
+        </Button>
+      )}
+      <p className="text-xs text-muted-foreground">
+        Models are loaded from the provider when its API supports discovery.
+        Otherwise, enter the exact model ID manually.
+      </p>
+      {provider.id !== "custom" && provider.baseURL && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={discovery.isPending}
+            onClick={() => {
+              discovery.mutate(
+                { provider: provider.id, profile: profileKey || undefined },
+                {
+                  onSuccess: (result) => {
+                    setDiscoveredModels(result.models);
+                    setManualEntry(false);
+                    if (result.models.length > 0) {
+                      onChange(`${provider.id}/${result.models[0]}`);
+                    }
+                  },
+                },
+              );
+            }}
+          >
+            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${discovery.isPending ? "animate-spin" : ""}`} />
+            {discovery.isPending ? "Scanning models…" : "Scan available models"}
+          </Button>
+          {discovery.isSuccess && (
+            <span className="text-xs text-success">
+              {discoveredModels.length} models loaded
+            </span>
+          )}
+        </div>
+      )}
+      {discovery.isError && (
+        <p className="text-xs text-destructive">
+          {discovery.error instanceof Error
+            ? discovery.error.message
+            : "Model discovery failed"}
+        </p>
+      )}
     </div>
   );
 }

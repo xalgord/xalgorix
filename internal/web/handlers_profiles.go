@@ -35,7 +35,9 @@
 //
 //   - auth.ErrReauthRequired      → 401 ("oauth refresh required")
 //
-//   - auth.ErrNotFound            → 404 (claude cli credentials)
+//   - auth.ErrNotFound                    → 404 (Claude CLI credentials)
+//
+//   - auth.ErrCodexCredentialsNotFound    → 404 (Codex CLI credentials)
 //
 //   - providers.ErrUpstream{S,B}  → 502 with {statusCode, body}
 //
@@ -113,6 +115,8 @@ func profileErrorStatus(err error) int {
 		return http.StatusServiceUnavailable
 	case errors.Is(err, auth.ErrProfileNotFound):
 		return http.StatusNotFound
+	case errors.Is(err, auth.ErrCodexCredentialsNotFound):
+		return http.StatusNotFound
 	case errors.Is(err, auth.ErrNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, auth.ErrFlowTimeout):
@@ -162,6 +166,12 @@ func writeProfileError(w http.ResponseWriter, err error) {
 	if errors.Is(err, auth.ErrNotFound) {
 		writeJSONStatus(w, http.StatusNotFound, map[string]string{
 			"error": "claude cli credentials not found",
+		})
+		return
+	}
+	if errors.Is(err, auth.ErrCodexCredentialsNotFound) {
+		writeJSONStatus(w, http.StatusNotFound, map[string]string{
+			"error": "codex cli credentials not found",
 		})
 		return
 	}
@@ -545,7 +555,8 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 //
 // Status mapping:
 //   - auth.ErrFlowTimeout                     → 408
-//   - auth.ErrNotFound (claude credentials)   → 404
+//   - auth.ErrNotFound (Claude credentials)                 → 404
+//   - auth.ErrCodexCredentialsNotFound (Codex credentials)  → 404
 //   - providers.ErrUpstream                   → 502 envelope
 //   - other errors                            → 500 / 400 per sentinel
 //

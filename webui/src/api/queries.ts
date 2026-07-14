@@ -411,6 +411,13 @@ export function useProviders() {
   });
 }
 
+export function useDiscoverProviderModels() {
+  return useMutation({
+    mutationFn: ({ provider, profile }: { provider: string; profile?: string }) =>
+      api.discoverProviderModels(provider, profile),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Auth profile mutation hooks. The catalog is read-only in v4.4.22, so
 // there is no provider-create / -update / -delete and no openclaw or

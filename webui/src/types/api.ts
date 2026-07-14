@@ -260,12 +260,12 @@ export interface CatalogEntry {
   displayName: string;
   baseURL: string;
   models?: string[];
-  headerStyle: "openai" | "anthropic" | "gemini";
+  headerStyle: "openai" | "openai_responses" | "anthropic" | "gemini";
   // v4.4.22 surfaces AuthMethods so the dashboard can render the
   // matching sub-form (api_key / oauth / none) without duplicating
   // the catalog's policy. Older servers omit this field entirely.
   authMethods?: Array<"api_key" | "oauth" | "none">;
-  flow?: "" | "pkce" | "device_code" | "setup_token" | "claude_cli_reuse";
+  flow?: "" | "pkce" | "device_code" | "setup_token" | "claude_cli_reuse" | "codex_cli_reuse";
   clientID?: string;
   authorizationEndpoint?: string;
   tokenEndpoint?: string;

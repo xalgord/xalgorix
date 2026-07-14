@@ -4,7 +4,7 @@
 // operator-editable catalog file, no openclaw importer, and no
 // startup catalog write.
 //
-// The 44 entries are sorted alphabetically by ID and end with the
+// The 45 entries are sorted alphabetically by ID and end with the
 // "custom" sentinel so the LLM tab dropdown ordering matches the
 // data ordering one-to-one ("custom" is alphabetically last by
 // design — it represents user-supplied endpoints rather than a
@@ -55,7 +55,6 @@ var builtinList = []Entry{
 		HeaderStyle: "anthropic",
 		AuthMethods: []string{"api_key", "oauth"},
 		Flow:        "claude_cli_reuse",
-		Models:      []string{"claude-sonnet-4-5-20250929", "claude-opus-4-1-20250805", "claude-haiku-4-5-20251022"},
 		Notes:       "OAuth path imports an existing Claude CLI credential file (~/.claude/.credentials.json).",
 	},
 	{
@@ -64,7 +63,6 @@ var builtinList = []Entry{
 		BaseURL:     "",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"arcee-spark"},
 		Notes:       "Set base URL via the Custom Provider option if the default is unknown.",
 	},
 	{
@@ -73,7 +71,6 @@ var builtinList = []Entry{
 		BaseURL:     "",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"skylark-pro"},
 		Notes:       "Set base URL via the Custom Provider option if the default is unknown.",
 	},
 	{
@@ -82,7 +79,6 @@ var builtinList = []Entry{
 		BaseURL:     "https://api.cerebras.ai/v1",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"llama3.1-70b"},
 	},
 	{
 		ID:          "chutes",
@@ -90,7 +86,6 @@ var builtinList = []Entry{
 		BaseURL:     "",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"meta-llama/Llama-3.1-70B-Instruct"},
 		Notes:       "Set base URL via the Custom Provider option if the default is unknown.",
 	},
 	{
@@ -99,7 +94,6 @@ var builtinList = []Entry{
 		BaseURL:     "",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"@cf/meta/llama-3.1-70b-instruct"},
 		Notes:       "Configure your account-specific gateway URL via Custom Provider (https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/openai).",
 	},
 	{
@@ -116,7 +110,6 @@ var builtinList = []Entry{
 		AuthorizationEndpoint: "https://auth.openai.com/oauth/authorize",
 		TokenEndpoint:         "https://auth.openai.com/oauth/token",
 		Scopes:                []string{"openid", "profile", "email", "offline_access"},
-		Models:                []string{"gpt-5.5", "gpt-5.5-codex", "gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.1-codex", "gpt-5.2"},
 		Notes:                 "ChatGPT Plus/Pro subscription. Run `codex login` (official OpenAI Codex CLI) on this host, then click Import below. Talks the Responses API at chatgpt.com/backend-api/codex. Personal-use only per OpenAI's terms.",
 	},
 	{
@@ -133,7 +126,6 @@ var builtinList = []Entry{
 		TokenEndpoint:               "https://github.com/login/oauth/access_token",
 		DeviceAuthorizationEndpoint: "https://github.com/login/device/code",
 		Scopes:                      []string{"read:user"},
-		Models:                      []string{"gpt-4o"},
 		Notes:                       "GitHub Copilot CLI device-code flow. The matching API base URL depends on the proxy you point at — leave empty and use Custom Provider for self-hosted Copilot proxies.",
 	},
 	{
@@ -142,7 +134,6 @@ var builtinList = []Entry{
 		BaseURL:     "https://api.deepinfra.com/v1/openai",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"meta-llama/Meta-Llama-3.1-70B-Instruct"},
 	},
 	{
 		ID:          "deepseek",
@@ -150,7 +141,6 @@ var builtinList = []Entry{
 		BaseURL:     "https://api.deepseek.com/v1",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"deepseek-chat", "deepseek-reasoner"},
 	},
 	{
 		ID:          "fireworks",
@@ -158,7 +148,6 @@ var builtinList = []Entry{
 		BaseURL:     "https://api.fireworks.ai/inference/v1",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"accounts/fireworks/models/llama-v3p1-70b-instruct"},
 	},
 	{
 		ID:          "google",
@@ -173,7 +162,6 @@ var builtinList = []Entry{
 		AuthorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
 		TokenEndpoint:         "https://oauth2.googleapis.com/token",
 		Scopes:                []string{"https://www.googleapis.com/auth/cloud-platform"},
-		Models:                []string{"gemini-2.5-pro", "gemini-2.5-flash"},
 		Notes:                 "Set XALGORIX_GOOGLE_OAUTH_CLIENT_ID to your Google Cloud OAuth client.",
 	},
 	{
@@ -182,7 +170,6 @@ var builtinList = []Entry{
 		BaseURL:     "https://us-central1-aiplatform.googleapis.com",
 		HeaderStyle: "gemini",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"gemini-2.5-pro"},
 		Notes:       "Vertex auth normally uses gcloud-managed credentials picked up via env (GOOGLE_APPLICATION_CREDENTIALS).",
 	},
 	{
@@ -191,7 +178,6 @@ var builtinList = []Entry{
 		BaseURL:     "https://api.groq.com/openai/v1",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"llama-3.3-70b-versatile", "mixtral-8x7b-32768"},
 	},
 	{
 		ID:          "huggingface",
@@ -200,7 +186,6 @@ var builtinList = []Entry{
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key", "oauth"},
 		Flow:        "pkce",
-		Models:      []string{"meta-llama/Meta-Llama-3.1-70B-Instruct"},
 		Notes:       "OAuth flow is beta — Hugging Face's OAuth client metadata is not publicly stable yet; API key path is fully tested.",
 	},
 	{
@@ -209,7 +194,6 @@ var builtinList = []Entry{
 		BaseURL:     "",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"kilo/auto"},
 		Notes:       "Set base URL via the Custom Provider option if the default is unknown.",
 	},
 	{
@@ -218,7 +202,6 @@ var builtinList = []Entry{
 		BaseURL:     "http://localhost:4000/v1",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"gpt-4o"},
 		Notes:       "Default base URL points at the standard LiteLLM proxy (http://localhost:4000). Override via API Base if your proxy runs on a different host or port.",
 	},
 	{
@@ -227,7 +210,6 @@ var builtinList = []Entry{
 		BaseURL:     "http://localhost:1234/v1",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"none"},
-		Models:      []string{"local-model"},
 		Notes:       "Local runtime — no credential required.",
 	},
 	{
@@ -236,7 +218,6 @@ var builtinList = []Entry{
 		BaseURL:     "",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"gpt-4o"},
 		Notes:       "Configure your tenant-specific endpoint via Custom Provider.",
 	},
 	{
@@ -246,7 +227,6 @@ var builtinList = []Entry{
 		// Default recommended model.
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"MiniMax-M3", "MiniMax-M2.7"},
 	},
 	{
 		ID:          "mistral",
@@ -254,7 +234,6 @@ var builtinList = []Entry{
 		BaseURL:     "https://api.mistral.ai/v1",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"mistral-large-latest", "open-mistral-nemo"},
 	},
 	{
 		ID:          "moonshot",
@@ -262,7 +241,6 @@ var builtinList = []Entry{
 		BaseURL:     "https://api.moonshot.cn/v1",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"moonshot-v1-128k", "kimi-k2-0905-preview"},
 	},
 	{
 		ID:          "nvidia",
@@ -270,7 +248,14 @@ var builtinList = []Entry{
 		BaseURL:     "https://integrate.api.nvidia.com/v1",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"meta/llama-3.1-70b-instruct"},
+	},
+	{
+		ID:          "novita",
+		DisplayName: "Novita AI",
+		BaseURL:     "https://api.novita.ai/openai/v1",
+		HeaderStyle: "openai",
+		AuthMethods: []string{"api_key"},
+		Notes:       "OpenAI-compatible LLM API. Choose Custom model for any model returned by Novita's models endpoint.",
 	},
 	{
 		ID:          "ollama",
@@ -278,7 +263,6 @@ var builtinList = []Entry{
 		BaseURL:     "http://localhost:11434/v1",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"none"},
-		Models:      []string{"llama3.1"},
 		Notes:       "Local runtime — no credential required.",
 	},
 	{
@@ -287,7 +271,6 @@ var builtinList = []Entry{
 		BaseURL:     "https://api.openai.com/v1",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"gpt-5.5", "gpt-5.5-pro", "gpt-5.2", "gpt-5.1", "gpt-4o"},
 		Notes:       "OpenAI Platform API via API key (chat-completions). For ChatGPT Plus/Pro subscription access to Codex models, use the 'Codex (ChatGPT Subscription)' provider instead.",
 	},
 	{
@@ -297,7 +280,6 @@ var builtinList = []Entry{
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key", "oauth"},
 		Flow:        "pkce",
-		Models:      []string{"opencode-1"},
 		Notes:       "OAuth flow is beta — endpoints are not publicly documented yet; API key path is fully tested.",
 	},
 	{
@@ -306,7 +288,6 @@ var builtinList = []Entry{
 		BaseURL:     "https://openrouter.ai/api/v1",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"openrouter/auto", "anthropic/claude-3.5-sonnet"},
 	},
 	{
 		ID:          "qianfan",
@@ -314,7 +295,6 @@ var builtinList = []Entry{
 		BaseURL:     "",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"ernie-4.0-8k"},
 		Notes:       "Configure your Baidu Qianfan endpoint via Custom Provider.",
 	},
 	{
@@ -324,7 +304,6 @@ var builtinList = []Entry{
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key", "oauth"},
 		Flow:        "pkce",
-		Models:      []string{"qwen-max", "qwen-plus", "qwen-turbo"},
 		Notes:       "OAuth flow is beta — DashScope OAuth client metadata is not publicly stable yet; API key path is fully tested.",
 	},
 	{
@@ -333,7 +312,6 @@ var builtinList = []Entry{
 		BaseURL:     "http://localhost:30000/v1",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"none"},
-		Models:      []string{"local-model"},
 		Notes:       "Local runtime — no credential required.",
 	},
 	{
@@ -342,7 +320,6 @@ var builtinList = []Entry{
 		BaseURL:     "",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"step-1v-8k"},
 		Notes:       "Configure your StepFun endpoint via Custom Provider.",
 	},
 	{
@@ -351,7 +328,6 @@ var builtinList = []Entry{
 		BaseURL:     "",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"synthetic-1"},
 		Notes:       "Set base URL via the Custom Provider option if the default is unknown.",
 	},
 	{
@@ -360,7 +336,6 @@ var builtinList = []Entry{
 		BaseURL:     "",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"hunyuan-pro"},
 		Notes:       "Configure your Tencent Hunyuan endpoint via Custom Provider.",
 	},
 	{
@@ -369,7 +344,6 @@ var builtinList = []Entry{
 		BaseURL:     "https://api.together.xyz/v1",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"meta-llama/Llama-3.3-70B-Instruct-Turbo"},
 	},
 	{
 		ID:          "venice",
@@ -377,7 +351,6 @@ var builtinList = []Entry{
 		BaseURL:     "",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"venice-1"},
 		Notes:       "Set base URL via the Custom Provider option if the default is unknown.",
 	},
 	{
@@ -386,7 +359,6 @@ var builtinList = []Entry{
 		BaseURL:     "",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"openai/gpt-4o"},
 		Notes:       "Configure your Vercel AI Gateway endpoint via Custom Provider.",
 	},
 	{
@@ -395,7 +367,6 @@ var builtinList = []Entry{
 		BaseURL:     "http://localhost:8000/v1",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"none"},
-		Models:      []string{"local-model"},
 		Notes:       "Local runtime — no credential required.",
 	},
 	{
@@ -404,7 +375,6 @@ var builtinList = []Entry{
 		BaseURL:     "",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"doubao-pro-32k"},
 		Notes:       "Configure your Volcano Engine endpoint via Custom Provider.",
 	},
 	{
@@ -416,7 +386,6 @@ var builtinList = []Entry{
 		Flow:                  "pkce",
 		AuthorizationEndpoint: "https://x.ai/oauth/authorize",
 		TokenEndpoint:         "https://x.ai/oauth/token",
-		Models:                []string{"grok-4", "grok-3"},
 		Notes:                 "OAuth scopes vary by client — confirm via xAI developer console.",
 	},
 	{
@@ -425,7 +394,6 @@ var builtinList = []Entry{
 		BaseURL:     "",
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
-		Models:      []string{"mi-llm-1"},
 		Notes:       "Configure your Xiaomi endpoint via Custom Provider.",
 	},
 	{
@@ -435,7 +403,6 @@ var builtinList = []Entry{
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key", "oauth"},
 		Flow:        "pkce",
-		Models:      []string{"glm-4.5"},
 		Notes:       "OAuth flow is beta — Z.AI OAuth client metadata is not publicly stable yet; API key path is fully tested.",
 	},
 	// Custom is the explicit "operator-supplied endpoint" entry.
