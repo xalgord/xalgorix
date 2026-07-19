@@ -167,6 +167,177 @@ func TestNewClient_ProviderParsedFromModel(t *testing.T) {
 	}
 }
 
+func TestOllamaReasoningEffortNormalization(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      config.Config
+		endpoint string
+		want     string
+	}{
+		{
+			name: "catalog provider medium",
+			cfg: config.Config{
+				LLMProvider:     "ollama",
+				ReasoningEffort: "medium",
+			},
+			endpoint: "http://ollama.example/v1/chat/completions",
+			want:     "medium",
+		},
+		{
+			name: "legacy prefix none",
+			cfg: config.Config{
+				LLM:             "ollama/reasoning-model:latest",
+				ReasoningEffort: "none",
+			},
+			endpoint: "http://localhost:11434/v1/chat/completions",
+			want:     "none",
+		},
+		{
+			name: "ollama xhigh maps to high",
+			cfg: config.Config{
+				LLMProvider:     "ollama",
+				ReasoningEffort: "xhigh",
+			},
+			endpoint: "http://ollama.example/v1/chat/completions",
+			want:     "high",
+		},
+		{
+			name: "profile provider low",
+			cfg: config.Config{
+				LLMProfile:      "ollama:default",
+				ReasoningEffort: "low",
+			},
+			endpoint: "http://ollama.example/v1/chat/completions",
+			want:     "low",
+		},
+		{
+			name: "conventional port detects Ollama",
+			cfg: config.Config{
+				ReasoningEffort: "high",
+			},
+			endpoint: "http://host.docker.internal:11434/v1/chat/completions",
+			want:     "high",
+		},
+		{
+			name: "other OpenAI-compatible provider omitted",
+			cfg: config.Config{
+				LLMProvider:     "openai",
+				ReasoningEffort: "high",
+			},
+			endpoint: "https://api.openai.com/v1/chat/completions",
+			want:     "",
+		},
+		{
+			name: "similar but different port is not Ollama",
+			cfg: config.Config{
+				ReasoningEffort: "high",
+			},
+			endpoint: "http://custom.example:114340/v1/chat/completions",
+			want:     "",
+		},
+		{
+			name: "custom endpoint explicitly marked Ollama-compatible",
+			cfg: config.Config{
+				OllamaCompatible: true,
+				ReasoningEffort:  "medium",
+			},
+			endpoint: "https://models.example:9443/v1/chat/completions",
+			want:     "medium",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := NewClient(&tc.cfg)
+			if got := client.ollamaReasoningEffort(tc.endpoint); got != tc.want {
+				t.Fatalf("ollamaReasoningEffort() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDoChat_SendsReasoningEffortOnlyToOllama(t *testing.T) {
+	tests := []struct {
+		name          string
+		provider      string
+		effort        string
+		wantEffort    string
+		wantFieldSent bool
+	}{
+		{name: "Ollama medium", provider: "ollama", effort: "medium", wantEffort: "medium", wantFieldSent: true},
+		{name: "Ollama none", provider: "ollama", effort: "none", wantEffort: "none", wantFieldSent: true},
+		{name: "Ollama xhigh normalizes", provider: "ollama", effort: "xhigh", wantEffort: "high", wantFieldSent: true},
+		{name: "OpenAI unaffected", provider: "openai", effort: "high", wantFieldSent: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{
+				LLM:             "reasoning-model:latest",
+				LLMProvider:     tc.provider,
+				APIBase:         "http://llm.example/v1",
+				ReasoningEffort: tc.effort,
+				MaxOutputTokens: 2048,
+			}
+			client := NewClient(cfg)
+			var captured map[string]any
+			client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if err := json.NewDecoder(req.Body).Decode(&captured); err != nil {
+					t.Fatalf("decode request body: %v", err)
+				}
+				return jsonResponse(http.StatusOK, `{"choices":[{"message":{"content":"ok"}}]}`), nil
+			})
+
+			got, err := client.doChat([]Message{{Role: "user", Content: "test"}})
+			if err != nil {
+				t.Fatalf("doChat: %v", err)
+			}
+			if got != "ok" {
+				t.Fatalf("response = %q, want ok", got)
+			}
+			effort, fieldSent := captured["reasoning_effort"]
+			if fieldSent != tc.wantFieldSent {
+				t.Fatalf("reasoning_effort present = %v, want %v; body=%v", fieldSent, tc.wantFieldSent, captured)
+			}
+			if fieldSent && effort != tc.wantEffort {
+				t.Fatalf("reasoning_effort = %v, want %q", effort, tc.wantEffort)
+			}
+		})
+	}
+}
+
+func TestChatStream_SendsOllamaReasoningEffort(t *testing.T) {
+	cfg := &config.Config{
+		LLM:             "reasoning-model:latest",
+		LLMProvider:     "ollama",
+		APIBase:         "http://ollama.example/v1",
+		ReasoningEffort: "low",
+		MaxOutputTokens: 2048,
+	}
+	client := NewClient(cfg)
+	var captured map[string]any
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(req.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		return jsonResponse(http.StatusOK, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"), nil
+	})
+
+	var content strings.Builder
+	for chunk := range client.ChatStream([]Message{{Role: "user", Content: "test"}}) {
+		if chunk.Err != nil {
+			t.Fatalf("ChatStream: %v", chunk.Err)
+		}
+		content.WriteString(chunk.Content)
+	}
+	if got := content.String(); got != "ok" {
+		t.Fatalf("stream content = %q, want ok", got)
+	}
+	if got := captured["reasoning_effort"]; got != "low" {
+		t.Fatalf("reasoning_effort = %v, want low; body=%v", got, captured)
+	}
+}
+
 func TestResolveEndpoint_ProviderDefaultsAndCustomBases(t *testing.T) {
 	cases := []struct {
 		name      string

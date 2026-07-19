@@ -49,6 +49,7 @@ type llmSettingsResponse struct {
 	APIKey                    string `json:"apiKey"`
 	HasAPIKey                 bool   `json:"hasApiKey"`
 	ReasoningEffort           string `json:"reasoningEffort"`
+	OllamaCompatible          bool   `json:"ollamaCompatible"`
 	LLMMaxRetries             int    `json:"llmMaxRetries"`
 	MemoryCompressorTimeout   int    `json:"memoryCompressorTimeout"`
 	MaxIterations             int    `json:"maxIterations"`
@@ -97,6 +98,7 @@ type llmSettingsRequest struct {
 	APIBase                 string `json:"apiBase"`
 	APIKey                  string `json:"apiKey"`
 	ReasoningEffort         string `json:"reasoningEffort"`
+	OllamaCompatible        *bool  `json:"ollamaCompatible"`
 	LLMMaxRetries           int    `json:"llmMaxRetries"`
 	MemoryCompressorTimeout int    `json:"memoryCompressorTimeout"`
 	MaxIterations           int    `json:"maxIterations"`
@@ -123,7 +125,8 @@ func allEnvSettingDefinitions() []envSettingDefinition {
 		{Key: "XALGORIX_API_KEY", Label: "LLM API key", Category: "LLM", Description: "Provider API key for the configured model.", Placeholder: "sk-...", InputType: "secret", Sensitive: true},
 		{Key: "XALGORIX_API_BASE", Label: "API base URL", Category: "LLM", Description: "Optional custom provider endpoint. Leave blank to use provider defaults.", Placeholder: "https://api.openai.com/v1", InputType: "url"},
 		{Key: "XALGORIX_LLM_PROFILE", Label: "Active LLM profile", Category: "LLM", Description: "Active credential pointer (\"<provider>:<profileId>\"). Set by the LLM Settings tab; takes precedence over XALGORIX_API_KEY/XALGORIX_LLM when present.", Placeholder: "openai:default", InputType: "text"},
-		{Key: "XALGORIX_REASONING_EFFORT", Label: "Reasoning effort", Category: "LLM", Description: "Reasoning depth for providers that support it.", DefaultValue: "high", InputType: "select", Options: []string{"low", "medium", "high", "xhigh"}},
+		{Key: "XALGORIX_REASONING_EFFORT", Label: "Reasoning effort", Category: "LLM", Description: "Reasoning depth for providers that support it.", DefaultValue: "high", InputType: "select", Options: []string{"none", "low", "medium", "high", "xhigh"}},
+		{Key: "XALGORIX_OLLAMA_COMPATIBLE", Label: "Ollama-compatible endpoint", Category: "LLM", Description: "Force Ollama reasoning semantics for a custom endpoint that does not use port 11434.", DefaultValue: "false", InputType: "boolean"},
 		{Key: "XALGORIX_LLM_MAX_RETRIES", Label: "LLM max retries", Category: "LLM", Description: "Retry count for transient LLM provider failures.", DefaultValue: "5", InputType: "number"},
 		{Key: "XALGORIX_MAX_OUTPUT_TOKENS", Label: "Max output tokens", Category: "LLM", Description: "Per-call completion cap (max_tokens). Reasoning models spend part of this on hidden thinking before a tool call, so a small provider default can truncate large calls. Clamped to a 1024 floor.", DefaultValue: "8192", InputType: "number"},
 		{Key: "XALGORIX_MEMORY_COMPRESSOR_TIMEOUT", Label: "Memory compressor timeout", Category: "LLM", Description: "Timeout in seconds for context compression.", DefaultValue: "30", InputType: "number"},
@@ -239,7 +242,7 @@ func (s *Server) handleLLMSettings(w http.ResponseWriter, r *http.Request) {
 		if reasoning == "" {
 			reasoning = "high"
 		}
-		if !oneOf(reasoning, []string{"low", "medium", "high", "xhigh"}) {
+		if !oneOf(reasoning, []string{"none", "low", "medium", "high", "xhigh"}) {
 			http.Error(w, "invalid reasoning effort", http.StatusBadRequest)
 			return
 		}
@@ -251,6 +254,9 @@ func (s *Server) handleLLMSettings(w http.ResponseWriter, r *http.Request) {
 			"XALGORIX_LLM_MAX_RETRIES":           strconv.Itoa(req.LLMMaxRetries),
 			"XALGORIX_MEMORY_COMPRESSOR_TIMEOUT": strconv.Itoa(req.MemoryCompressorTimeout),
 			"XALGORIX_MAX_ITERATIONS":            strconv.Itoa(req.MaxIterations),
+		}
+		if req.OllamaCompatible != nil {
+			updates["XALGORIX_OLLAMA_COMPATIBLE"] = strconv.FormatBool(*req.OllamaCompatible)
 		}
 		if !isMaskedSettingValue(req.APIKey) {
 			updates["XALGORIX_API_KEY"] = strings.TrimSpace(req.APIKey)
@@ -439,7 +445,8 @@ func (s *Server) applyCatalogLLMSettings(ctx context.Context, req llmSettingsReq
 				base = strings.TrimSpace(entry.BaseURL)
 			}
 		}
-		if authMethod == "none" {
+		ollamaCompatible := req.OllamaCompatible != nil && *req.OllamaCompatible
+		if authMethod == "none" || ollamaCompatible || hasOllamaPort(base) {
 			base = containerReachableLocalBase(base)
 		}
 		if base != "" {
@@ -463,10 +470,13 @@ func (s *Server) applyCatalogLLMSettings(ctx context.Context, req llmSettingsReq
 		updates["XALGORIX_MAX_ITERATIONS"] = strconv.Itoa(clampInt(req.MaxIterations, 0, 1000))
 	}
 	if reasoning := strings.ToLower(strings.TrimSpace(req.ReasoningEffort)); reasoning != "" {
-		if !oneOf(reasoning, []string{"low", "medium", "high", "xhigh"}) {
+		if !oneOf(reasoning, []string{"none", "low", "medium", "high", "xhigh"}) {
 			return fmt.Errorf("invalid reasoning effort %q", req.ReasoningEffort)
 		}
 		updates["XALGORIX_REASONING_EFFORT"] = reasoning
+	}
+	if req.OllamaCompatible != nil {
+		updates["XALGORIX_OLLAMA_COMPATIBLE"] = strconv.FormatBool(*req.OllamaCompatible)
 	}
 
 	if len(updates) == 0 {
@@ -492,6 +502,11 @@ func containerReachableLocalBase(raw string) string {
 		u.Host += ":" + port
 	}
 	return u.String()
+}
+
+func hasOllamaPort(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	return err == nil && u.Port() == "11434"
 }
 
 func (s *Server) handleEnvironmentSettings(w http.ResponseWriter, r *http.Request) {
@@ -525,6 +540,7 @@ func (s *Server) llmSettings(ctx context.Context) llmSettingsResponse {
 		APIKey:                  maskSecretValue(s.cfg.APIKey),
 		HasAPIKey:               s.cfg.APIKey != "",
 		ReasoningEffort:         s.cfg.ReasoningEffort,
+		OllamaCompatible:        s.cfg.OllamaCompatible,
 		LLMMaxRetries:           s.cfg.LLMMaxRetries,
 		MemoryCompressorTimeout: s.cfg.MemCompTimeout,
 		MaxIterations:           s.cfg.MaxIterations,
@@ -719,6 +735,8 @@ func (s *Server) applyEnvironmentToRuntimeConfig(values map[string]string) {
 			s.cfg.LLMProfile = value
 		case "XALGORIX_REASONING_EFFORT":
 			s.cfg.ReasoningEffort = valueOrDefault(value, "high")
+		case "XALGORIX_OLLAMA_COMPATIBLE":
+			s.cfg.OllamaCompatible = parseBoolSetting(value, false)
 		case "XALGORIX_LLM_MAX_RETRIES":
 			s.cfg.LLMMaxRetries = parseIntSetting(value, 5)
 		case "XALGORIX_MAX_OUTPUT_TOKENS":
@@ -825,6 +843,8 @@ func (s *Server) envSettingValue(key string) string {
 		return s.cfg.LLMProfile
 	case "XALGORIX_REASONING_EFFORT":
 		return valueOrDefault(s.cfg.ReasoningEffort, "high")
+	case "XALGORIX_OLLAMA_COMPATIBLE":
+		return strconv.FormatBool(s.cfg.OllamaCompatible)
 	case "XALGORIX_LLM_MAX_RETRIES":
 		return strconv.Itoa(s.cfg.LLMMaxRetries)
 	case "XALGORIX_MAX_OUTPUT_TOKENS":

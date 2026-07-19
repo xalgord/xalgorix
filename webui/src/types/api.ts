@@ -391,6 +391,7 @@ export interface LLMSettings {
   apiKey: string;
   hasApiKey: boolean;
   reasoningEffort: string;
+  ollamaCompatible: boolean;
   llmMaxRetries: number;
   memoryCompressorTimeout: number;
   maxIterations: number;
@@ -433,6 +434,7 @@ export interface LLMSettingsRequest {
   apiBase?: string;
   apiKey?: string;
   reasoningEffort?: string;
+  ollamaCompatible?: boolean;
   llmMaxRetries?: number;
   memoryCompressorTimeout?: number;
   maxIterations?: number;

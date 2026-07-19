@@ -2049,6 +2049,50 @@ func TestLLMSettings_CredentialFreeProviderClearsProfileAndStoresBareModel(t *te
 	}
 }
 
+func TestLLMSettings_CustomProviderPersistsOllamaCompatibility(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	envFile := filepath.Join(home, ".xalgorix.env")
+	if err := os.WriteFile(envFile, []byte(""), 0o600); err != nil {
+		t.Fatalf("seed env file: %v", err)
+	}
+	s := newTestServer(t, &config.Config{
+		ReasoningEffort:   "high",
+		RateLimitRequests: 60,
+		RateLimitWindow:   60,
+	})
+
+	rr := httptest.NewRecorder()
+	body := strings.NewReader(`{"provider":"custom","authMethod":"api_key","profileId":"default","apiKey":"local-test-key","apiBase":"http://models.example:9443/v1","model":"reasoning-model:latest","reasoningEffort":"none","ollamaCompatible":true}`)
+	s.handleLLMSettings(rr, httptest.NewRequest(http.MethodPost, "/api/settings/llm", body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST code = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if s.cfg.LLMProvider != "custom" || s.cfg.LLM != "reasoning-model:latest" {
+		t.Fatalf("provider/model = %q/%q, want custom/reasoning-model:latest", s.cfg.LLMProvider, s.cfg.LLM)
+	}
+	if s.cfg.APIBase != "http://models.example:9443/v1" || !s.cfg.OllamaCompatible || s.cfg.ReasoningEffort != "none" {
+		t.Fatalf("custom Ollama settings not applied: %#v", s.cfg)
+	}
+
+	data, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("read env file: %v", err)
+	}
+	env := string(data)
+	for _, want := range []string{
+		"XALGORIX_LLM_PROVIDER=custom",
+		"XALGORIX_LLM=reasoning-model:latest",
+		"XALGORIX_API_BASE=http://models.example:9443/v1",
+		"XALGORIX_REASONING_EFFORT=none",
+		"XALGORIX_OLLAMA_COMPATIBLE=true",
+	} {
+		if !strings.Contains(env, want) {
+			t.Fatalf("env file missing %q:\n%s", want, env)
+		}
+	}
+}
+
 func TestLLMSettingsPreservesProviderNativeModelPath(t *testing.T) {
 	s := newTestServer(t, &config.Config{
 		LLM: "zai-org/glm-4.5", LLMProvider: "novita",

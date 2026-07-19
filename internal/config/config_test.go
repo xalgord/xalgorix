@@ -126,6 +126,7 @@ func TestLoad_ReadsDashboardProviderProxyAndAgentMailSettings(t *testing.T) {
 		"XALGORIX_API_BASE=https://generativelanguage.googleapis.com/v1",
 		"XALGORIX_API_KEY=gemini-key",
 		"XALGORIX_REASONING_EFFORT=medium",
+		"XALGORIX_OLLAMA_COMPATIBLE=true",
 		"XALGORIX_LLM_MAX_RETRIES=2",
 		"XALGORIX_MEMORY_COMPRESSOR_TIMEOUT=45",
 		"XALGORIX_WORKSPACE=/tmp/xalgorix-workspace",
@@ -160,7 +161,7 @@ func TestLoad_ReadsDashboardProviderProxyAndAgentMailSettings(t *testing.T) {
 	if cfg.LLM != "google/gemini-3.1-pro-preview" || cfg.APIBase != "https://generativelanguage.googleapis.com/v1" || cfg.APIKey != "gemini-key" {
 		t.Fatalf("LLM config not loaded: %#v", cfg)
 	}
-	if cfg.ReasoningEffort != "medium" || cfg.LLMMaxRetries != 2 || cfg.MemCompTimeout != 45 {
+	if cfg.ReasoningEffort != "medium" || !cfg.OllamaCompatible || cfg.LLMMaxRetries != 2 || cfg.MemCompTimeout != 45 {
 		t.Fatalf("retry/memory settings not loaded: %#v", cfg)
 	}
 	if cfg.Workspace != "/tmp/xalgorix-workspace" || !cfg.DisableBrowser || cfg.MaxIterations != 12 {

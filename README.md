@@ -612,7 +612,8 @@ Some settings require a restart because they affect process startup or server bi
 | `XALGORIX_LLM_PROVIDER`              | none             | Provider selected by the dashboard, stored separately from the model ID. |
 | `XALGORIX_API_KEY`                   | none             | Required LLM provider API key.                         |
 | `XALGORIX_API_BASE`                  | provider default | Custom OpenAI-compatible API base URL.                 |
-| `XALGORIX_REASONING_EFFORT`          | `high`           | Reasoning effort: `low`, `medium`, `high`, or `xhigh`. |
+| `XALGORIX_REASONING_EFFORT`          | `high`           | Reasoning effort: `none`, `low`, `medium`, `high`, or `xhigh` (`xhigh` maps to `high` for Ollama). |
+| `XALGORIX_OLLAMA_COMPATIBLE`         | `false`          | Apply Ollama reasoning semantics to a custom endpoint on a non-standard port. Port `11434` is detected automatically. |
 | `XALGORIX_LLM_MAX_RETRIES`           | `5`              | Retry count for transient LLM failures.                |
 | `XALGORIX_MEMORY_COMPRESSOR_TIMEOUT` | `30`             | Timeout in seconds for context compression.            |
 | `XALGORIX_MAX_ITERATIONS`            | `0`              | Agent iteration cap. `0` means unlimited.              |

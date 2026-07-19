@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -144,12 +145,13 @@ func (c *Client) loadCtx() context.Context {
 
 // chatRequest is the OpenAI-compatible chat completion request.
 type chatRequest struct {
-	Model         string         `json:"model"`
-	Messages      []Message      `json:"messages"`
-	Stream        bool           `json:"stream"`
-	StreamOptions *streamOptions `json:"stream_options,omitempty"`
-	Temperature   *float64       `json:"temperature,omitempty"`
-	MaxTokens     int            `json:"max_tokens,omitempty"`
+	Model           string         `json:"model"`
+	Messages        []Message      `json:"messages"`
+	Stream          bool           `json:"stream"`
+	StreamOptions   *streamOptions `json:"stream_options,omitempty"`
+	Temperature     *float64       `json:"temperature,omitempty"`
+	MaxTokens       int            `json:"max_tokens,omitempty"`
+	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
 }
 
 // streamOptions opts into usage stats for OpenAI-compatible streaming
@@ -463,6 +465,46 @@ func (c *Client) usesAnthropicAPI(endpoint string) bool {
 		isAnthropicAPIBase(endpoint)
 }
 
+// usesOllamaAPI reports whether the resolved OpenAI-compatible endpoint is
+// backed by Ollama. Modern catalog settings keep the provider separate from
+// the bare model name, while legacy settings encode it as "ollama/model";
+// profiles and the conventional :11434 endpoint cover the remaining routes.
+func (c *Client) usesOllamaAPI(endpoint string) bool {
+	if c == nil || c.cfg == nil {
+		return false
+	}
+	if c.cfg.OllamaCompatible || strings.EqualFold(strings.TrimSpace(c.cfg.LLMProvider), "ollama") || c.provider == "ollama" {
+		return true
+	}
+	profileProvider, _, _ := strings.Cut(strings.TrimSpace(c.cfg.LLMProfile), ":")
+	if strings.EqualFold(profileProvider, "ollama") {
+		return true
+	}
+	return hasOllamaPort(c.cfg.APIBase) || hasOllamaPort(endpoint)
+}
+
+func hasOllamaPort(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	return err == nil && parsed.Port() == "11434"
+}
+
+// ollamaReasoningEffort maps the global setting to Ollama's supported
+// OpenAI-compatible values. Ollama has no xhigh level, so xhigh degrades to
+// high instead of sending a value the runtime may reject.
+func (c *Client) ollamaReasoningEffort(endpoint string) string {
+	if !c.usesOllamaAPI(endpoint) {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(c.cfg.ReasoningEffort)) {
+	case "none", "low", "medium", "high":
+		return strings.ToLower(strings.TrimSpace(c.cfg.ReasoningEffort))
+	case "xhigh":
+		return "high"
+	default:
+		return ""
+	}
+}
+
 func apiErrorHasStatus(errStr string, status int) bool {
 	errStr = strings.ToLower(errStr)
 	statusText := fmt.Sprintf("%d", status)
@@ -716,12 +758,13 @@ func (c *Client) ChatStream(messages []Message) <-chan StreamChunk {
 			body, _ = json.Marshal(anReq)
 		} else {
 			reqBody := chatRequest{
-				Model:         model,
-				Messages:      messages,
-				Stream:        true,
-				StreamOptions: &streamOptions{IncludeUsage: true},
-				Temperature:   c.effectiveTemperature(),
-				MaxTokens:     c.maxOutputTokens(),
+				Model:           model,
+				Messages:        messages,
+				Stream:          true,
+				StreamOptions:   &streamOptions{IncludeUsage: true},
+				Temperature:     c.effectiveTemperature(),
+				MaxTokens:       c.maxOutputTokens(),
+				ReasoningEffort: c.ollamaReasoningEffort(endpoint),
 			}
 			body, _ = json.Marshal(reqBody)
 		}
@@ -949,7 +992,14 @@ func (c *Client) doChat(messages []Message) (out string, err error) {
 			return "", fmt.Errorf("failed to marshal Anthropic request: %w", err)
 		}
 	} else {
-		reqBody := chatRequest{Model: model, Messages: messages, Stream: false, Temperature: c.effectiveTemperature(), MaxTokens: c.maxOutputTokens()}
+		reqBody := chatRequest{
+			Model:           model,
+			Messages:        messages,
+			Stream:          false,
+			Temperature:     c.effectiveTemperature(),
+			MaxTokens:       c.maxOutputTokens(),
+			ReasoningEffort: c.ollamaReasoningEffort(endpoint),
+		}
 		body, err = json.Marshal(reqBody)
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal request: %w", err)

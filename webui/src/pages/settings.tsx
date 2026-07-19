@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { ErrorState } from "@/components/states";
 import {
   useAgentMail,
@@ -74,6 +75,7 @@ interface LLMFormState {
   apiBaseOverride: string;
   model: string;
   reasoningEffort: string;
+  ollamaCompatible: boolean;
   llmMaxRetries: number;
   memoryCompressorTimeout: number;
   maxIterations: number;
@@ -93,6 +95,7 @@ const emptyLLMForm: LLMFormState = {
   apiBaseOverride: "",
   model: "",
   reasoningEffort: "high",
+  ollamaCompatible: false,
   llmMaxRetries: 5,
   memoryCompressorTimeout: 30,
   maxIterations: 0,
@@ -182,6 +185,7 @@ export default function SettingsPage() {
       apiBaseOverride: "",
       model: bareModelForProvider(llm.data.model ?? "", llm.data.provider ?? ""),
       reasoningEffort: llm.data.reasoningEffort || "high",
+      ollamaCompatible: llm.data.ollamaCompatible ?? false,
       llmMaxRetries: llm.data.llmMaxRetries ?? 5,
       memoryCompressorTimeout: llm.data.memoryCompressorTimeout ?? 30,
       maxIterations: llm.data.maxIterations ?? 0,
@@ -232,6 +236,15 @@ export default function SettingsPage() {
     return sortedProviders.find((p) => p.id === llmForm.provider);
   }, [sortedProviders, llmForm.provider]);
 
+  const ollamaPortDetected = useMemo(
+    () => hasOllamaPort(llmForm.apiBase),
+    [llmForm.apiBase],
+  );
+  const ollamaMode =
+    llmForm.provider === "ollama" ||
+    ollamaPortDetected ||
+    llmForm.ollamaCompatible;
+
   // Auth methods come straight from the catalog entry. Custom
   // provider always supports api_key (it's just a free-form base
   // URL + key); local-runtime providers (Ollama, LM Studio) only
@@ -273,6 +286,14 @@ export default function SettingsPage() {
       apiKey: "",
       hasApiKey: false,
       apiBaseOverride: "",
+      ollamaCompatible: false,
+      // Ollama supports none/low/medium/high, while the Responses API also
+      // exposes xhigh. Keep the current value when valid and normalize only
+      // the provider-specific values during a switch.
+      reasoningEffort: normalizeReasoningEffort(
+        current.reasoningEffort,
+        providerId === "ollama",
+      ),
       // apiBase resets to the catalog default; "custom" leaves the
       // current free-text base intact.
       apiBase: entry?.id === "custom" ? current.apiBase : entry?.baseURL ?? "",
@@ -304,6 +325,7 @@ export default function SettingsPage() {
       profileId,
       model: llmForm.model,
       reasoningEffort: llmForm.reasoningEffort,
+      ollamaCompatible: llmForm.ollamaCompatible,
       llmMaxRetries: llmForm.llmMaxRetries,
       memoryCompressorTimeout: llmForm.memoryCompressorTimeout,
       maxIterations: llmForm.maxIterations,
@@ -499,9 +521,20 @@ export default function SettingsPage() {
                           <Input
                             id="llm-api-base"
                             value={llmForm.apiBase}
-                            onChange={(e) =>
-                              setLLMForm({ ...llmForm, apiBase: e.target.value })
-                            }
+                            onChange={(e) => {
+                              const apiBase = e.target.value;
+                              const nextOllamaMode =
+                                hasOllamaPort(apiBase) ||
+                                llmForm.ollamaCompatible;
+                              setLLMForm({
+                                ...llmForm,
+                                apiBase,
+                                reasoningEffort: normalizeReasoningEffort(
+                                  llmForm.reasoningEffort,
+                                  nextOllamaMode,
+                                ),
+                              });
+                            }}
                             placeholder="https://api.example.com/v1"
                             className="font-mono"
                           />
@@ -525,6 +558,35 @@ export default function SettingsPage() {
                           <p className="text-xs text-muted-foreground">
                             Custom providers default to OpenAI-shaped requests. Switch this from the Environment tab if your endpoint speaks Anthropic or Gemini.
                           </p>
+                        </div>
+                        <div className="flex items-center justify-between gap-4 rounded-md border border-border bg-muted/30 p-3 lg:col-span-2">
+                          <div className="space-y-1">
+                            <Label htmlFor="llm-ollama-compatible">
+                              Ollama-compatible endpoint
+                            </Label>
+                            <p className="text-xs text-muted-foreground">
+                              {ollamaPortDetected
+                                ? "Detected automatically from port 11434."
+                                : "Enable Ollama reasoning controls when this custom endpoint uses a different port."}
+                            </p>
+                          </div>
+                          <Switch
+                            id="llm-ollama-compatible"
+                            checked={
+                              ollamaPortDetected || llmForm.ollamaCompatible
+                            }
+                            disabled={ollamaPortDetected}
+                            onCheckedChange={(checked) =>
+                              setLLMForm({
+                                ...llmForm,
+                                ollamaCompatible: checked,
+                                reasoningEffort: normalizeReasoningEffort(
+                                  llmForm.reasoningEffort,
+                                  checked || ollamaPortDetected,
+                                ),
+                              })
+                            }
+                          />
                         </div>
                       </>
                     ) : (
@@ -744,7 +806,10 @@ export default function SettingsPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {["low", "medium", "high", "xhigh"].map((value) => (
+                        {(ollamaMode
+                          ? ["none", "low", "medium", "high"]
+                          : ["low", "medium", "high", "xhigh"]
+                        ).map((value) => (
                           <SelectItem key={value} value={value}>
                             {value}
                           </SelectItem>
@@ -1397,6 +1462,20 @@ function bareModelForProvider(model: string, provider: string): string {
   return model.toLowerCase().startsWith(prefix)
     ? model.slice(prefix.length)
     : model;
+}
+
+function hasOllamaPort(value: string): boolean {
+  try {
+    return new URL(value).port === "11434";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeReasoningEffort(value: string, ollamaMode: boolean): string {
+  if (ollamaMode && value === "xhigh") return "high";
+  if (!ollamaMode && value === "none") return "high";
+  return value;
 }
 
 function EnvironmentRow({

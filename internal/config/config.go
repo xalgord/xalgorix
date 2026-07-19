@@ -17,15 +17,16 @@ import (
 // Config holds all Xalgorix configuration.
 type Config struct {
 	// LLM settings
-	LLM             string   // XALGORIX_LLM — provider-native model ID (for example, "gpt-5.4" or "zai-org/glm-4.5")
-	LLMProvider     string   // XALGORIX_LLM_PROVIDER — explicit provider ID; keeps provider routing separate from the model name
-	APIBase         string   // XALGORIX_API_BASE — API endpoint
-	APIKey          string   // XALGORIX_API_KEY — API key
-	LLMProfile      string   // XALGORIX_LLM_PROFILE — active credential pointer "<provider>:<profileId>" (v4.4.22+)
-	ReasoningEffort string   // XALGORIX_REASONING_EFFORT — "low", "medium", "high"
-	Temperature     *float64 // XALGORIX_TEMPERATURE — LLM temperature (0.0-2.0), default 0.2; pointer to distinguish unset from 0.0
-	LLMMaxRetries   int      // XALGORIX_LLM_MAX_RETRIES
-	MemCompTimeout  int      // XALGORIX_MEMORY_COMPRESSOR_TIMEOUT
+	LLM              string   // XALGORIX_LLM — provider-native model ID (for example, "gpt-5.4" or "zai-org/glm-4.5")
+	LLMProvider      string   // XALGORIX_LLM_PROVIDER — explicit provider ID; keeps provider routing separate from the model name
+	APIBase          string   // XALGORIX_API_BASE — API endpoint
+	APIKey           string   // XALGORIX_API_KEY — API key
+	LLMProfile       string   // XALGORIX_LLM_PROFILE — active credential pointer "<provider>:<profileId>" (v4.4.22+)
+	ReasoningEffort  string   // XALGORIX_REASONING_EFFORT — "none", "low", "medium", "high", or "xhigh"
+	OllamaCompatible bool     // XALGORIX_OLLAMA_COMPATIBLE — force Ollama request semantics for a custom endpoint
+	Temperature      *float64 // XALGORIX_TEMPERATURE — LLM temperature (0.0-2.0), default 0.2; pointer to distinguish unset from 0.0
+	LLMMaxRetries    int      // XALGORIX_LLM_MAX_RETRIES
+	MemCompTimeout   int      // XALGORIX_MEMORY_COMPRESSOR_TIMEOUT
 	// MaxOutputTokens caps the model's completion length per call (the
 	// OpenAI-compatible `max_tokens` / Anthropic `max_tokens`). Reasoning
 	// models (e.g. MiniMax-M3) spend part of this budget on hidden thinking
@@ -255,16 +256,17 @@ func load() *Config {
 
 	cfg := &Config{
 		// LLM
-		LLM:             envOr("XALGORIX_LLM", ""),
-		LLMProvider:     envOr("XALGORIX_LLM_PROVIDER", ""),
-		APIBase:         envOr("XALGORIX_API_BASE", ""),
-		APIKey:          envOr("XALGORIX_API_KEY", ""),
-		LLMProfile:      envOr("XALGORIX_LLM_PROFILE", ""),
-		ReasoningEffort: envOr("XALGORIX_REASONING_EFFORT", "high"),
-		Temperature:     envOrFloatPtr("XALGORIX_TEMPERATURE", 0.2),
-		LLMMaxRetries:   envOrInt("XALGORIX_LLM_MAX_RETRIES", 5),
-		MaxOutputTokens: envOrInt("XALGORIX_MAX_OUTPUT_TOKENS", 8192),
-		MemCompTimeout:  envOrInt("XALGORIX_MEMORY_COMPRESSOR_TIMEOUT", 30),
+		LLM:              envOr("XALGORIX_LLM", ""),
+		LLMProvider:      envOr("XALGORIX_LLM_PROVIDER", ""),
+		APIBase:          envOr("XALGORIX_API_BASE", ""),
+		APIKey:           envOr("XALGORIX_API_KEY", ""),
+		LLMProfile:       envOr("XALGORIX_LLM_PROFILE", ""),
+		ReasoningEffort:  envOr("XALGORIX_REASONING_EFFORT", "high"),
+		OllamaCompatible: envOrBool("XALGORIX_OLLAMA_COMPATIBLE", false),
+		Temperature:      envOrFloatPtr("XALGORIX_TEMPERATURE", 0.2),
+		LLMMaxRetries:    envOrInt("XALGORIX_LLM_MAX_RETRIES", 5),
+		MaxOutputTokens:  envOrInt("XALGORIX_MAX_OUTPUT_TOKENS", 8192),
+		MemCompTimeout:   envOrInt("XALGORIX_MEMORY_COMPRESSOR_TIMEOUT", 30),
 
 		// Runtime
 		RuntimeBackend:      "native", // Always native in Go version
