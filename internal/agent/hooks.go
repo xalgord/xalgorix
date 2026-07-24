@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -27,12 +28,22 @@ const (
 	OnHealthyResponse = "OnHealthyResponse" // After a non-empty response with tool calls (resets error counters)
 )
 
+// notesBlobForContext is injected by agent.go (which can import
+// internal/tools/notes) so the planner hook can read the saved notes — the
+// authoritative endpoint inventory — without hooks.go taking a dependency on
+// the notes package (which would create an import cycle: notes imports tools,
+// and the agent registry is wired from agent.go). agent.go sets this once at
+// package init via notes.FormatForContextID. nil falls back to "" (no notes),
+// which simply skips plan grounding from notes.
+var notesBlobForContext func(scanContextID string) string
+
 // ── Scan State ───────────────────────────────────────────────────────────────
 
 // ScanState holds all mutable state that hooks can read and write.
 // It replaces the loose local variables previously scattered in Run().
 type ScanState struct {
 	Iteration                  int
+	ScanContextID              string // owning scan-context ID, so hooks can reach shared stores (notes) without an import cycle
 	TerminalCalls              int
 	SkillsLoaded               int
 	UniqueToolsUsed            map[string]bool
@@ -132,6 +143,23 @@ type ScanState struct {
 	ReasoningLoopCompactions int
 	TotalNoToolResponses     int
 	DensityCompactions       int
+
+	// Plan is the structural task graph for this scan. nil until recon has
+	// surfaced surface (or the LLM calls build_plan). Shared across sub-agents
+	// because ScanState is the same object within a ScanContext. The plan is
+	// the decomposition layer: it turns the scan goal into ordered, dependency
+	// tracked tasks grounded in the discovered endpoints + detected techs, and
+	// the finish gate + per-iteration nudge consult it so the agent covers the
+	// surface instead of self-declaring phases "done" after one payload.
+	Plan *Plan
+	// PlanBuilt reports whether a plan has been built (auto or by the LLM) so
+	// the post-recon nudge fires only once.
+	PlanBuilt bool
+	// DiscoveredEndpoints is the endpoint list surfaced by recon (notes /
+	// seeded attack surface). The planner's coverage-gap detection cross-
+	// references this against EndpointsTested. Populated by the plan hooks
+	// from the seeded surface and the "Endpoint Inventory" note.
+	DiscoveredEndpoints []string
 
 	// New enrichment hooks
 	WAFDetected          bool
@@ -335,6 +363,7 @@ func RegisterDefaultHooks(reg *HookRegistry) {
 	reg.Register(OnEmptyResponse, hookEmptyResponseHandler)
 	reg.Register(OnNoToolResponse, hookNoToolHandler)
 	reg.Register(OnIterationStart, hookAutoSkillSuggester)
+	reg.Register(OnIterationStart, hookPlanner)
 	reg.Register(OnHealthyResponse, hookResetOnSuccess)
 }
 
@@ -1177,6 +1206,40 @@ Continue testing. Call finish again after iteration 50.`, iter, coverageNote, sc
 		}
 	}
 
+	// ── Plan-based finish gate ──
+	// If a structural plan exists and still has actionable pending tasks (any
+	// task that isn't the verify/report tail), block finish with the specific
+	// remaining tasks. The verify + report tasks are the plan's own finish
+	// step, so they don't block — completing them IS finishing. This is the
+	// decomposition layer's enforcement: an unfinished plan means the surface
+	// isn't covered, regardless of iteration count.
+	if state.Plan != nil && !state.Plan.IsEmpty() {
+		var remaining []string
+		for _, t := range state.Plan.Tasks {
+			if t.Status != TaskPending && t.Status != TaskActive {
+				continue
+			}
+			if t.ID == "verify" || t.ID == "report" {
+				continue // the finish step itself
+			}
+			remaining = append(remaining, fmt.Sprintf("  • [%s] phase %d — %s", t.ID, t.Phase, t.Title))
+		}
+		if len(remaining) > 0 {
+			// Cap the list so a huge plan doesn't flood the block reason.
+			list := strings.Join(remaining, "\n")
+			if len(remaining) > 8 {
+				list = strings.Join(remaining[:8], "\n") + fmt.Sprintf("\n  … +%d more", len(remaining)-8)
+			}
+			return HookResult{
+				Block: true,
+				BlockReason: fmt.Sprintf("Your scan plan still has %d unfinished task(s):\n%s\n\n"+
+					"Complete or skip each before finishing. Call update_plan with status 'skipped' for "+
+					"tasks that don't apply to this target (e.g. no auth surface → skip 'auth-session').",
+					len(remaining), list),
+			}
+		}
+	}
+
 	// After 50 iterations with coverage met: allow finish
 	return HookResult{}
 }
@@ -1526,6 +1589,139 @@ func hookAutoSkillSuggester(state *ScanState, args map[string]string) HookResult
 
 Skills contain expert-level payloads, WAF bypass techniques, and technology-specific attack chains that significantly improve testing depth.`, strings.Join(suggestions, "\n")),
 	}
+}
+
+// ── hookPlanner ──────────────────────────────────────────────────────────────
+// OnIterationStart: builds the structural plan once recon has surfaced an
+// endpoint inventory (or immediately if a seeded attack surface exists), then
+// injects the plan brief + coverage gaps every iteration so the agent works the
+// next pending task instead of looping or self-declaring phases "done".
+//
+// The plan is grounded in the discovered endpoints + detected techs (recon
+// output the engine CAN parse: the seeded surface and the "Endpoint Inventory"
+// note). The LLM can replace/refine it via the build_plan tool; this hook only
+// auto-builds when no plan exists yet and recon data is available.
+func hookPlanner(state *ScanState, args map[string]string) HookResult {
+	if state == nil || state.ReconOnlyMode {
+		return HookResult{}
+	}
+
+	// Refresh discovered endpoints from notes once an inventory has been saved
+	// (hookWorkTracker flips EndpointInventorySaved). This grounds the plan +
+	// the coverage-gap math in what recon actually surfaced.
+	if state.EndpointInventorySaved {
+		state.DiscoveredEndpoints = extractEndpointsFromNotes(state)
+	}
+
+	// Auto-build a plan once recon is done and we have either a seeded surface
+	// or a discovered inventory. The LLM may have already called build_plan, in
+	// which case PlanBuilt is true and we leave its plan alone.
+	if !state.PlanBuilt && state.Plan == nil && state.ReconDone &&
+		(len(state.DiscoveredEndpoints) > 0 || len(state.DetectedTechs) > 0) {
+		state.Plan = AutoPlan(state.DiscoveredEndpoints, state.DetectedTechs)
+		state.PlanBuilt = true
+	}
+
+	// Reconcile plan status against live coverage: any task whose vuln class
+	// now has coverage evidence (VulnClassesTested) is marked completed so the
+	// plan reflects reality, not the model's self-report.
+	reconcilePlan(state)
+
+	// Inject the plan brief + coverage gaps as a per-iteration nudge. Keep it
+	// quiet once the plan is fully done (the finish gate handles the final
+	// gate) to avoid spamming the context after completion.
+	if state.Plan != nil && state.Plan.RemainingCount() > 0 {
+		gaps := CoverageGaps(state, state.DiscoveredEndpoints)
+		brief := FormatPlan(state.Plan, gaps)
+		if brief != "" {
+			return HookResult{Nudge: brief}
+		}
+	}
+	return HookResult{}
+}
+
+// reconcilePlan marks a plan's tasks completed when their vuln class shows
+// coverage evidence in the live state, so the plan tracks real progress
+// rather than relying on the model to call update_plan. It never downgrades a
+// completed/skipped task back to pending.
+func reconcilePlan(state *ScanState) {
+	if state == nil || state.Plan == nil {
+		return
+	}
+	for _, t := range state.Plan.Tasks {
+		if t.Status != TaskPending && t.Status != TaskActive {
+			continue
+		}
+		switch t.ID {
+		case "recon":
+			if state.ReconDone {
+				t.Status = TaskCompleted
+			}
+		case "dirbust":
+			if state.DirBustingDone || state.VulnClassesTested["dirbusting"] {
+				t.Status = TaskCompleted
+			}
+		case "auth-session":
+			// Auth testing is hard to detect precisely; treat as done once the
+			// agent has exercised any auth/access-control endpoint.
+			if state.AccessControlTested || len(state.AccessControlEndpoints) > 0 {
+				t.Status = TaskCompleted
+			}
+		case "verify", "report":
+			// Tail tasks complete via finish; leave pending until the model
+			// calls finish, which the gate consults.
+		default:
+			if t.VulnClass != "" && state.VulnClassesTested[t.VulnClass] {
+				t.Status = TaskCompleted
+			}
+		}
+	}
+}
+
+// extractEndpointsFromNotes pulls URL paths out of the saved notes so the
+// planner's coverage math is grounded in the recon the model actually did.
+// Looks for the "Endpoint Inventory" note (or any note with endpoint-like
+// paths) and collects /path or http(s)://host/path tokens.
+func extractEndpointsFromNotes(state *ScanState) []string {
+	if state == nil {
+		return nil
+	}
+	// Defer to the notes package via the injected accessor (set by agent.go) to
+	// avoid an import cycle. The formatted notes blob is the same one the agent
+	// injects into the context, so it's the authoritative inventory.
+	blob := ""
+	if notesBlobForContext != nil && state.ScanContextID != "" {
+		blob = notesBlobForContext(state.ScanContextID)
+	}
+	if blob == "" {
+		return nil
+	}
+	return extractPaths(blob)
+}
+
+// endpointPathRe matches /path, /api/x, or full http(s) URLs.
+var endpointPathRe = regexp.MustCompile(`(?:https?://[^\s"'<>]+|/(?:[A-Za-z0-9_.\-]+/)*[A-Za-z0-9_.\-]+)`)
+
+// extractPaths pulls unique endpoint paths out of a text blob, sorted.
+func extractPaths(blob string) []string {
+	seen := make(map[string]bool)
+	var paths []string
+	for _, m := range endpointPathRe.FindAllString(blob, -1) {
+		// Skip obvious non-endpoints: schema namespaces, file extensions on
+		// static assets, and the w3.org SVG namespace that JS bundles embed.
+		if strings.Contains(m, "w3.org") || strings.Contains(m, "schemas.") {
+			continue
+		}
+		if strings.HasSuffix(m, ".css") || strings.HasSuffix(m, ".png") || strings.HasSuffix(m, ".ico") {
+			continue
+		}
+		if !seen[m] {
+			seen[m] = true
+			paths = append(paths, m)
+		}
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 // ── hookResetOnSuccess ───────────────────────────────────────────────────────

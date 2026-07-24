@@ -50,6 +50,17 @@ var toolHardTimeout = map[string]time.Duration{
 	"browser_action":   10 * time.Minute,
 }
 
+// init injects the notes-blob accessor into the hooks package so the planner
+// hook can read the saved endpoint inventory without hooks.go importing the
+// notes package (which would form an import cycle: notes imports tools, and
+// the agent tool registry is wired from this package). agent.go already
+// imports notes for pruning, so this is the natural place to bridge it.
+func init() {
+	notesBlobForContext = func(scanContextID string) string {
+		return notes.FormatForContextID(scanContextID)
+	}
+}
+
 // defaultToolHardTimeout is the per-invocation hard ceiling applied to any
 // tool not explicitly listed in toolHardTimeout.
 const defaultToolHardTimeout = 15 * time.Minute
@@ -274,11 +285,18 @@ func NewAgent(cfg *config.Config, name string, events chan Event, localGuard sco
 
 	// Apply per-call AgentOption values (e.g. WithLLMClient). Options
 	// run after the default client is constructed so a nil option
-	// leaves the default in place; WithLLMClient overwrites it with
-	// a caller-supplied client carrying a per-scan resolver.
+	// leaves the default in place; WithLLMClient overwrites it with a
+	// caller-supplied client carrying a per-scan resolver.
 	for _, opt := range opts {
 		opt(a)
 	}
+
+	// Register the structural planner tools (build_plan / update_plan). These
+	// mutate a.state.Plan, so they're registered after the agent exists. They
+	// let the LLM author/refine the task graph with knowledge only it has
+	// (live recon output the engine can't fully parse); the auto-plan + the
+	// per-iteration nudge + the finish gate all consult the same plan.
+	a.registerPlanTools(reg)
 
 	// Create cancellable context
 	a.ctx, a.cancel = context.WithCancel(a.ctx)
@@ -673,6 +691,7 @@ func (a *Agent) Run(targets []string, instruction string) {
 
 	// Initialize scan state for hooks (replaces 17+ local tracking variables)
 	a.state = NewScanState()
+	a.state.ScanContextID = a.scanCtx.ID
 	a.state.DiscoveryMode = a.discoveryMode
 	a.state.AllowedPhases = append([]int(nil), a.allowedPhases...)
 	a.state.ReconOnlyMode = isReconReportOnlyPhaseSelection(a.allowedPhases)
