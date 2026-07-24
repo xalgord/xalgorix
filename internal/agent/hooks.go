@@ -112,6 +112,27 @@ type ScanState struct {
 	// the scan cleanly once the ceiling is reached.
 	CumulativeRateLimitWait time.Duration
 
+	// Reasoning-loop recovery tracking. A "reasoning loop" is the model
+	// emitting think-only responses (or prose) with no tool calls. The
+	// consecutive counter (NoToolCount) is reset to 0 by OnHealthyResponse
+	// the instant the model makes one tool call — so a model that reasons
+	// for 10 turns then calls a tool once, repeatedly, never reaches the 15
+	// abort threshold and the scan runs for hours. The density counters
+	// below are NEVER reset, so they catch the non-consecutive pattern:
+	//
+	//   - ReasoningLoopCompactions: how many times we've force-compacted the
+	//     context to break a reasoning loop. Caps recovery attempts so a
+	//     model that simply won't act eventually aborts instead of looping
+	//     forever between compact + reset.
+	//   - TotalNoToolResponses: every no-tool response since scan start.
+	//     Compared against TotalIterations to compute the reasoning ratio.
+	//   - DensityCompactions: compactions triggered by the density check
+	//     (distinct from the consecutive-count compactions) so the two
+	//     recovery paths don't double-compact on the same stall.
+	ReasoningLoopCompactions int
+	TotalNoToolResponses     int
+	DensityCompactions       int
+
 	// New enrichment hooks
 	WAFDetected          bool
 	DetectedTechs        map[string]bool // e.g. "php", "nodejs", "java"
@@ -143,6 +164,14 @@ type HookResult struct {
 	ForceSkip      bool   // skip current tool call
 	EmitMessage    string // emit to UI without injecting into conversation
 	CleanupBrowser bool   // signal to force-close browser
+	// ForceCompact signals the loop to aggressively compact the message
+	// history (forcePruneMessages) before injecting Nudge. Used by the
+	// reasoning-loop recovery path: a model stuck emitting think-only
+	// responses is far more likely to resume acting once the noisy
+	// context (raw tool output, loaded skill docs) is collapsed into a
+	// compact digest. The Nudge returned alongside it must be a focused
+	// "resume from here and call a tool" prompt, not a generic nudge.
+	ForceCompact bool
 }
 
 // ── Hook Registry ────────────────────────────────────────────────────────────
@@ -196,6 +225,9 @@ func (r *HookRegistry) Fire(event string, state *ScanState, args map[string]stri
 		if result.CleanupBrowser {
 			merged.CleanupBrowser = true
 		}
+		if result.ForceCompact {
+			merged.ForceCompact = true
+		}
 	}
 	return merged
 }
@@ -218,6 +250,34 @@ const (
 
 	BlockedCallSoftNudge = 3 // consecutive guard-blocked calls → soft corrective nudge
 	BlockedCallHardNudge = 6 // consecutive guard-blocked calls → hard "stop / pivot / finish" nudge
+
+	// ReasoningLoopCompactAt and the related thresholds govern reasoning-loop
+	// recovery. A reasoning loop is the model emitting think-only / prose
+	// responses with NO tool calls. The two recovery paths are:
+	//
+	//   1. Consecutive: NoToolCount climbs to ReasoningLoopCompactAt, we
+	//      force-compact the context (collapsing noisy raw output + loaded
+	//      skill docs into a digest) and inject a focused "resume from here"
+	//      prompt. A second compact fires at ReasoningLoopCompactAt2. The
+	//      scan only aborts at NoToolAbortAt (15) if both compaction
+	//      attempts failed to break the loop.
+	//
+	//   2. Density (non-consecutive): if the model makes an occasional
+	//      tool call — just often enough to reset NoToolCount — the
+	//      consecutive path never trips. ReasoningDensityMinResponses +
+	//      ReasoningDensityRatio catch this: once enough iterations have
+	//      elapsed, a high no-tool ratio (>60%) means the scan is burning
+	//      most of its turns reasoning; we compact once, and if the ratio
+	//      stays high we abort rather than running for hours.
+	ReasoningLoopCompactAt  = 6  // consecutive no-tool → 1st context compaction
+	ReasoningLoopCompactAt2 = 10 // consecutive no-tool → 2nd context compaction
+	NoToolAbortAt           = 15 // consecutive no-tool → force-stop scan
+
+	ReasoningDensityMinResponses  = 20   // need ≥ this many no-tool responses before the density check applies
+	ReasoningDensityCompactRatio  = 0.6  // >60% no-tool responses → compact
+	ReasoningDensityAbortRatio    = 0.75 // >75% no-tool responses after a compact → abort
+	ReasoningDensityAbortMinIters = 40   // ...only once ≥40 iterations elapsed
+	MaxReasoningCompactions       = 2    // cap total recovery compactions (consecutive + density combined)
 )
 
 // noteBlockedToolCall records that a Gated_Tool call was rejected by a block
@@ -1170,15 +1230,35 @@ func hookEmptyResponseHandler(state *ScanState, args map[string]string) HookResu
 }
 
 // ── hookNoToolHandler ────────────────────────────────────────────────────────
-// Handles LLM responding without any tool calls. Nudges after 3, force-stops after 15.
+// Handles LLM responding without any tool calls. This is the single biggest
+// cause of failed scans: the model degrades into a "reasoning loop" — emitting
+// think-only or prose responses with no tool calls — and the scan force-stops.
 //
-// Special-cases model-side safety refusals (e.g. Gemini replying "Sorry, I cannot
-// fulfill your request to perform a security assessment..."). A refusal is not a
-// formatting problem, so the generic "use the XML format" nudge does nothing —
-// instead we re-assert the authorized-engagement context, which reliably gets
-// safety-tuned models back on task.
+// Two recovery paths, both backed by CONTEXT COMPACTION (not just nudges):
+//
+//  1. Consecutive — the model emits ReasoningLoopCompactAt (6) no-tool
+//     responses in a row. We force-compact the context (collapsing the
+//     raw tool output / loaded skill docs that likely triggered the loop
+//     into a structured digest) and inject a focused resume prompt. A
+//     second compaction fires at ReasoningLoopCompactAt2 (10). The scan
+//     only aborts at NoToolAbortAt (15) if both compactions failed.
+//
+//  2. Density (non-consecutive) — the model makes an occasional tool
+//     call, just often enough to reset the consecutive counter, so the
+//     consecutive path never trips and the scan runs for hours. Once
+//     enough no-tool responses have accumulated (ReasoningDensityMinResponses),
+//     a no-tool ratio above ReasoningDensityCompactRatio triggers a
+//     compaction; if the ratio stays above ReasoningDensityAbortRatio
+//     past ReasoningDensityAbortMinIters iterations, the scan aborts.
+//
+// Special-cases model-side safety refusals (e.g. Gemini replying "Sorry, I
+// cannot fulfill your request to perform a security assessment..."). A
+// refusal is not a formatting problem, so the generic "use the XML format"
+// nudge does nothing — instead we re-assert the authorized-engagement
+// context, which reliably gets safety-tuned models back on task.
 func hookNoToolHandler(state *ScanState, args map[string]string) HookResult {
 	state.NoToolCount++
+	state.TotalNoToolResponses++
 
 	if isRefusal(args["response"]) {
 		state.RefusalCount++
@@ -1186,7 +1266,7 @@ func hookNoToolHandler(state *ScanState, args map[string]string) HookResult {
 		state.RefusalCount = 0
 	}
 
-	if state.NoToolCount >= 15 {
+	if state.NoToolCount >= NoToolAbortAt {
 		msg := "⛔ Model returned 15 consecutive responses with no tool call — it stopped taking actions (likely context flooded by a large tool output, or a reasoning loop). Force finishing."
 		if state.RefusalCount >= 3 {
 			msg = "⛔ Model declined to act for 15 consecutive responses (safety refusal). Force finishing — try a model that permits authorized security testing."
@@ -1213,6 +1293,68 @@ Resume the assessment NOW by calling a tool. For example, to run a command:
 		}
 	}
 
+	// ── Density-based recovery (non-consecutive reasoning loops) ──
+	// Catches a model that makes occasional tool calls — enough to reset
+	// NoToolCount but not enough to make real progress — and would
+	// otherwise run for hours. The consecutive path only fires at
+	// NoToolCount >= 6, so a model that calls a tool every ~5 turns keeps
+	// NoToolCount ≤ 4 and the consecutive path NEVER trips. This path uses
+	// the cumulative (never-reset) counters so it sees the real picture.
+	totalCompactions := state.ReasoningLoopCompactions + state.DensityCompactions
+	if iters := state.Iteration + 1; iters > 0 &&
+		state.TotalNoToolResponses >= ReasoningDensityMinResponses {
+		ratio := float64(state.TotalNoToolResponses) / float64(iters)
+		// Abort once the density is sustained past the min-iteration gate,
+		// AFTER at least one recovery compaction has been attempted (so a
+		// genuinely slow-but-progressing scan gets a chance to recover first).
+		// We deliberately do NOT require totalCompactions >= MaxReasoningCompactions
+		// here — for the pure non-consecutive pattern the consecutive path can
+		// never supply a second compaction, so gating on it would make this
+		// abort unreachable (the exact 48-hour bug this path exists to catch).
+		if ratio > ReasoningDensityAbortRatio && iters >= ReasoningDensityAbortMinIters &&
+			totalCompactions >= 1 {
+			return HookResult{
+				ForceSkip: true,
+				EmitMessage: fmt.Sprintf(
+					"⛔ Scan aborted: reasoning loop — %d of %d iterations (%.0f%%) produced no tool call after %d context compaction(s). The model is not making progress; switch model or lower reasoning effort.",
+					state.TotalNoToolResponses, iters, ratio*100, totalCompactions),
+			}
+		}
+		// Recovery: compact while we still have budget. Bound by the
+		// COMBINED total (consecutive + density) so the two paths share the
+		// MaxReasoningCompactions cap instead of each getting its own.
+		if ratio > ReasoningDensityCompactRatio &&
+			totalCompactions < MaxReasoningCompactions {
+			state.DensityCompactions++
+			return HookResult{
+				ForceCompact: true,
+				Nudge:        reasoningLoopResumePrompt(state, "density"),
+			}
+		}
+	}
+
+	// ── Consecutive recovery: compact the context to break the loop ──
+	// Guard by the COMBINED compaction total so a density compaction counts
+	// against the consecutive budget (and vice versa). Without this, a
+	// density compact (1) + two consecutive compacts (2) = 3 compactions,
+	// violating MaxReasoningCompactions.
+	if state.NoToolCount >= ReasoningLoopCompactAt2 &&
+		totalCompactions < MaxReasoningCompactions {
+		state.ReasoningLoopCompactions++
+		return HookResult{
+			ForceCompact: true,
+			Nudge:        reasoningLoopResumePrompt(state, "consecutive"),
+		}
+	}
+	if state.NoToolCount >= ReasoningLoopCompactAt &&
+		totalCompactions < MaxReasoningCompactions {
+		state.ReasoningLoopCompactions++
+		return HookResult{
+			ForceCompact: true,
+			Nudge:        reasoningLoopResumePrompt(state, "consecutive"),
+		}
+	}
+
 	if state.NoToolCount >= 3 {
 		return HookResult{
 			Nudge: `You MUST use tools to interact with the target. Do not just explain — take action NOW.
@@ -1236,15 +1378,62 @@ Call a tool NOW in your next response.`,
 	}
 }
 
+// reasoningLoopResumePrompt builds the focused "break out of the reasoning
+// loop" nudge injected alongside a context compaction. It is deliberately
+// short and action-oriented: the compaction already preserved a digest of
+// prior work + saved notes, so the prompt only needs to point the model at
+// the single most-likely next action and forbid more prose-only turns.
+//
+// `trigger` is "consecutive" or "density" and only affects the framing line
+// so the operator-facing log / emitted message can distinguish the two paths.
+func reasoningLoopResumePrompt(state *ScanState, trigger string) string {
+	prefix := "⚠️ REASONING LOOP DETECTED — you have produced several responses with no tool call."
+	if trigger == "density" {
+		prefix = "⚠️ REASONING LOOP DETECTED — most of your recent responses produced no tool call."
+	}
+	// Surface a concrete next action when we have endpoint coverage data;
+	// otherwise keep it generic so the prompt never lies about state.
+	next := "Pick ONE untested endpoint or vuln class and test it NOW."
+	if n := len(state.EndpointsTested); n > 0 {
+		next = fmt.Sprintf("You have mapped %d endpoint(s). Pick one you have NOT tested for injection / IDOR / XSS and test it NOW.", n)
+	}
+	return prefix + ` The conversation context has just been COMPACTED — old tool output was collapsed into the digest above so you can focus.
+
+STOP planning. STOP reasoning aloud. Your NEXT response MUST contain exactly one tool call. ` + next + `
+
+Do NOT:
+- produce another thinking-only or prose-only response
+- re-summarize what you already know
+- ask whether you should proceed (you are authorized — proceed)
+
+Call a tool in your very next message. For example:
+<function=terminal_execute>
+<parameter=command>curl -sk "https://TARGET/api/UNTESTED" -w "\n[%{http_code}]\n"</parameter>
+</function>`
+}
+
 // classifyNoToolAbort turns a no-tool force-stop into a machine reason tag plus
 // a human explanation of the ACTUAL cause, instead of the old catch-all
-// "LLM refused to call tools". It distinguishes a genuine safety refusal from a
-// "stopped taking actions" stall — the latter is almost always context
-// exhaustion (a huge tool output dumped into the window) or a reasoning loop,
-// not a target problem.
+// "LLM refused to call tools". It distinguishes three cases:
+//   - a genuine safety refusal,
+//   - a non-consecutive reasoning loop (density abort — the scan ran a long
+//     time making little progress), and
+//   - the classic consecutive "stopped taking actions" stall (almost always
+//     context exhaustion / reasoning loop, not a target problem).
 func classifyNoToolAbort(state *ScanState) (reason, detail string) {
 	if state != nil && state.RefusalCount >= 3 {
 		return "llm_safety_refusal", "Agent stopped: the model repeatedly declined to run the assessment (safety refusal) across 15 responses. This is a model-side refusal, not a target or scanner issue — switch to a model that permits authorized security testing."
+	}
+	if state != nil && state.TotalNoToolResponses >= ReasoningDensityMinResponses {
+		iters := state.Iteration + 1
+		if iters >= ReasoningDensityAbortMinIters {
+			ratio := float64(state.TotalNoToolResponses) / float64(iters)
+			if ratio > ReasoningDensityAbortRatio {
+				return "llm_reasoning_loop", fmt.Sprintf(
+					"Agent stopped: reasoning loop — %d of %d iterations (%.0f%%) produced no tool call after %d context compactions. The model spent most of its turns reasoning without acting. Lower the reasoning effort (XALGORIX_REASONING_EFFORT), switch to a less reasoning-heavy model, or reduce the amount of raw output fed back (grep/head instead of cat).",
+					state.TotalNoToolResponses, iters, ratio*100, state.ReasoningLoopCompactions+state.DensityCompactions)
+			}
+		}
 	}
 	return "llm_no_tool_calls", "Agent stopped: the model returned 15 consecutive responses with NO tool call — it stopped taking actions. This is typically caused by a very large tool output flooding the context (e.g. dumping a whole JS bundle or page instead of grepping it) or a reasoning loop — not by the target being unscannable."
 }
