@@ -77,6 +77,17 @@ var (
 	lenientParamRe = regexp.MustCompile(`(?s)<parameter[^>]*?(\w+)\s*>(.*?)</parameter>`)
 	// Split identifier on punctuation/whitespace
 	identSplitRe = regexp.MustCompile(`[.\s,;:!?]+`)
+
+	// nameHintRe captures a bare tool name emitted right before an orphaned
+	// parameter run, i.e. the model dropped the "<function=" prefix but kept the
+	// name: `terminal_execute>\n<parameter=command>…`. We match the trailing
+	// `identifier>` at the end of the text preceding the first <parameter block.
+	// The captured name is only a HINT — the caller validates it against the
+	// registered tools before using it — so a false capture (e.g. the tail of a
+	// closing tag) is harmless. This rescues the common case that MatchByParams
+	// cannot: a call carrying only {command}, which ties across terminal_execute
+	// / browser_action / pageagent and is therefore rejected as ambiguous.
+	nameHintRe = regexp.MustCompile(`(?s)([A-Za-z_][A-Za-z0-9_-]*)\s*>\s*$`)
 )
 
 // ParseToolCalls extracts tool calls from LLM XML output.
@@ -272,6 +283,12 @@ func FormatToolCall(name string, args map[string]string) string {
 type OrphanedCall struct {
 	Args       map[string]string
 	ParamNames []string // ordered, dedup'd param names present
+	// NameHint is the bare tool name the model emitted immediately before the
+	// parameter run when it dropped only the "<function=" prefix (e.g.
+	// "terminal_execute" from `terminal_execute>\n<parameter=command>…`). Empty
+	// when no such token precedes the params. The caller MUST validate it
+	// against the registered tools before trusting it.
+	NameHint string
 }
 
 // ParseOrphanedCalls extracts <parameter=X>...</parameter> blocks that are
@@ -305,6 +322,15 @@ func ParseOrphanedCalls(content string) []OrphanedCall {
 		if len(params) == 0 {
 			continue
 		}
+		// Capture the bare tool name emitted right before the first parameter
+		// block, if any (the model dropped only "<function="): e.g.
+		// `terminal_execute>\n<parameter=command>…`. Validated by the caller.
+		nameHint := ""
+		if firstParam := strings.Index(frag, "<parameter"); firstParam > 0 {
+			if m := nameHintRe.FindStringSubmatch(frag[:firstParam]); m != nil {
+				nameHint = sanitizeParamName(m[1])
+			}
+		}
 		args := make(map[string]string, len(params))
 		var names []string
 		seen := make(map[string]bool)
@@ -318,7 +344,7 @@ func ParseOrphanedCalls(content string) []OrphanedCall {
 			args[name] = html.UnescapeString(strings.TrimSpace(pm[2]))
 		}
 		if len(args) > 0 {
-			out = append(out, OrphanedCall{Args: args, ParamNames: names})
+			out = append(out, OrphanedCall{Args: args, ParamNames: names, NameHint: nameHint})
 		}
 	}
 	return out

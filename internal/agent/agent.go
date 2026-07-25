@@ -893,8 +893,24 @@ func (a *Agent) Run(targets []string, instruction string) {
 		// not counted toward the reasoning-loop threshold.
 		if len(toolCalls) == 0 {
 			for _, oc := range llm.ParseOrphanedCalls(responseClean) {
-				if name, ok := a.registry.MatchByParams(oc.ParamNames); ok {
-					a.emit(Event{Type: "message", Content: fmt.Sprintf("🔧 Recovered a tool call whose <function> open tag was dropped — inferred '%s' from parameters %v.", name, oc.ParamNames), TotalTokens: tokenCount()})
+				// Prefer the tool name the model actually emitted (it dropped only
+				// the "<function=" prefix, e.g. `terminal_execute>`), validated
+				// against the registry. This rescues the common case that
+				// MatchByParams cannot resolve: a call carrying only {command},
+				// which ties across terminal_execute / browser_action / pageagent
+				// and is rejected as ambiguous — the exact regression that turned
+				// dropped-tag shell calls into "no tool call" → reasoning loops.
+				name, ok := "", false
+				if oc.NameHint != "" {
+					if _, exists := a.registry.Get(oc.NameHint); exists {
+						name, ok = oc.NameHint, true
+					}
+				}
+				if !ok {
+					name, ok = a.registry.MatchByParams(oc.ParamNames)
+				}
+				if ok {
+					a.emit(Event{Type: "message", Content: fmt.Sprintf("🔧 Recovered a tool call whose <function> open tag was dropped — resolved to '%s' (params %v).", name, oc.ParamNames), TotalTokens: tokenCount()})
 					toolCalls = append(toolCalls, llm.ToolCall{Name: name, Args: oc.Args})
 				}
 			}

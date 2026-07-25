@@ -214,6 +214,38 @@ func TestParseOrphanedCallsMissingOpenAndParamBracket(t *testing.T) {
 	}
 }
 
+// Regression (v4.5.50 → v4.5.79): the model dropped only "<function=" but kept
+// the tool NAME, e.g. `terminal_execute>\n<parameter=command>curl…`. Its param
+// set is just {command}, which ties across terminal_execute/browser_action/
+// pageagent, so MatchByParams rejects it and the call became "no tool call" →
+// reasoning loop. ParseOrphanedCalls must surface the emitted name as NameHint
+// so the agent can resolve it directly (validated against the registry).
+func TestParseOrphanedCallsCapturesNameHint(t *testing.T) {
+	got := ParseOrphanedCalls("terminal_execute>\n<parameter=command>curl -v https://portal.flare.network/ 2>&1 | head -40</parameter>\n</function>")
+	if len(got) != 1 {
+		t.Fatalf("expected 1 orphaned call, got %d", len(got))
+	}
+	if got[0].NameHint != "terminal_execute" {
+		t.Errorf("NameHint = %q, want terminal_execute", got[0].NameHint)
+	}
+	if got[0].Args["command"] == "" {
+		t.Errorf("command param not recovered: %v", got[0].Args)
+	}
+}
+
+// A pure orphaned block with NO preceding bare name must yield an empty
+// NameHint (so the caller falls back to MatchByParams rather than trusting a
+// spurious hint).
+func TestParseOrphanedCallsNoNameHintWhenAbsent(t *testing.T) {
+	got := ParseOrphanedCalls("<parameter=command>id</parameter>\n</function>")
+	if len(got) != 1 {
+		t.Fatalf("expected 1 orphaned call, got %d", len(got))
+	}
+	if got[0].NameHint != "" {
+		t.Errorf("NameHint = %q, want empty", got[0].NameHint)
+	}
+}
+
 // Well-formed calls must NOT be double-counted as orphans.
 func TestParseOrphanedCallsSkipsWellFormed(t *testing.T) {
 	content := "<function=terminal_execute>\n<parameter=command>id</parameter>\n</function>"
