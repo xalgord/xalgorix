@@ -65,6 +65,37 @@ func TestNoToolHandlerCompactsBeforeAbort(t *testing.T) {
 	}
 }
 
+// The two consecutive compactions must be SPACED at ReasoningLoopCompactAt (6)
+// and ReasoningLoopCompactAt2 (10) — NOT fired back-to-back at 6 and 7. The
+// back-to-back bug consumed the whole compaction budget immediately, leaving
+// the model un-helped from count 8 until the abort at 15 (observed on the
+// pentest-ground.com scan: compactions at iters 79/80, then dead air to 88).
+func TestNoToolHandlerCompactionsAreSpaced(t *testing.T) {
+	state := NewScanState()
+
+	compactedAt := []int{}
+	for state.NoToolCount < NoToolAbortAt {
+		res := hookNoToolHandler(state, map[string]string{"response": "let me think"})
+		if res.ForceCompact {
+			compactedAt = append(compactedAt, state.NoToolCount)
+		}
+		if res.ForceSkip {
+			break
+		}
+	}
+
+	if len(compactedAt) != 2 {
+		t.Fatalf("expected exactly 2 compactions, got %d at counts %v", len(compactedAt), compactedAt)
+	}
+	if compactedAt[0] != ReasoningLoopCompactAt {
+		t.Errorf("first compaction at count %d, want %d", compactedAt[0], ReasoningLoopCompactAt)
+	}
+	if compactedAt[1] != ReasoningLoopCompactAt2 {
+		t.Errorf("second compaction at count %d, want %d (spaced, not back-to-back at %d)",
+			compactedAt[1], ReasoningLoopCompactAt2, ReasoningLoopCompactAt+1)
+	}
+}
+
 // The density path must catch a model that makes occasional tool calls —
 // enough to reset the consecutive counter but not enough to make progress —
 // which would otherwise run for hours. This is the exact 48-hour pattern:

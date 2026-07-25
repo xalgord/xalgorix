@@ -150,6 +150,33 @@ func TestFixIncomplete_PartialEndTag(t *testing.T) {
 	}
 }
 
+// TestFixIncomplete_TrailingBareOpenDropped is the regression for the
+// MiniMax-M3 case: a valid call followed by a trailing, param-less
+// "<function=terminal_execute>" open tag (the model truncated before emitting
+// params). Previously fixIncomplete closed it into a phantom empty call that
+// failed "missing required parameter 'command'" and tripped the repeated-call
+// guard. The bare open must now be dropped, leaving only the real call.
+func TestFixIncomplete_TrailingBareOpenDropped(t *testing.T) {
+	in := "<function=terminal_execute>\n<parameter=command>id</parameter>\n</function>\n" +
+		"<function=terminal_execute>"
+	calls := ParseToolCalls(in)
+	if len(calls) != 1 {
+		t.Fatalf("expected exactly 1 call (phantom empty dropped), got %d: %+v", len(calls), calls)
+	}
+	if calls[0].Name != "terminal_execute" || calls[0].Args["command"] != "id" {
+		t.Fatalf("expected the real terminal_execute(command=id), got %+v", calls[0])
+	}
+}
+
+// TestFixIncomplete_TrailingBareOpenWithCloseOnly guards the "empty but fully
+// closed" open the model sometimes emits standalone. A single bare open with
+// no body and no close is truncation noise — it must not become a call.
+func TestFixIncomplete_LoneBareOpenDropped(t *testing.T) {
+	if calls := ParseToolCalls("<function=terminal_execute>"); len(calls) != 0 {
+		t.Fatalf("expected 0 calls from a lone bare open tag, got %+v", calls)
+	}
+}
+
 // ParseOrphanedCalls must recover <parameter> blocks that have a trailing
 // </function> but NO <function=NAME> open tag — the malformation that force-
 // stopped the codeant.ai scan. The caller resolves the tool name via the

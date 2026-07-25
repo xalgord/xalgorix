@@ -1401,7 +1401,17 @@ Resume the assessment NOW by calling a tool. For example, to run a command:
 	// against the consecutive budget (and vice versa). Without this, a
 	// density compact (1) + two consecutive compacts (2) = 3 compactions,
 	// violating MaxReasoningCompactions.
+	// Second (later) consecutive compaction — fires at ReasoningLoopCompactAt2
+	// and ONLY once the first consecutive compaction has already been spent.
+	// Gating on ReasoningLoopCompactions (not merely the combined total) keeps
+	// the two compactions SPACED at their intended thresholds (6 and 10). The
+	// previous code gated only on totalCompactions, so the `>= ReasoningLoopCompactAt`
+	// block below stayed true at count 7 and fired the second compaction
+	// back-to-back at 6 and 7 — burning the whole budget before the model had
+	// any turns to recover, then leaving it un-helped from 8 until the abort at
+	// 15 (ReasoningLoopCompactAt2 was effectively dead).
 	if state.NoToolCount >= ReasoningLoopCompactAt2 &&
+		state.ReasoningLoopCompactions >= 1 &&
 		totalCompactions < MaxReasoningCompactions {
 		state.ReasoningLoopCompactions++
 		return HookResult{
@@ -1409,7 +1419,12 @@ Resume the assessment NOW by calling a tool. For example, to run a command:
 			Nudge:        reasoningLoopResumePrompt(state, "consecutive"),
 		}
 	}
+	// First consecutive compaction — fires once when the count first reaches
+	// ReasoningLoopCompactAt, and remains the only consecutive compaction until
+	// the count climbs to ReasoningLoopCompactAt2 (the `== 0` guard prevents it
+	// re-firing every turn between the two thresholds).
 	if state.NoToolCount >= ReasoningLoopCompactAt &&
+		state.ReasoningLoopCompactions == 0 &&
 		totalCompactions < MaxReasoningCompactions {
 		state.ReasoningLoopCompactions++
 		return HookResult{

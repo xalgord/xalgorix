@@ -219,13 +219,33 @@ func fixIncomplete(content string) string {
 		return content
 	}
 
-	// At least one open tag has no matching close. Append a single closing
-	// tag — even if multiple tags are unclosed, the regex is non-greedy and
-	// will pick up the well-formed pairs first.
+	// At least one open tag has no matching close.
 	content = strings.TrimRight(content, " \t\n\r")
+
+	// Truncated CLOSING tag ("...</") — the body already exists, just finish
+	// the close so the well-formed pair parses.
 	if strings.HasSuffix(content, "</") {
 		return content + "function>"
 	}
+
+	// A trailing OPEN tag is unclosed. Decide whether to RECOVER it (it carries
+	// a partial body worth parsing) or DROP it (it is a bare, param-less open).
+	// Completing a param-less open would fabricate an empty, argument-less call
+	// (e.g. `<function=terminal_execute></function>`) that fails with
+	// "missing required parameter" and, when the model repeats the truncation,
+	// trips the repeated-call guard and burns iterations. We inspect the tail
+	// from the last "<function=" open: if it has no matching close AND no
+	// <parameter, it is truncation noise — strip it. Otherwise close it so the
+	// partial params are recovered.
+	if lastOpen := strings.LastIndex(content, "<function="); lastOpen >= 0 {
+		tail := content[lastOpen:]
+		if !strings.Contains(tail, "</function>") && !strings.Contains(tail, "<parameter") {
+			return strings.TrimRight(content[:lastOpen], " \t\n\r")
+		}
+	}
+
+	// Append a single closing tag — even if multiple tags are unclosed, the
+	// regex is non-greedy and will pick up the well-formed pairs first.
 	return content + "\n</function>"
 }
 

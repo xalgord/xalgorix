@@ -709,7 +709,8 @@ func (a *Agent) Run(targets []string, instruction string) {
 	// Running total of tool calls, for the optional resource budget.
 	toolCallsTotal := 0
 
-	for iter := 0; (a.maxIter == 0 || iter < a.maxIter) && !a.stopped.Load() && (a.ctx == nil || a.ctx.Err() == nil); iter++ {
+	iter := 0
+	for ; (a.maxIter == 0 || iter < a.maxIter) && !a.stopped.Load() && (a.ctx == nil || a.ctx.Err() == nil); iter++ {
 		// Reset activity watchdog on each iteration — IMMEDIATELY, no delay
 		a.touchActivity()
 		a.state.Iteration = iter
@@ -1115,7 +1116,24 @@ func (a *Agent) Run(targets []string, instruction string) {
 		// ZERO DELAY — immediately proceed to next iteration
 	}
 
-	a.emit(Event{Type: "finished", Content: "Agent reached maximum iterations", TotalTokens: tokenCount()})
+	// The loop exited. Report the ACTUAL termination reason instead of always
+	// blaming "maximum iterations". With the default unlimited iteration budget
+	// (maxIter == 0) the loop can ONLY end here via an external Stop() or a
+	// canceled context — mislabeling every such exit as "maximum iterations"
+	// hid the real cause (user stop, shutdown, watchdog kill, or upstream
+	// context cancellation) and made healthy scans look like they'd blown a cap.
+	var finishReason string
+	switch {
+	case a.maxIter > 0 && iter >= a.maxIter:
+		finishReason = fmt.Sprintf("Agent reached maximum iterations (%d)", a.maxIter)
+	case a.stopped.Load():
+		finishReason = "Scan stopped"
+	case a.ctx != nil && a.ctx.Err() != nil:
+		finishReason = "Scan canceled: " + a.ctx.Err().Error()
+	default:
+		finishReason = "Scan ended"
+	}
+	a.emit(Event{Type: "finished", Content: finishReason, TotalTokens: tokenCount()})
 }
 
 // Stop signals the agent to stop and kills all running processes.
