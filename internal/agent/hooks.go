@@ -144,6 +144,17 @@ type ScanState struct {
 	TotalNoToolResponses     int
 	DensityCompactions       int
 
+	// NoToolAbortLimit is the consecutive no-tool-call count at which the scan
+	// force-stops (from config XALGORIX_NO_TOOL_ABORT_AT). 0 = never give up:
+	// the agent keeps nudging and periodically re-compacting so the model can
+	// fix its own malformed output and resume. Set from cfg when the agent
+	// initializes ScanState; falls back to NoToolAbortAt when zero-valued only
+	// if the operator did not explicitly disable it (see abortLimit()).
+	NoToolAbortLimit int
+	// NoToolAbortConfigured records that NoToolAbortLimit was explicitly set
+	// from config (so a value of 0 means "disabled", not "unset default").
+	NoToolAbortConfigured bool
+
 	// Plan is the structural task graph for this scan. nil until recon has
 	// surfaced surface (or the LLM calls build_plan). Shared across sub-agents
 	// because ScanState is the same object within a ScanContext. The plan is
@@ -1319,6 +1330,18 @@ func hookEmptyResponseHandler(state *ScanState, args map[string]string) HookResu
 // refusal is not a formatting problem, so the generic "use the XML format"
 // nudge does nothing — instead we re-assert the authorized-engagement
 // context, which reliably gets safety-tuned models back on task.
+// noToolAbortLimit returns the effective consecutive no-tool-call abort
+// threshold. A value <= 0 means "never abort" — the scan keeps nudging and
+// periodically re-compacting so the model can fix its own output and resume.
+// Uses the operator's configured value when set (so an explicit 0 disables the
+// abort); otherwise the NoToolAbortAt default.
+func noToolAbortLimit(state *ScanState) int {
+	if state != nil && state.NoToolAbortConfigured {
+		return state.NoToolAbortLimit
+	}
+	return NoToolAbortAt
+}
+
 func hookNoToolHandler(state *ScanState, args map[string]string) HookResult {
 	state.NoToolCount++
 	state.TotalNoToolResponses++
@@ -1329,10 +1352,14 @@ func hookNoToolHandler(state *ScanState, args map[string]string) HookResult {
 		state.RefusalCount = 0
 	}
 
-	if state.NoToolCount >= NoToolAbortAt {
-		msg := "⛔ Model returned 15 consecutive responses with no tool call — it stopped taking actions (likely context flooded by a large tool output, or a reasoning loop). Force finishing."
+	// abortAt <= 0 means "never give up": the scan keeps nudging + periodically
+	// re-compacting (below) so the model can fix its own malformed output and
+	// resume, bounded only by the other budgets (iterations/duration/tokens).
+	abortAt := noToolAbortLimit(state)
+	if abortAt > 0 && state.NoToolCount >= abortAt {
+		msg := fmt.Sprintf("⛔ Model returned %d consecutive responses with no tool call — it stopped taking actions (likely context flooded by a large tool output, or a reasoning loop). Force finishing.", abortAt)
 		if state.RefusalCount >= 3 {
-			msg = "⛔ Model declined to act for 15 consecutive responses (safety refusal). Force finishing — try a model that permits authorized security testing."
+			msg = fmt.Sprintf("⛔ Model declined to act for %d consecutive responses (safety refusal). Force finishing — try a model that permits authorized security testing.", abortAt)
 		}
 		return HookResult{
 			ForceSkip:   true,
@@ -1374,7 +1401,7 @@ Resume the assessment NOW by calling a tool. For example, to run a command:
 		// here — for the pure non-consecutive pattern the consecutive path can
 		// never supply a second compaction, so gating on it would make this
 		// abort unreachable (the exact 48-hour bug this path exists to catch).
-		if ratio > ReasoningDensityAbortRatio && iters >= ReasoningDensityAbortMinIters &&
+		if abortAt > 0 && ratio > ReasoningDensityAbortRatio && iters >= ReasoningDensityAbortMinIters &&
 			totalCompactions >= 1 {
 			return HookResult{
 				ForceSkip: true,
@@ -1393,6 +1420,21 @@ Resume the assessment NOW by calling a tool. For example, to run a command:
 				ForceCompact: true,
 				Nudge:        reasoningLoopResumePrompt(state, "density"),
 			}
+		}
+	}
+
+	// ── Never-give-up recovery (abort disabled) ──
+	// When the operator disabled the abort (abortAt <= 0), the two-shot
+	// compaction budget would leave a stuck model with nothing but nudges after
+	// count 10 — spinning instead of "fixing itself". Keep re-compacting on a
+	// fixed cadence (every ReasoningLoopCompactAt2 consecutive no-tool
+	// responses) so the model keeps getting a fresh, focused context to recover
+	// in, uncapped. This branch is unreachable in the default bounded mode.
+	if abortAt <= 0 && state.NoToolCount > 0 && state.NoToolCount%ReasoningLoopCompactAt2 == 0 {
+		state.ReasoningLoopCompactions++
+		return HookResult{
+			ForceCompact: true,
+			Nudge:        reasoningLoopResumePrompt(state, "consecutive"),
 		}
 	}
 

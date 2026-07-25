@@ -406,6 +406,30 @@ func (a *Agent) SetActivityPolicy(reconMode, scanIntensity string, targets []str
 	a.refreshPassiveReconGuard()
 }
 
+// canonicalizeAssistantTurn renders an assistant turn in the canonical tool-
+// call format: the model's clean prose (tool XML already stripped) followed by
+// one well-formed <function=NAME>…</function> block per parsed/recovered call.
+// Persisting this instead of the model's raw (possibly malformed) output keeps
+// the conversation self-consistent, so the model — which few-shot-mimics its
+// own prior turns — stays on-format instead of drifting into dropped-tag
+// malformations that eventually become unrecoverable and stall the scan.
+func canonicalizeAssistantTurn(cleanText string, toolCalls []llm.ToolCall) string {
+	var b strings.Builder
+	// Strip any malformed tool-call residue (orphaned <parameter> blocks, a
+	// bare `name>` line, stray </function>) so the rebuilt turn is clean prose
+	// only — otherwise the very malformation we're canonicalizing away leaks
+	// back in via the prose.
+	if prose := llm.StripToolResidue(cleanText); prose != "" {
+		b.WriteString(prose)
+		b.WriteString("\n")
+	}
+	for _, tc := range toolCalls {
+		b.WriteString(llm.FormatToolCall(tc.Name, tc.Args))
+		b.WriteString("\n")
+	}
+	return strings.TrimSpace(b.String())
+}
+
 // stripThink removes <think>...</think> blocks from the response.
 func stripThink(s string) string {
 	return thinkRegex.ReplaceAllString(s, "")
@@ -691,6 +715,11 @@ func (a *Agent) Run(targets []string, instruction string) {
 
 	// Initialize scan state for hooks (replaces 17+ local tracking variables)
 	a.state = NewScanState()
+	if a.cfg != nil {
+		// Thread the configurable no-tool abort threshold (0 = never give up).
+		a.state.NoToolAbortLimit = a.cfg.NoToolAbortAt
+		a.state.NoToolAbortConfigured = true
+	}
 	a.state.ScanContextID = a.scanCtx.ID
 	a.state.DiscoveryMode = a.discoveryMode
 	a.state.AllowedPhases = append([]int(nil), a.allowedPhases...)
@@ -876,10 +905,6 @@ func (a *Agent) Run(targets []string, instruction string) {
 			a.emit(Event{Type: "message", Content: cleanText, TotalTokens: tokenCount()})
 		}
 
-		a.msgMu.Lock()
-		a.messages = append(a.messages, llm.Message{Role: "assistant", Content: response})
-		a.msgMu.Unlock()
-
 		toolCalls := llm.ParseToolCalls(responseClean)
 		// ── Schema-guided recovery of dropped-open-tag tool calls ──
 		// Some models intermittently drop the <function=NAME> open tag and
@@ -931,6 +956,24 @@ func (a *Agent) Run(targets []string, instruction string) {
 			}
 		}
 		toolCallsTotal += len(toolCalls)
+
+		// ── Persist the assistant turn ──
+		// When tool calls were parsed OR recovered, store a CANONICAL rendering
+		// (clean prose + well-formed <function=…> blocks) instead of the raw
+		// response. The model few-shot-mimics its own prior turns, so persisting
+		// malformed tool-call XML (e.g. a dropped "<function=" tag) teaches it to
+		// keep malforming — the format drifts and escalates until it emits an
+		// unrecoverable shape and the scan reasoning-loops. Rewriting to the
+		// canonical form keeps the conversation self-consistent so the model
+		// stays on-format. When NO tool call was found, store the raw response so
+		// the no-tool hook's format nudge reflects the real (malformed) output.
+		assistantContent := response
+		if len(toolCalls) > 0 {
+			assistantContent = canonicalizeAssistantTurn(cleanText, toolCalls)
+		}
+		a.msgMu.Lock()
+		a.messages = append(a.messages, llm.Message{Role: "assistant", Content: assistantContent})
+		a.msgMu.Unlock()
 
 		// ── Hook: OnNoToolResponse ──
 		if len(toolCalls) == 0 {

@@ -54,6 +54,13 @@ type Config struct {
 	DisableBrowser bool   // XALGORIX_DISABLE_BROWSER
 	MaxIterations  int    // XALGORIX_MAX_ITERATIONS — 0 = unlimited
 
+	// NoToolAbortAt is how many CONSECUTIVE no-tool-call responses force-stop a
+	// scan (the "reasoning loop" abort). XALGORIX_NO_TOOL_ABORT_AT, default 15.
+	// Set to 0 to NEVER give up: the agent keeps nudging + periodically
+	// compacting context so the model can fix its own malformed output and
+	// resume, bounded only by the other budgets (iterations/duration/tokens).
+	NoToolAbortAt int
+
 	// TargetAuth carries operator-supplied authenticated-session credentials
 	// for the target(s), so the agent can test post-authentication attack
 	// surface (IDOR/BOLA, privilege escalation, business logic) — where the
@@ -298,6 +305,7 @@ func load() *Config {
 		legacyCWD:           cwd,
 		DisableBrowser:      envOrBool("XALGORIX_DISABLE_BROWSER", false),
 		MaxIterations:       envOrInt("XALGORIX_MAX_ITERATIONS", 0),
+		NoToolAbortAt:       envOrInt("XALGORIX_NO_TOOL_ABORT_AT", 15),
 		TargetAuth:          envOr("XALGORIX_TARGET_AUTH", ""),
 		TargetAuthSecondary: envOr("XALGORIX_TARGET_AUTH_B", ""),
 		OOBPublicURL:        envOr("XALGORIX_OOB_PUBLIC_URL", ""),

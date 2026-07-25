@@ -65,6 +65,31 @@ func TestNoToolHandlerCompactsBeforeAbort(t *testing.T) {
 	}
 }
 
+// With the abort disabled (XALGORIX_NO_TOOL_ABORT_AT=0), the handler must NEVER
+// ForceSkip on a no-tool loop, and must keep re-compacting on a cadence so the
+// model keeps getting fresh context to fix itself — not just spin on nudges.
+func TestNoToolHandler_AbortDisabledNeverGivesUp(t *testing.T) {
+	state := NewScanState()
+	state.NoToolAbortConfigured = true
+	state.NoToolAbortLimit = 0 // disabled → never give up
+
+	compactions := 0
+	for i := 0; i < 100; i++ {
+		res := hookNoToolHandler(state, map[string]string{"response": "thinking, no tool"})
+		if res.ForceSkip {
+			t.Fatalf("ForceSkip fired at NoToolCount=%d with abort disabled", state.NoToolCount)
+		}
+		if res.ForceCompact {
+			compactions++
+		}
+	}
+	// Recurring compaction (every ReasoningLoopCompactAt2) — not capped at the
+	// default MaxReasoningCompactions=2 — so it keeps actively trying to recover.
+	if compactions <= MaxReasoningCompactions {
+		t.Errorf("expected recurring compactions with abort disabled, got %d (want > %d)", compactions, MaxReasoningCompactions)
+	}
+}
+
 // The two consecutive compactions must be SPACED at ReasoningLoopCompactAt (6)
 // and ReasoningLoopCompactAt2 (10) — NOT fired back-to-back at 6 and 7. The
 // back-to-back bug consumed the whole compaction budget immediately, leaving

@@ -350,6 +350,30 @@ func ParseOrphanedCalls(content string) []OrphanedCall {
 	return out
 }
 
+var (
+	// Residue left after CleanContent when the model MALFORMED a tool call:
+	// orphaned `<parameter=…>…</parameter>` blocks (open tag dropped), stray
+	// `<function…>`/`</function>` tags, and a lone `name>` line (the bare tool
+	// name from a dropped-open-tag call). CleanContent only strips well-formed
+	// `<function=…>…</function>` pairs, so these survive into the prose.
+	orphanParamResidueRe = regexp.MustCompile(`(?s)<parameter\b[^>]*>.*?</parameter>`)
+	strayFuncTagRe       = regexp.MustCompile(`</?function[^>]*>`)
+	danglingNameLineRe   = regexp.MustCompile(`(?m)^\s*[A-Za-z_][A-Za-z0-9_-]*>\s*$`)
+)
+
+// StripToolResidue removes tool-call XML — well-formed OR malformed — from
+// prose so a rebuilt (canonical) assistant turn carries no leftover markup.
+// Used when persisting a turn whose tool calls were parsed/recovered, so the
+// model never sees its own malformed tool-call fragments and mimic them.
+func StripToolResidue(content string) string {
+	content = toolPattern.ReplaceAllString(content, "")
+	content = orphanParamResidueRe.ReplaceAllString(content, "")
+	content = strayFuncTagRe.ReplaceAllString(content, "")
+	content = danglingNameLineRe.ReplaceAllString(content, "")
+	content = multiBlankRe.ReplaceAllString(content, "\n\n")
+	return strings.TrimSpace(content)
+}
+
 // CleanContent removes tool call XML from content for display.
 func CleanContent(content string) string {
 	content = normalizeFormat(content)
