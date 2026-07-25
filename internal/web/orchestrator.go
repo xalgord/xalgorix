@@ -258,24 +258,20 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 	admissionTicker := time.NewTicker(2 * time.Second)
 	defer admissionTicker.Stop()
 	for {
-		// Check if THIS instance was stopped (via per-instance stop API)
+		// Check if THIS instance was stopped (via per-instance stop API,
+		// Stop All, pause, or delete — all of which flip instance.Status).
+		// We intentionally do NOT check the global stopReq here: it is a
+		// shared flag whose lifetime is decoupled from this scan (it stays
+		// true after a Stop All / SIGTERM until some other scan clears it).
+		// Checking it here caused pending scans to mark themselves
+		// "user_stopped" with no user action against THIS scan (the
+		// stopReq.Store(false) clear-at-start hack was a workaround that in
+		// turn broke Stop All). The per-instance status is the authoritative
+		// signal: every stop path sets it, and we observe it on every wake.
 		instance.mu.RLock()
 		stopped := instance.Status == "stopped"
 		instance.mu.RUnlock()
 		if stopped {
-			// Early return — defer is already registered and will clean up
-			return
-		}
-
-		// Also check global stop (user clicked "stop all")
-		if s.stopReq.Load() {
-			instance.mu.Lock()
-			if instance.Status == "pending" {
-				instance.Status = "stopped"
-				instance.StopReason = "user_stopped"
-				instance.FinishedAt = time.Now().Format(time.RFC3339)
-			}
-			instance.mu.Unlock()
 			// Early return — defer is already registered and will clean up
 			return
 		}
@@ -348,7 +344,6 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 	// process exits during admission/startup.
 	req.InstanceID = instanceID // (re)thread instance ID; also set before the admission wait
 	s.running.Store(true)
-	s.stopReq.Store(false) // clear global stop so this scan isn't immediately aborted
 	if req.DiscordWebhook != "" {
 		s.discordWebhook = req.DiscordWebhook
 	}
@@ -392,11 +387,13 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 
 	interruptedQueue := false
 	for i, target := range req.Targets {
-		// Check both global stop and per-instance stop
+		// Per-instance stop/pause: Stop All, single-stop, pause, and delete
+		// all flip instance.Status, which we observe here. The global stopReq
+		// is intentionally not consulted (see the admission-loop note above).
 		instance.mu.RLock()
 		instStatus := instance.Status
 		instance.mu.RUnlock()
-		if s.stopReq.Load() || instStatus == "stopped" || instStatus == "paused" {
+		if instStatus == "stopped" || instStatus == "paused" {
 			interruptedQueue = true
 			if instStatus == "paused" {
 				s.broadcastToInstance(instanceID, WSEvent{Type: "paused", Content: "Scan queue paused"})
@@ -434,7 +431,10 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 		instance.mu.RLock()
 		instStatusAfterTarget := instance.Status
 		instance.mu.RUnlock()
-		if shouldAdvanceQueueAfterTarget(s.stopReq.Load(), instStatusAfterTarget) {
+		// stopRequested=false: the global flag is not consulted for per-scan
+		// queue advancement (see admission-loop note). instStatusAfterTarget
+		// already reflects any per-instance stop/pause.
+		if shouldAdvanceQueueAfterTarget(false, instStatusAfterTarget) {
 			s.saveQueueState(i+1, req)
 		} else {
 			interruptedQueue = true
@@ -959,8 +959,9 @@ func (s *Server) runWildcardTarget(_ context.Context, scanCfg *config.Config, re
 	wildcardStopped := false
 	for j := resumeFromSubIndex; j < len(subdomains); j++ {
 		subdomain := subdomains[j]
-		// Check both global stop and per-instance stop
-		if s.stopReq.Load() || s.instanceInterrupted(req.InstanceID) {
+		// Per-instance stop only (Stop All / single-stop / pause / delete all
+		// flip the instance status, which instanceInterrupted observes).
+		if s.instanceInterrupted(req.InstanceID) {
 			log.Printf("[INFO] Subdomain loop stopped by user at %d/%d for %s", j+1, len(subdomains), target)
 			s.broadcastToInstance(req.InstanceID, WSEvent{Type: "stopped", Content: "Scan queue stopped by user"})
 			wildcardStopped = true
@@ -1113,8 +1114,9 @@ func (s *Server) runWildcardTarget(_ context.Context, scanCfg *config.Config, re
 		saveWildcardProgress(j+1, -1, "", "")
 
 		// ── Cooldown between subdomain scans ──
-		// Prevents LLM API rate-limiting and gives GC time to reclaim memory
-		if j < len(subdomains)-1 && !s.stopReq.Load() && !s.instanceInterrupted(req.InstanceID) {
+		// Prevents LLM API rate-limiting and gives GC time to reclaim memory.
+		// instanceInterrupted covers per-instance stop/pause/delete.
+		if j < len(subdomains)-1 && !s.instanceInterrupted(req.InstanceID) {
 			log.Printf("[INFO] Cooldown: 10s pause before next subdomain (memory recovery + rate limit prevention)")
 			time.Sleep(10 * time.Second)
 		}
@@ -1123,7 +1125,9 @@ func (s *Server) runWildcardTarget(_ context.Context, scanCfg *config.Config, re
 		parentRecord, _ = loadScanRecordFromDir(scanDir)
 	}
 	if parentRecord != nil {
-		if wildcardStopped || s.stopReq.Load() {
+		// wildcardStopped already incorporates instanceInterrupted (set when
+		// the per-instance stop is observed in the subdomain loop above).
+		if wildcardStopped {
 			if status, stopReason := s.instanceRunStatus(req.InstanceID); isInterruptedInstanceStatus(status) {
 				parentRecord.Status = status
 				parentRecord.StopReason = stopReason

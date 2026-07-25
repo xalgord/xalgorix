@@ -1,9 +1,11 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -199,5 +201,87 @@ func TestClearQueueState_RemovesPendingScanFile(t *testing.T) {
 		if e.state != nil && e.state.InstanceID == "cancel-1" {
 			t.Error("canceled pending scan must not be resumable after clearQueueState")
 		}
+	}
+}
+
+// Regression: a PENDING scan must NOT be marked "stopped by user" merely
+// because the global stopReq flag is true. Before the fix, stopReq was a
+// shared flag whose lifetime was decoupled from any one scan (set true by
+// Stop All / SIGTERM, cleared only when some OTHER scan started). The
+// admission loop read it directly and killed pending scans that observed a
+// stale-true value — producing "stopped by user" with no user action against
+// that scan. The fix made stop signaling per-instance: the admission/target
+// loops now consult instanceInterrupted / instance.Status only, never the
+// global flag. This test pins that contract: a stale stopReq MUST NOT
+// interrupt a pending instance; only the instance's own status change does.
+func TestStopReqGlobalFlagDoesNotInterruptPendingScan(t *testing.T) {
+	s := newTestServer(t, nil)
+
+	inst := &ScanInstance{ID: "pend-1", Status: "pending"}
+	s.instancesMu.Lock()
+	s.instances["pend-1"] = inst
+	s.instancesMu.Unlock()
+
+	// Simulate the exact cause of the bug: a stale/Stop-All/SIGTERM global
+	// stopReq left true while this scan is parked pending.
+	s.stopReq.Store(true)
+
+	// instanceInterrupted is what the loops now consult. A pending scan must
+	// NOT be considered interrupted just because stopReq is true.
+	if s.instanceInterrupted("pend-1") {
+		t.Error("a pending scan must NOT be interrupted by a stale global stopReq (per-instance signal only)")
+	}
+
+	// And the instance's status must be untouched.
+	inst.mu.RLock()
+	if inst.Status != "pending" {
+		t.Errorf("pending scan status changed to %q with no per-instance stop", inst.Status)
+	}
+	inst.mu.RUnlock()
+
+	// The correct stop channel: flip the instance's OWN status. Now it IS
+	// interrupted, and stopReq is irrelevant.
+	inst.mu.Lock()
+	inst.Status = "stopped"
+	inst.mu.Unlock()
+	if !s.instanceInterrupted("pend-1") {
+		t.Error("a stopped instance must be reported interrupted via its own status")
+	}
+
+	// And a deleted instance (removed from the map) is interrupted regardless.
+	s.instancesMu.Lock()
+	delete(s.instances, "pend-1")
+	s.instancesMu.Unlock()
+	if !s.instanceInterrupted("pend-1") {
+		t.Error("a deleted instance must be reported interrupted")
+	}
+}
+
+// Regression: the /api/scan dispatch ack must report the scan's actual local
+// state ("pending" — queued until the admission gate grants a slot), not
+// "started". The old "started" ack was read by external callers (e.g. a SaaS
+// control plane) as "running", producing a SaaS=running / worker=pending
+// desync whenever the worker was at its concurrency cap.
+func TestHandleScanAckIsPendingNotStarted(t *testing.T) {
+	s := newTestServer(t, nil)
+
+	body := `{"targets":["https://example.com"],"scan_mode":"quick"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/scan", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.handleScan(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want 200", rr.Code)
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid JSON response: %v body=%q", err, rr.Body.String())
+	}
+	if resp["status"] != "pending" {
+		t.Errorf("ack status = %q, want \"pending\" (must reflect queued state, not \"started\")", resp["status"])
+	}
+	if resp["instance_id"] == "" {
+		t.Error("ack must include an instance_id")
 	}
 }

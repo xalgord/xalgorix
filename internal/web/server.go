@@ -1602,16 +1602,20 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clear global stop flag so the new scan isn't immediately aborted
-	// (fixes starvation bug where scans stay "pending" after Stop All)
-	s.stopReq.Store(false)
-
 	instanceID := randomSlug()
 	req.Name = strings.TrimSpace(req.Name) // propagate name to running scans too
 	go s.runMultiScan(req, &scanCfg, instanceID)
 
+	// The ack reflects the scan's actual local state: it is QUEUED as
+	// "pending" (orchestrator.go registers it pending, then the admission
+	// gate flips it to "running" only once a concurrency slot is granted).
+	// Previously this returned "started", which external callers (e.g. a SaaS
+	// control plane) misread as "running" — producing a SaaS=running /
+	// worker=pending desync whenever the worker was at its RAM-derived cap.
+	// Callers wanting the authoritative status should poll GET /api/instances
+	// (or /api/scans), whose "status" field is pending until admission.
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "started", "instance_id": instanceID})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "pending", "instance_id": instanceID})
 }
 
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
@@ -2322,10 +2326,6 @@ func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request) {
 		scanContext := inst.ScanContext
 		inst.mu.RUnlock()
 
-		// Clear global stop flag so the restarted scan isn't immediately aborted
-		// by the queue wait loop checking stopReq.
-		s.stopReq.Store(false)
-
 		// Build a new ScanRequest from stored config
 		req := ScanRequest{
 			Targets:             targets,
@@ -2399,7 +2399,6 @@ func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request) {
 			_ = os.RemoveAll(savedDir)
 		}
 
-		s.stopReq.Store(false)
 		scanCfg := *s.cfg
 		newID := randomSlug()
 		go s.runMultiScan(req, &scanCfg, newID)
@@ -2463,7 +2462,6 @@ func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request) {
 		delete(s.instances, instanceID)
 		s.instancesMu.Unlock()
 
-		s.stopReq.Store(false)
 		scanCfg := *s.cfg
 		newID := randomSlug()
 		go s.runMultiScan(req, &scanCfg, newID)
