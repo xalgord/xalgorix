@@ -952,6 +952,10 @@ var packageMap = map[string]string{
 	"feroxbuster": "feroxbuster",
 	// Findomain — Rust binary, installed via package manager or cargo
 	"findomain": "findomain",
+	// Parameter discovery — arjun/uro are Python (pipx), x8 is Rust (cargo)
+	"arjun": "arjun",
+	"uro":   "uro",
+	"x8":    "x8",
 	// Text processing
 	"jq":        "jq",
 	"xmllint":   "libxml2-utils",
@@ -1613,14 +1617,17 @@ func installPackage(pkg string) string {
 
 	// Special handling for pipx-installed tools
 	pipxTools := map[string]string{
-		"scrapling":   "scrapling",
+		"arjun":       "arjun",
 		"paramspider": "paramspider",
+		"scrapling":   "scrapling",
+		"uro":         "uro",
 	}
 
 	// Special handling for Cargo (Rust) tools
 	cargoTools := map[string]string{
 		"feroxbuster": "feroxbuster",
 		"findomain":   "findomain",
+		"x8":          "x8",
 	}
 
 	// Special handling for Go-installed tools
