@@ -279,3 +279,42 @@ func TestMatchByParamsRejectsTie(t *testing.T) {
 		t.Errorf("MatchByParams(command,id) = %q,%v, want pageagent,true", name, ok)
 	}
 }
+
+// RequiresParams reports whether a tool declares any REQUIRED parameter. The
+// agent loop uses it to drop empty-Args calls (well-formed <function=NAME>
+// </function> bodies that the parser matched but that yielded zero params —
+// produced when a model splits a multi-param call's fields across separate
+// calls). Such a call can never satisfy required params, so it's dropped
+// rather than wasting an iteration on a guaranteed registry error. Critically,
+// a tool whose params are ALL optional (e.g. code_search) legitimately accepts
+// an empty body and must report RequiresParams=false so its calls are kept.
+func TestRequiresParams(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&Tool{Name: "update_plan", Parameters: []Parameter{
+		{Name: "task_id", Required: true}, {Name: "status", Required: true}, {Name: "notes", Required: false},
+	}})
+	r.Register(&Tool{Name: "code_search", Parameters: []Parameter{
+		{Name: "query", Required: false}, {Name: "sinks", Required: false}, {Name: "glob", Required: false},
+	}})
+	r.Register(&Tool{Name: "terminal_execute", Parameters: []Parameter{
+		{Name: "command", Required: true},
+	}})
+
+	// Tools with ≥1 required param → true (empty body is never a valid call).
+	if !r.RequiresParams("update_plan") {
+		t.Error("update_plan requires task_id+status → RequiresParams must be true")
+	}
+	if !r.RequiresParams("terminal_execute") {
+		t.Error("terminal_execute requires command → RequiresParams must be true")
+	}
+
+	// Tool with ALL-optional params → false (empty body is legitimate).
+	if r.RequiresParams("code_search") {
+		t.Error("code_search has no required params → RequiresParams must be false (empty body is valid)")
+	}
+
+	// Unknown tool → false (don't block calls to tools we don't know about).
+	if r.RequiresParams("does_not_exist") {
+		t.Error("unknown tool → RequiresParams must be false")
+	}
+}

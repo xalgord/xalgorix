@@ -155,6 +155,30 @@ func (r *Registry) Get(name string) (*Tool, bool) {
 	return t, ok
 }
 
+// RequiresParams reports whether the named tool declares any REQUIRED
+// parameter. Used by the agent loop to decide whether an empty-Args tool call
+// (a well-formed <function=NAME></function> body the parser matched but that
+// yielded zero <parameter> children — observed when models drift and split a
+// multi-param call's fields across separate calls) is a real invocation or a
+// malformed fragment. For a tool with required params, an empty body can never
+// be a valid call, so the caller drops it (letting orphan-recovery or the
+// no-tool compaction path handle it) instead of wasting an iteration on a
+// guaranteed "missing required parameter" registry error. A tool whose params
+// are all optional (e.g. code_search) legitimately accepts an empty body, so
+// this returns false and the call proceeds.
+func (r *Registry) RequiresParams(name string) bool {
+	t, ok := r.Get(name)
+	if !ok {
+		return false
+	}
+	for _, p := range t.Parameters {
+		if p.Required {
+			return true
+		}
+	}
+	return false
+}
+
 // List returns all registered tool names.
 func (r *Registry) List() []string {
 	r.mu.RLock()

@@ -906,6 +906,28 @@ func (a *Agent) Run(targets []string, instruction string) {
 		}
 
 		toolCalls := llm.ParseToolCalls(responseClean)
+		// ── Drop empty-Args calls for tools that require parameters ──
+		// When a model drifts and splits a multi-parameter call's fields
+		// across separate <function=NAME> blocks, the parser produces
+		// well-formed calls with EMPTY bodies (e.g. <function=update_plan>
+		// </function> → ToolCall{Name:"update_plan", Args:{}}). Such a call
+		// can never satisfy the tool's required params, so sending it to the
+		// registry just wastes an iteration on a guaranteed "missing required
+		// parameter" error (observed ~10× near the end of the z-text.com
+		// scan). Drop these fragments here so they fall through to the
+		// orphan-recovery path (which can re-associate stray params) or the
+		// no-tool compaction path. Tools whose params are ALL optional (e.g.
+		// code_search) legitimately accept an empty body and are kept.
+		if len(toolCalls) > 0 {
+			kept := toolCalls[:0]
+			for _, tc := range toolCalls {
+				if len(tc.Args) == 0 && a.registry.RequiresParams(tc.Name) {
+					continue
+				}
+				kept = append(kept, tc)
+			}
+			toolCalls = kept
+		}
 		// ── Schema-guided recovery of dropped-open-tag tool calls ──
 		// Some models intermittently drop the <function=NAME> open tag and
 		// emit only <parameter=X>…</parameter> blocks + a trailing
