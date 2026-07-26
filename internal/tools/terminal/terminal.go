@@ -1596,6 +1596,56 @@ func sudoPrefix() string {
 	return ""
 }
 
+// aptListsRefreshed gates `apt-get update` so it runs at most once per
+// process. Container and minimal images routinely ship with
+// /var/lib/apt/lists wiped, so the first apt install in a session would
+// otherwise fail with "Unable to locate package" until the index is
+// refreshed. Without this guard, an agent command installing N missing apt
+// tools (e.g. `httpx | jq | html2text`) triggered N sequential full-mirror
+// `apt-get update` round-trips. Once one update has run, subsequent installs
+// reuse the now-populated lists. The empty-lists check makes the refresh a
+// true no-op on systems that already carry fresh lists.
+var (
+	aptListsMu        sync.Mutex
+	aptListsRefreshed bool
+)
+
+// maybeRefreshAptLists runs `apt-get update` once per process, and only when
+// the package lists look empty/stale. It returns the combined output (for
+// diagnostics) and is a no-op on non-apt systems or after the first success.
+func maybeRefreshAptLists() string {
+	aptListsMu.Lock()
+	defer aptListsMu.Unlock()
+	if aptListsRefreshed {
+		return ""
+	}
+	aptListsRefreshed = true // mark first regardless of outcome so a failing mirror doesn't retry forever
+	if _, err := exec.LookPath("apt-get"); err != nil {
+		return ""
+	}
+	// Skip the network round-trip entirely when the lists dir already
+	// contains index files (host system, or an image that kept them).
+	if entries, err := os.ReadDir("/var/lib/apt/lists"); err == nil {
+		hasIndex := false
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), "_Packages") || strings.HasSuffix(e.Name(), "_InRelease") {
+				hasIndex = true
+				break
+			}
+		}
+		if hasIndex {
+			return ""
+		}
+	}
+	// Plain `apt-get update` (no -qq): the output is captured and surfaced
+	// to the LLM on failure, so suppressing diagnostics here would hide the
+	// mirror-unreachable vs. package-absent distinction needed to debug.
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	out, _ := exec.CommandContext(ctx, "bash", "-c", sudoPrefix()+"apt-get update 2>&1").CombinedOutput()
+	return string(out)
+}
+
 // installPackage installs a system package on demand. Gated behind
 // XALGORIX_ALLOW_AUTO_INSTALL — defaults to true for root and false for
 // non-root, so a stock unprivileged xalgorix invocation can never call
@@ -1734,6 +1784,11 @@ func installPackage(pkg string) string {
 	var installCmd string
 
 	if _, err := exec.LookPath("apt-get"); err == nil {
+		// Refresh the package index once per process (see maybeRefreshAptLists).
+		// Minimal/container images ship with /var/lib/apt/lists wiped, so an
+		// install-only call fails with "Unable to locate package" until the
+		// index is populated.
+		maybeRefreshAptLists()
 		installCmd = fmt.Sprintf("DEBIAN_FRONTEND=noninteractive apt-get install -y -q %s 2>&1", pkg)
 	} else if _, err := exec.LookPath("dnf"); err == nil {
 		installCmd = fmt.Sprintf("dnf install -y -q %s 2>&1", pkg)
