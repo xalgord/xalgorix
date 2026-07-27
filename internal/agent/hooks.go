@@ -873,10 +873,12 @@ Your next tool call MUST differ from the last one.`, verb, state.LastToolName, s
 		// Reset so the nudge doesn't fire every iteration; a new identical
 		// run will re-accumulate.
 		state.ConsecutiveSameCall = 0
+		// LLM-only: this is an instruction TO the model (it also rides on
+		// Nudge, which is what steers the conversation). Do NOT emit it to
+		// the user-facing feed — end users would read it as an error.
 		return HookResult{
-			Nudge:       msg,
-			ForceSkip:   true,
-			EmitMessage: msg,
+			Nudge:     msg,
+			ForceSkip: true,
 		}
 	}
 
@@ -890,10 +892,11 @@ Change your approach: target a different endpoint, use a different payload/techn
 
 Do not repeat the action that produced this output.`, state.ConsecutiveSameResult)
 		state.ConsecutiveSameResult = 0
+		// LLM-only: instruction TO the model (rides on Nudge). Not emitted
+		// to the feed — see the REPEATED CALL note above.
 		return HookResult{
-			Nudge:       msg,
-			ForceSkip:   true,
-			EmitMessage: msg,
+			Nudge:     msg,
+			ForceSkip: true,
 		}
 	}
 
@@ -912,11 +915,12 @@ Move on now — other targets may have lower defenses.`, state.StuckIterations, 
 		state.ConsecutiveBrowser = 0
 		state.ConsecutiveSearch = 0
 
+		// LLM-only: instruction TO the model (rides on Nudge). Not emitted
+		// to the feed — see the REPEATED CALL note above.
 		return HookResult{
 			Nudge:          forceMsg,
 			ForceSkip:      true,
 			CleanupBrowser: true,
-			EmitMessage:    forceMsg,
 		}
 	}
 
@@ -937,9 +941,10 @@ DO NOT give up without trying at least 3 different bypass techniques from the lo
 		state.ConsecutiveBrowser = 0
 		state.ConsecutiveSearch = 0
 
+		// LLM-only: instruction TO the model (rides on Nudge). Not emitted
+		// to the feed — see the REPEATED CALL note above.
 		return HookResult{
-			Nudge:       nudge,
-			EmitMessage: nudge,
+			Nudge: nudge,
 		}
 	}
 

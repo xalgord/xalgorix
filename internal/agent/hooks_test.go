@@ -897,6 +897,70 @@ func TestRepeatDetector_IdenticalResultForceSkips(t *testing.T) {
 	}
 }
 
+// TestStuckNudgesAreLLMOnly asserts that all four hookStuckNudge guardrail
+// messages (REPEATED CALL, NO PROGRESS, EXHAUSTION LIMIT, PIVOT REQUIRED) are
+// LLM-only: they steer the model via Nudge + ForceSkip but never reach the
+// user-facing feed (EmitMessage must stay empty). Otherwise end users see
+// "instructions to the AI" mislabeled as red errors in the STDOUT panel.
+func TestStuckNudgesAreLLMOnly(t *testing.T) {
+	args := map[string]string{"tool_name": "terminal_execute", "command": "curl https://example.com"}
+
+	// ── REPEATED CALL: identical (tool,args) repeated past the threshold ──
+	state := NewScanState()
+	for i := 0; i < RepeatCallSoftNudge; i++ {
+		hookStuckTracker(state, args)
+	}
+	res := hookStuckNudge(state, args)
+	if res.Nudge == "" || !strings.Contains(res.Nudge, "REPEATED CALL") {
+		t.Fatalf("REPEATED CALL: expected non-empty Nudge, got %q", res.Nudge)
+	}
+	if res.EmitMessage != "" {
+		t.Errorf("REPEATED CALL must be LLM-only, got EmitMessage=%q", res.EmitMessage)
+	}
+
+	// ── NO PROGRESS: byte-identical tool output across calls ──
+	state = NewScanState()
+	for i := 0; i < RepeatResultHardSkip; i++ {
+		hookResultRepeatTracker(state, map[string]string{
+			"tool_name": "terminal_execute",
+			"output":    "identical-output",
+			"error":     "",
+		})
+	}
+	res = hookStuckNudge(state, args)
+	if res.Nudge == "" || !strings.Contains(res.Nudge, "NO PROGRESS") {
+		t.Fatalf("NO PROGRESS: expected non-empty Nudge, got %q", res.Nudge)
+	}
+	if res.EmitMessage != "" {
+		t.Errorf("NO PROGRESS must be LLM-only, got EmitMessage=%q", res.EmitMessage)
+	}
+
+	// ── EXHAUSTION LIMIT: StuckIterations past the hard limit ──
+	state = NewScanState()
+	state.StuckIterations = StuckHardLimit
+	state.StuckDomain = "example.com"
+	res = hookStuckNudge(state, args)
+	if res.Nudge == "" || !strings.Contains(res.Nudge, "EXHAUSTION LIMIT") {
+		t.Fatalf("EXHAUSTION LIMIT: expected non-empty Nudge, got %q", res.Nudge)
+	}
+	if res.EmitMessage != "" {
+		t.Errorf("EXHAUSTION LIMIT must be LLM-only, got EmitMessage=%q", res.EmitMessage)
+	}
+
+	// ── PIVOT REQUIRED: browser/search stuck past the soft threshold ──
+	state = NewScanState()
+	state.ConsecutiveBrowser = StuckBrowserThreshold
+	state.StuckIterations = StuckBrowserThreshold
+	state.StuckDomain = "example.com"
+	res = hookStuckNudge(state, args)
+	if res.Nudge == "" || !strings.Contains(res.Nudge, "PIVOT REQUIRED") {
+		t.Fatalf("PIVOT REQUIRED: expected non-empty Nudge, got %q", res.Nudge)
+	}
+	if res.EmitMessage != "" {
+		t.Errorf("PIVOT REQUIRED must be LLM-only, got EmitMessage=%q", res.EmitMessage)
+	}
+}
+
 func TestRepeatDetector_ResultTrackerIgnoresNotesAndFinish(t *testing.T) {
 	state := NewScanState()
 	for _, tool := range []string{"add_note", "read_notes", "finish"} {
