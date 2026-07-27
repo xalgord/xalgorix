@@ -11,6 +11,30 @@ services:
   xalgorix:
     image: xalgord/xalgorix:latest
     # Or build locally instead of pulling:  build: .
+    #
+    # Full host-like permissions so the engine's toolset behaves as it does when
+    # run natively as root. Docker's DEFAULT sandbox drops capabilities
+    # (e.g. NET_ADMIN) and applies a seccomp/AppArmor filter, which breaks
+    # low-level tools: iptables/route/interface changes, ARP-spoof/MITM
+    # (ettercap/bettercap), tun/tap VPNs, ptrace-based debuggers (gdb/strace),
+    # masscan interface tuning, and tools that create their own namespaces.
+    #
+    # NOTE: an image cannot grant itself these — they MUST be set at run time.
+    # This compose file is the recommended launch path precisely so you get them
+    # by default with no extra flags. The container is meant to be a disposable,
+    # network-isolated scanning sandbox running as root; privileged mode is the
+    # intended posture. Never expose the dashboard publicly without auth.
+    privileged: true
+    # ── Prefer least-privilege instead of `privileged: true`? Comment the line
+    #    above and uncomment this targeted set (covers the pentest toolset while
+    #    stopping short of full device access):
+    # cap_add:
+    #   - NET_ADMIN      # iptables/nftables, routes, interfaces, ARP/MITM, VPN
+    #   - NET_RAW        # raw sockets / SYN scans (in Docker's default set too)
+    #   - SYS_PTRACE     # gdb / strace / debug attach
+    # security_opt:
+    #   - seccomp=unconfined     # allow mount/unshare/bpf/perf_event_open/keyctl
+    #   - apparmor=unconfined
     ports:
       - "9137:9137"
     # Uncomment to bake in credentials / LLM (all optional). If you omit the
