@@ -149,22 +149,45 @@ const perMessageOverheadBytes = 50
 // English + JSON + code text that dominates scan transcripts.
 const bytesPerTokenEstimate = 4
 
+// defaultCompactRatio is the fraction of the model's context window at which
+// window-relative auto-compaction fires when the operator hasn't set an
+// explicit token budget. Kept in the 0.7–0.8 band on purpose: compacting much
+// earlier throws away useful working context and degrades outcome quality,
+// while going higher risks hitting the provider's hard limit before we prune.
+const defaultCompactRatio = 0.75
+
 // compactThresholdBytes resolves the effective byte ceiling for auto-compaction
-// from config (token budget × ~4 bytes), falling back to the built-in default
-// when config is absent (tests/CLI). A configured budget of 0 disables
-// proactive compaction — the last-resort forcePruneMessages on a hard context
-// overflow still applies.
+// (token budget × ~4 bytes/token). Resolution order:
+//
+//   - cfg absent (tests/CLI):     built-in pruneThresholdBytes default.
+//   - ContextCompactTokens == 0:  disabled (0) — only the last-resort
+//     forcePruneMessages on a hard context overflow still applies.
+//   - ContextCompactTokens  > 0:  explicit absolute token-budget override.
+//   - ContextCompactTokens  < 0:  AUTO (default) — a fraction
+//     (ContextCompactRatio, ~0.75) of the model's configured context window
+//     (LLMContextWindow). This is the intended behavior: we only compact once
+//     the window is genuinely filling up, not at an arbitrary fixed budget, so
+//     large-context models keep their full working context for longer.
 func (a *Agent) compactThresholdBytes() int {
-	if a.cfg != nil {
-		if a.cfg.ContextCompactTokens < 0 {
-			return pruneThresholdBytes
-		}
-		if a.cfg.ContextCompactTokens == 0 {
-			return 0 // disabled
-		}
+	if a.cfg == nil {
+		return pruneThresholdBytes
+	}
+	if a.cfg.ContextCompactTokens == 0 {
+		return 0 // disabled
+	}
+	if a.cfg.ContextCompactTokens > 0 {
 		return a.cfg.ContextCompactTokens * bytesPerTokenEstimate
 	}
-	return pruneThresholdBytes
+	// Auto / window-relative mode.
+	window := a.cfg.LLMContextWindow
+	if window <= 0 {
+		return pruneThresholdBytes
+	}
+	ratio := a.cfg.ContextCompactRatio
+	if ratio < 0.5 || ratio > 0.9 {
+		ratio = defaultCompactRatio
+	}
+	return int(float64(window)*ratio) * bytesPerTokenEstimate
 }
 
 // shouldPruneBeforeLLM reports whether the agent's current message buffer
@@ -197,9 +220,23 @@ func (a *Agent) pruneMessages() {
 	a.msgMu.Lock()
 	defer a.msgMu.Unlock()
 
-	const maxMessages = 100
-
-	if len(a.messages) <= maxMessages {
+	// Compact only when the serialized buffer has actually grown past the
+	// configured ceiling — a fraction (ContextCompactRatio, ~0.75) of the
+	// model's context window (LLMContextWindow), or an explicit
+	// ContextCompactTokens budget. This replaces the old fixed 100-message
+	// trigger, which compacted far too early on large-context models and
+	// degraded output quality by discarding useful working context. The size
+	// scan mirrors shouldPruneBeforeLLM but is inlined here because msgMu is
+	// already held (shouldPruneBeforeLLM would re-lock and deadlock).
+	threshold := a.compactThresholdBytes()
+	if threshold <= 0 {
+		return // auto-compaction disabled
+	}
+	size := 0
+	for i := range a.messages {
+		size += len(a.messages[i].Content) + perMessageOverheadBytes
+	}
+	if size <= threshold {
 		return
 	}
 
@@ -207,6 +244,11 @@ func (a *Agent) pruneMessages() {
 	keepRecent := 40
 	if keepRecent > len(a.messages)-1 {
 		keepRecent = len(a.messages) - 1
+	}
+	// Nothing older than the recent window to compact — bail rather than
+	// rebuild an identical buffer.
+	if len(a.messages)-keepRecent <= 1 {
+		return
 	}
 
 	originalLen := len(a.messages)

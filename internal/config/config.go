@@ -37,13 +37,31 @@ type Config struct {
 	// budget so the full call fits. XALGORIX_MAX_OUTPUT_TOKENS, default 8192.
 	MaxOutputTokens int
 
-	// ContextCompactTokens is the approximate token budget for the agent's
-	// running message history. Once the buffer is estimated to exceed this, the
-	// agent auto-compacts older turns into a structured digest (+ saved notes)
-	// before the next LLM call. Set below your model's context window so the
-	// model never loses focus / stops calling tools as context fills up.
-	// XALGORIX_CONTEXT_COMPACT_TOKENS, default 120000. 0 disables auto-compaction.
+	// ContextCompactTokens is an OPTIONAL absolute override for the compaction
+	// trigger. When > 0, the agent auto-compacts older turns into a structured
+	// digest (+ saved notes) once the running message history is estimated to
+	// exceed this many tokens. When 0, auto-compaction is DISABLED. When < 0
+	// (the default "auto" mode), the trigger is derived from the model's
+	// context window instead — LLMContextWindow × ContextCompactRatio — so
+	// compaction only fires when the window is genuinely filling up rather than
+	// at an arbitrary fixed budget. XALGORIX_CONTEXT_COMPACT_TOKENS, default -1
+	// (auto / window-relative).
 	ContextCompactTokens int
+
+	// LLMContextWindow is the total context window (in tokens) of the
+	// configured model, used as the basis for window-relative auto-compaction.
+	// XALGORIX_LLM_CONTEXT_WINDOW, default 128000. Set this to your model's real
+	// window (e.g. 1000000 for a 1M-token model) so compaction waits until the
+	// window is actually filling up instead of compacting far too early.
+	LLMContextWindow int
+
+	// ContextCompactRatio is the fraction of LLMContextWindow at which
+	// window-relative auto-compaction triggers (only used when
+	// ContextCompactTokens is in auto mode). XALGORIX_CONTEXT_COMPACT_RATIO,
+	// default 0.75 — i.e. compact once the running context reaches ~75% of the
+	// window. Clamped to a sane 0.5–0.9 range. Compacting earlier than this
+	// tends to discard useful working context and hurt output quality.
+	ContextCompactRatio float64
 
 	// Runtime settings
 	RuntimeBackend string // XALGORIX_RUNTIME_BACKEND — always "native"
@@ -295,7 +313,9 @@ func load() *Config {
 		Temperature:          envOrFloatPtr("XALGORIX_TEMPERATURE", 0.2),
 		LLMMaxRetries:        envOrInt("XALGORIX_LLM_MAX_RETRIES", 5),
 		MaxOutputTokens:      envOrInt("XALGORIX_MAX_OUTPUT_TOKENS", 8192),
-		ContextCompactTokens: envOrInt("XALGORIX_CONTEXT_COMPACT_TOKENS", 120000),
+		ContextCompactTokens: envOrInt("XALGORIX_CONTEXT_COMPACT_TOKENS", -1),
+		LLMContextWindow:     envOrInt("XALGORIX_LLM_CONTEXT_WINDOW", 128000),
+		ContextCompactRatio:  envOrFloat("XALGORIX_CONTEXT_COMPACT_RATIO", 0.75),
 		MemCompTimeout:       envOrInt("XALGORIX_MEMORY_COMPRESSOR_TIMEOUT", 30),
 
 		// Runtime

@@ -1192,8 +1192,13 @@ func (a *Agent) Run(targets []string, instruction string) {
 				a.client.SetTemperature(TempScanner)
 			}
 		}
-		// Prune message history to prevent context window overflow
-		a.pruneMessages()
+		// Prune message history to prevent context window overflow — but only
+		// once the buffer has grown past the window-relative compaction ceiling
+		// (pruneMessages self-guards on the same threshold; this check just
+		// avoids the lock/scan when we're nowhere near it).
+		if a.shouldPruneBeforeLLM() {
+			a.pruneMessages()
+		}
 		// ZERO DELAY — immediately proceed to next iteration
 	}
 

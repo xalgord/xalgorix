@@ -129,7 +129,9 @@ func allEnvSettingDefinitions() []envSettingDefinition {
 		{Key: "XALGORIX_OLLAMA_COMPATIBLE", Label: "Ollama-compatible endpoint", Category: "LLM", Description: "Force Ollama reasoning semantics for a custom endpoint that does not use port 11434.", DefaultValue: "false", InputType: "boolean"},
 		{Key: "XALGORIX_LLM_MAX_RETRIES", Label: "LLM max retries", Category: "LLM", Description: "Retry count for transient LLM provider failures.", DefaultValue: "5", InputType: "number"},
 		{Key: "XALGORIX_MAX_OUTPUT_TOKENS", Label: "Max output tokens", Category: "LLM", Description: "Per-call completion cap (max_tokens). Reasoning models spend part of this on hidden thinking before a tool call, so a small provider default can truncate large calls. Clamped to a 1024 floor.", DefaultValue: "8192", InputType: "number"},
-		{Key: "XALGORIX_CONTEXT_COMPACT_TOKENS", Label: "Context compaction budget (tokens)", Category: "LLM", Description: "Auto-compact older conversation turns into a structured digest once the running context is estimated to exceed this many tokens. Set below your model's context window so it never loses focus / stops calling tools as context fills. 0 disables. Default 120000.", DefaultValue: "120000", InputType: "number"},
+		{Key: "XALGORIX_LLM_CONTEXT_WINDOW", Label: "LLM context window (tokens)", Category: "LLM", Description: "Total context window of your model, in tokens. Auto-compaction fires at a fraction of this (see compaction ratio) so the running context is only compacted when the window is genuinely filling up. Set to your model's real window (e.g. 1000000 for a 1M-token model). Default 128000.", DefaultValue: "128000", InputType: "number"},
+		{Key: "XALGORIX_CONTEXT_COMPACT_RATIO", Label: "Context compaction ratio", Category: "LLM", Description: "Fraction of the context window at which to auto-compact (0.5–0.9). Default 0.75 = compact at ~75% full. Compacting earlier discards useful working context and hurts output quality; going higher risks hitting the provider's hard limit first.", DefaultValue: "0.75", InputType: "number"},
+		{Key: "XALGORIX_CONTEXT_COMPACT_TOKENS", Label: "Context compaction budget (tokens, override)", Category: "LLM", Description: "Optional ABSOLUTE override for the compaction trigger. Leave at -1 (auto) to derive the trigger from the context window × ratio above. Set a positive token count to force a fixed budget instead. 0 disables auto-compaction. Default -1 (auto).", DefaultValue: "-1", InputType: "number"},
 		{Key: "XALGORIX_MEMORY_COMPRESSOR_TIMEOUT", Label: "Memory compressor timeout", Category: "LLM", Description: "Timeout in seconds for context compression.", DefaultValue: "30", InputType: "number"},
 		{Key: "XALGORIX_MAX_ITERATIONS", Label: "Max iterations", Category: "Runtime", Description: "Maximum agent iterations per scan. 0 means unlimited.", DefaultValue: "0", InputType: "number"},
 		{Key: "XALGORIX_MAX_TOOL_CALLS", Label: "Max tool calls (budget)", Category: "Runtime", Description: "Per-scan tool-call cap; the scan stops cleanly when reached (findings preserved). 0 = unlimited.", DefaultValue: "0", InputType: "number", RequiresRestart: true},
@@ -745,7 +747,11 @@ func (s *Server) applyEnvironmentToRuntimeConfig(values map[string]string) {
 		case "XALGORIX_MAX_OUTPUT_TOKENS":
 			s.cfg.MaxOutputTokens = parseIntSetting(value, 8192)
 		case "XALGORIX_CONTEXT_COMPACT_TOKENS":
-			s.cfg.ContextCompactTokens = parseIntSetting(value, 120000)
+			s.cfg.ContextCompactTokens = parseIntSetting(value, -1)
+		case "XALGORIX_LLM_CONTEXT_WINDOW":
+			s.cfg.LLMContextWindow = parseIntSetting(value, 128000)
+		case "XALGORIX_CONTEXT_COMPACT_RATIO":
+			s.cfg.ContextCompactRatio = parseFloatSetting(value, 0.75)
 		case "XALGORIX_MEMORY_COMPRESSOR_TIMEOUT":
 			s.cfg.MemCompTimeout = parseIntSetting(value, 30)
 		case "XALGORIX_MAX_ITERATIONS":
@@ -856,6 +862,10 @@ func (s *Server) envSettingValue(key string) string {
 		return strconv.Itoa(s.cfg.MaxOutputTokens)
 	case "XALGORIX_CONTEXT_COMPACT_TOKENS":
 		return strconv.Itoa(s.cfg.ContextCompactTokens)
+	case "XALGORIX_LLM_CONTEXT_WINDOW":
+		return strconv.Itoa(s.cfg.LLMContextWindow)
+	case "XALGORIX_CONTEXT_COMPACT_RATIO":
+		return strconv.FormatFloat(s.cfg.ContextCompactRatio, 'g', -1, 64)
 	case "XALGORIX_MEMORY_COMPRESSOR_TIMEOUT":
 		return strconv.Itoa(s.cfg.MemCompTimeout)
 	case "XALGORIX_MAX_ITERATIONS":
@@ -1094,13 +1104,26 @@ func normalizeEnvSettingValue(def envSettingDefinition, value string) (string, e
 	case "XALGORIX_MAX_OUTPUT_TOKENS":
 		return strconv.Itoa(clampInt(parseIntSetting(value, 8192), 1024, 200000)), nil
 	case "XALGORIX_CONTEXT_COMPACT_TOKENS":
-		// 0 disables; otherwise clamp to a sane range (avoid a tiny value that
-		// would compact on every turn, or an absurd one that never fires).
-		ct := parseIntSetting(value, 120000)
-		if ct != 0 {
+		// Negative = auto (window-relative, normalized to -1); 0 disables;
+		// positive = explicit absolute budget clamped to a sane range (avoid a
+		// tiny value that would compact every turn, or an absurd one).
+		ct := parseIntSetting(value, -1)
+		if ct < 0 {
+			ct = -1
+		} else if ct != 0 {
 			ct = clampInt(ct, 20000, 2000000)
 		}
 		return strconv.Itoa(ct), nil
+	case "XALGORIX_LLM_CONTEXT_WINDOW":
+		return strconv.Itoa(clampInt(parseIntSetting(value, 128000), 8000, 2000000)), nil
+	case "XALGORIX_CONTEXT_COMPACT_RATIO":
+		r := parseFloatSetting(value, 0.75)
+		if r < 0.5 {
+			r = 0.5
+		} else if r > 0.9 {
+			r = 0.9
+		}
+		return strconv.FormatFloat(r, 'g', -1, 64), nil
 	case "XALGORIX_MEMORY_COMPRESSOR_TIMEOUT":
 		return strconv.Itoa(clampInt(parseIntSetting(value, 30), 5, 600)), nil
 	case "XALGORIX_MAX_ITERATIONS":
