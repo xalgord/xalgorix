@@ -120,10 +120,29 @@ RUN apt-get update && apt-get install -y \
       python3 python3-pip python3-venv pipx \
       cargo \
       nodejs npm \
-      build-essential pkg-config libpcap-dev \
+      build-essential pkg-config libpcap-dev libcap2-bin \
       chromium \
       findomain dirsearch \
     && rm -rf /var/lib/apt/lists/*
+
+# Strip file capabilities from every bundled tool so a plain `docker run` works.
+#
+# Kali ships several tools (nmap most notably, at /usr/lib/nmap/nmap) with file
+# capabilities set with the EFFECTIVE bit, e.g. cap_net_raw,cap_net_admin,
+# cap_net_bind_service+eip. Under Docker's DEFAULT security profile the
+# capability bounding set drops NET_ADMIN, and the kernel fails execve() with
+# EPERM ("Operation not permitted") whenever a binary requests an effective
+# capability that isn't in the bounding set — so `nmap` won't even start under a
+# default `docker run`, with no cap-add/seccomp overrides.
+#
+# The engine runs as ROOT on purpose, and root already holds NET_RAW in Docker's
+# default bounding set, so these file caps are redundant: removing them lets the
+# binaries exec cleanly and fall back to root's own capabilities for raw-socket
+# scans. This clears the entire class of "Operation not permitted" exec errors
+# (nmap, masscan, arping, dumpcap, …) for containerized deployments.
+RUN getcap -r / 2>/dev/null | awk '{print $1}' | while read -r f; do \
+      setcap -r "$f" 2>/dev/null || true; \
+    done || true
 
 # Go toolchain at runtime so the agent can `go install` anything not baked in.
 COPY --from=gobuild /usr/local/go /usr/local/go

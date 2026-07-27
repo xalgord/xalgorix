@@ -398,7 +398,7 @@ If you determine this is a duplicate/parking/redirect subdomain, call finish wit
 
 ### Step 1: QUICK TECH FINGERPRINT
 - whatweb ` + subdomain + ` — identify technologies
-- nmap -sV -T2 --top-ports 100 ` + subdomain + ` — find open ports while respecting the active request-rate policy
+- nmap -sV -T2 --top-ports 100 ` + subdomain + ` — find open ports while respecting the active request-rate policy. If nmap errors with "Operation not permitted", a raw-socket/root requirement, or a dnet/socket failure (common in restricted containers), retry as an unprivileged TCP connect scan: nmap -sT -Pn -sV --top-ports 100 ` + subdomain + `, or use naabu (TCP connect, no raw sockets needed).
 - curl -sI https://` + subdomain + ` — check headers
 
 ### Step 2: DISCOVER CONTENT  
