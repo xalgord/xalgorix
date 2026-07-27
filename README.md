@@ -60,9 +60,12 @@ xalgorix --web
 
 ```bash
 docker run --rm -p 9137:9137 \
+  --privileged \
   -v xalgorix-data:/data \
   xalgord/xalgorix:latest
 ```
+
+`--privileged` gives the toolset the same host-like access it has when run natively as root. Docker's default sandbox drops capabilities (like `NET_ADMIN`) and applies a seccomp filter, which breaks low-level tools (iptables/route changes, ARP-spoof/MITM, tun/tap VPNs, ptrace-based debuggers, masscan interface tuning). Since an image can't grant itself these, they must be set at run time. The container is a disposable, network-isolated scanning sandbox running as root — privileged is the intended posture; never expose the dashboard publicly without auth. Prefer least-privilege? Swap `--privileged` for `--cap-add=NET_ADMIN --cap-add=NET_RAW --cap-add=SYS_PTRACE --security-opt seccomp=unconfined`.
 
 Open `http://localhost:9137`. You **don't need an LLM key to start** — the dashboard launches without one; set the model + API key under **Settings → LLM** (it persists to the `/data` volume). If you don't pass `XALGORIX_USERNAME`/`XALGORIX_PASSWORD`, a random admin password is generated and printed to the container logs on first run.
 
@@ -215,11 +218,14 @@ Downloads the latest release binary for your platform (Linux `amd64`/`arm64`) an
 
 ```bash
 docker run --rm -p 9137:9137 \
+  --privileged \
   -e XALGORIX_LLM=minimax/MiniMax-M3 \
   -e XALGORIX_API_KEY=your_provider_api_key \
   -v xalgorix-data:/data \
   ghcr.io/xalgord/xalgorix:latest
 ```
+
+`--privileged` (or the narrower `--cap-add=NET_ADMIN --cap-add=NET_RAW --cap-add=SYS_PTRACE --security-opt seccomp=unconfined`) gives the toolset host-like access. Docker's default sandbox drops capabilities and filters syscalls, which breaks low-level tooling (iptables/route/interface changes, ARP-spoof/MITM, tun/tap VPNs, ptrace-based debuggers). An image can't grant these to itself — they're a run-time decision — so pass the flag, or use the provided `docker-compose.yml`, which sets it for you.
 
 The image is **batteries-included**: an extensive offensive-security toolset is preinstalled (nmap, nuclei, httpx, subfinder, dnsx, naabu, katana, ffuf, gobuster, dalfox, feroxbuster, sqlmap, masscan, nikto, whatweb, hydra, and more), plus Chromium for browser-assisted DAST. It also keeps the full package-manager set (apt, go, cargo, pipx, npm) available, so the agent auto-installs anything missing at runtime. Scan data persists to the `/data` volume, and the server binds `0.0.0.0` inside the container — set `XALGORIX_USERNAME`/`XALGORIX_PASSWORD` before exposing it beyond localhost.
 
