@@ -270,13 +270,14 @@ const (
 	BlockedCallSoftNudge = 3 // consecutive guard-blocked calls → soft corrective nudge
 	BlockedCallHardNudge = 6 // consecutive guard-blocked calls → hard "stop / pivot / finish" nudge
 
-	// Reasoning-loop recovery is NUDGE-ONLY. A reasoning loop is the model
-	// emitting think-only / prose responses with NO tool call. We do NOT
-	// compact the context to break a loop — compaction is a context-size
-	// concern, unrelated to reasoning, and collapsing the model's own working
-	// notes mid-thought tends to make a stall worse rather than better. Instead
-	// we nudge the model to resume acting, escalating as the stall persists,
-	// and only abort as a last-resort safety net in bounded mode.
+	// NoToolSoftNudgeAt and the related thresholds govern reasoning-loop
+	// recovery, which is NUDGE-ONLY. A reasoning loop is the model emitting
+	// think-only / prose responses with NO tool call. We do NOT compact the
+	// context to break a loop — compaction is a context-size concern, unrelated
+	// to reasoning, and collapsing the model's own working notes mid-thought
+	// tends to make a stall worse rather than better. Instead we nudge the
+	// model to resume acting, escalating as the stall persists, and only abort
+	// as a last-resort safety net in bounded mode.
 	//
 	// The thresholds are deliberately generous: a model may legitimately reason
 	// across several turns to work out a plan or repair its own malformed
