@@ -450,9 +450,27 @@ func (s *Server) applyInstanceSnapshot(rec *ScanRecord, includeEvents bool) {
 	if rec.InstanceID == "" {
 		rec.InstanceID = snapshot.InstanceID
 	}
-	rec.Status = snapshot.Status
-	rec.FinishedAt = snapshot.FinishedAt
-	rec.StopReason = snapshot.StopReason
+	// Terminal states are FINAL. A stale in-memory instance — e.g. one left in
+	// the map after an engine restart + auto-resume, or an orphaned pre-resume
+	// instance — can report "running" for a scan that already reached a
+	// terminal state on disk. Overwriting the persisted terminal status with
+	// that live "running" made GET /api/scans/{id} report the scan as running
+	// forever, so a poller (the SaaS reaper) never reconciled it (the
+	// crowdproof.id desync). Only adopt the snapshot's status when we are NOT
+	// downgrading an already-terminal persisted status to a non-terminal one.
+	// Only guard genuinely-FINAL states (completed/finished). "stopped" is
+	// resumable and "failed" is re-runnable, so a live "running" instance must
+	// still win for those (see TestApplyInstanceSnapshotDoesNotErasePersistedResumeData).
+	// But a completed scan is done forever: a stale in-memory instance left
+	// after a restart/auto-resume must not downgrade it back to "running".
+	if isCompletedScanStatus(rec.Status) && !isCompletedScanStatus(snapshot.Status) {
+		log.Printf("[scan] %s (instance %s): kept completed disk status %q over stale in-memory instance status %q — not downgrading a finished scan to running",
+			rec.ID, rec.InstanceID, rec.Status, snapshot.Status)
+	} else {
+		rec.Status = snapshot.Status
+		rec.FinishedAt = snapshot.FinishedAt
+		rec.StopReason = snapshot.StopReason
+	}
 	if snapshot.Iterations > rec.Iterations {
 		rec.Iterations = snapshot.Iterations
 	}
@@ -465,7 +483,10 @@ func (s *Server) applyInstanceSnapshot(rec *ScanRecord, includeEvents bool) {
 	for _, vuln := range snapshot.Vulns {
 		appendVulnSummaryUnique(&rec.Vulns, vuln)
 	}
-	if snapshot.CurrentPhase > 0 {
+	// Phase is monotonic progress — only ever advance it. A stale in-memory
+	// instance (post-restart/resume) could otherwise drag a finished scan's
+	// phase back down (e.g. 22 → 11), same root cause as the status downgrade.
+	if snapshot.CurrentPhase > rec.CurrentPhase {
 		rec.CurrentPhase = snapshot.CurrentPhase
 	}
 	if includeEvents && len(snapshot.Events) >= len(rec.Events) {
