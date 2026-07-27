@@ -5,200 +5,147 @@ import (
 	"testing"
 )
 
-// hookNoToolHandler must trigger a context compaction (ForceCompact) at the
-// first consecutive threshold (6), not wait until the abort at 15. This is the
-// reasoning-loop recovery path — without it the scan force-stops on the exact
-// "llm_no_tool_calls" failure the reaper-search.biz scan hit.
-func TestNoToolHandlerCompactsBeforeAbort(t *testing.T) {
-	state := NewScanState()
+// Reasoning-loop recovery is NUDGE-ONLY: the handler must NEVER abort before
+// the (generous) consecutive threshold, and in bounded mode it force-stops only
+// once NoToolCount reaches NoToolAbortAt. Compaction is no longer coupled to
+// reasoning loops at all, so there is nothing to assert about it here.
+func TestNoToolHandler_NudgeThenBoundedAbort(t *testing.T) {
+	state := NewScanState() // abort enabled via the NoToolAbortAt default
 
-	// Iterations 1-5: plain nudges, no compaction yet.
-	for i := 0; i < ReasoningLoopCompactAt-1; i++ {
+	// Every response below the abort threshold must be a nudge, never a stop.
+	for state.NoToolCount < NoToolAbortAt-1 {
 		res := hookNoToolHandler(state, map[string]string{"response": "let me think"})
 		if res.ForceSkip {
-			t.Fatalf("iter %d: ForceSkip before the abort threshold", i)
+			t.Fatalf("ForceSkip at NoToolCount=%d, well before the abort threshold %d",
+				state.NoToolCount, NoToolAbortAt)
 		}
-		if res.ForceCompact {
-			t.Fatalf("iter %d: ForceCompact fired before ReasoningLoopCompactAt (%d)", i, ReasoningLoopCompactAt)
-		}
-		if state.ReasoningLoopCompactions != 0 {
-			t.Fatalf("iter %d: compaction counter incremented too early", i)
+		if res.Nudge == "" {
+			t.Fatalf("expected a nudge at NoToolCount=%d", state.NoToolCount)
 		}
 	}
 
-	// Iteration 6 (NoToolCount == ReasoningLoopCompactAt): first compaction.
-	res := hookNoToolHandler(state, map[string]string{"response": "let me think"})
-	if !res.ForceCompact {
-		t.Fatalf("NoToolCount=%d: expected ForceCompact, got %+v", state.NoToolCount, res)
-	}
-	if state.ReasoningLoopCompactions != 1 {
-		t.Fatalf("after first compact: ReasoningLoopCompactions=%d, want 1", state.ReasoningLoopCompactions)
-	}
-	if res.Nudge == "" {
-		t.Fatal("ForceCompact result must carry a focused resume nudge")
-	}
-	if !strings.Contains(res.Nudge, "tool call") && !strings.Contains(res.Nudge, "terminal_execute") {
-		t.Errorf("resume nudge should demand a tool call, got %q", res.Nudge)
-	}
-	if res.ForceSkip {
-		t.Fatal("first compaction must NOT abort the scan")
-	}
-
-	// The abort at 15 only fires after the compaction cap is exhausted. Walk
-	// the count up past the second compaction (at 10) and toward the abort.
-	// NoToolCount is NOT reset by the compaction, so it keeps climbing.
-	for i := state.NoToolCount; i < ReasoningLoopCompactAt2; i++ {
-		hookNoToolHandler(state, map[string]string{"response": "thinking"})
-	}
-	res = hookNoToolHandler(state, map[string]string{"response": "thinking"})
-	if state.ReasoningLoopCompactions > MaxReasoningCompactions {
-		t.Fatalf("ReasoningLoopCompactions=%d exceeds MaxReasoningCompactions=%d", state.ReasoningLoopCompactions, MaxReasoningCompactions)
-	}
-
-	// Drive to the abort. After MaxReasoningCompactions, ForceCompact stops
-	// firing and the count climbs to NoToolAbortAt, which ForceSkips.
-	for state.NoToolCount < NoToolAbortAt {
-		res = hookNoToolHandler(state, map[string]string{"response": "thinking"})
-	}
+	// The next response reaches NoToolAbortAt → force-stop (bounded mode).
+	res := hookNoToolHandler(state, map[string]string{"response": "thinking"})
 	if !res.ForceSkip {
-		t.Fatalf("NoToolCount=%d: expected ForceSkip (abort), got %+v", state.NoToolCount, res)
+		t.Fatalf("expected ForceSkip at NoToolCount=%d (abort=%d), got %+v",
+			state.NoToolCount, NoToolAbortAt, res)
+	}
+}
+
+// The nudge must escalate: a gentle reminder at NoToolSoftNudgeAt, and the firm
+// "resume and act" prompt at NoToolStrongNudgeAt — but not before.
+func TestNoToolHandler_NudgeEscalation(t *testing.T) {
+	state := NewScanState()
+
+	// Below the soft threshold: only the generic format reminder.
+	for state.NoToolCount < NoToolSoftNudgeAt-1 {
+		res := hookNoToolHandler(state, map[string]string{"response": "x"})
+		if strings.Contains(res.Nudge, "MUST use tools") || strings.Contains(res.Nudge, "STOP planning") {
+			t.Fatalf("escalated nudge fired too early at NoToolCount=%d: %q", state.NoToolCount, res.Nudge)
+		}
+	}
+
+	// At the soft threshold: the "MUST use tools" reminder.
+	res := hookNoToolHandler(state, map[string]string{"response": "x"}) // NoToolCount == NoToolSoftNudgeAt
+	if state.NoToolCount != NoToolSoftNudgeAt {
+		t.Fatalf("test setup: NoToolCount=%d, want %d", state.NoToolCount, NoToolSoftNudgeAt)
+	}
+	if !strings.Contains(res.Nudge, "MUST use tools") {
+		t.Fatalf("soft nudge missing at NoToolCount=%d: %q", state.NoToolCount, res.Nudge)
+	}
+
+	// At the strong threshold: the firm resume prompt.
+	for state.NoToolCount < NoToolStrongNudgeAt {
+		res = hookNoToolHandler(state, map[string]string{"response": "x"})
+	}
+	if !strings.Contains(res.Nudge, "STOP planning") {
+		t.Fatalf("strong resume nudge missing at NoToolCount=%d: %q", state.NoToolCount, res.Nudge)
+	}
+	// The strong nudge must NOT claim the context was compacted (it isn't).
+	if strings.Contains(res.Nudge, "COMPACTED") {
+		t.Errorf("resume nudge must not claim a compaction happened: %q", res.Nudge)
 	}
 }
 
 // With the abort disabled (XALGORIX_NO_TOOL_ABORT_AT=0), the handler must NEVER
-// ForceSkip on a no-tool loop, and must keep re-compacting on a cadence so the
-// model keeps getting fresh context to fix itself — not just spin on nudges.
+// ForceSkip on a no-tool loop — it keeps nudging indefinitely so the model can
+// fix its own output and resume. Neither the consecutive nor the density path
+// may abort.
 func TestNoToolHandler_AbortDisabledNeverGivesUp(t *testing.T) {
 	state := NewScanState()
 	state.NoToolAbortConfigured = true
 	state.NoToolAbortLimit = 0 // disabled → never give up
 
-	compactions := 0
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 300; i++ {
+		state.Iteration++
 		res := hookNoToolHandler(state, map[string]string{"response": "thinking, no tool"})
 		if res.ForceSkip {
-			t.Fatalf("ForceSkip fired at NoToolCount=%d with abort disabled", state.NoToolCount)
+			t.Fatalf("ForceSkip fired at NoToolCount=%d/Iteration=%d with abort disabled",
+				state.NoToolCount, state.Iteration)
 		}
-		if res.ForceCompact {
-			compactions++
+		if res.Nudge == "" {
+			t.Fatalf("expected a nudge at NoToolCount=%d with abort disabled", state.NoToolCount)
 		}
-	}
-	// Recurring compaction (every ReasoningLoopCompactAt2) — not capped at the
-	// default MaxReasoningCompactions=2 — so it keeps actively trying to recover.
-	if compactions <= MaxReasoningCompactions {
-		t.Errorf("expected recurring compactions with abort disabled, got %d (want > %d)", compactions, MaxReasoningCompactions)
 	}
 }
 
-// The two consecutive compactions must be SPACED at ReasoningLoopCompactAt (6)
-// and ReasoningLoopCompactAt2 (10) — NOT fired back-to-back at 6 and 7. The
-// back-to-back bug consumed the whole compaction budget immediately, leaving
-// the model un-helped from count 8 until the abort at 15 (observed on the
-// pentest-ground.com scan: compactions at iters 79/80, then dead air to 88).
-func TestNoToolHandlerCompactionsAreSpaced(t *testing.T) {
-	state := NewScanState()
+// The density safety net catches a NON-consecutive loop (occasional tool call
+// keeps resetting NoToolCount so the consecutive path never trips) — but only
+// in BOUNDED mode and only after a sustained high ratio past the warm-up gate.
+func TestNoToolHandler_DensityAbortBoundedOnly(t *testing.T) {
+	state := NewScanState() // abort enabled
 
-	compactedAt := []int{}
-	for state.NoToolCount < NoToolAbortAt {
-		res := hookNoToolHandler(state, map[string]string{"response": "let me think"})
-		if res.ForceCompact {
-			compactedAt = append(compactedAt, state.NoToolCount)
-		}
-		if res.ForceSkip {
-			break
-		}
-	}
-
-	if len(compactedAt) != 2 {
-		t.Fatalf("expected exactly 2 compactions, got %d at counts %v", len(compactedAt), compactedAt)
-	}
-	if compactedAt[0] != ReasoningLoopCompactAt {
-		t.Errorf("first compaction at count %d, want %d", compactedAt[0], ReasoningLoopCompactAt)
-	}
-	if compactedAt[1] != ReasoningLoopCompactAt2 {
-		t.Errorf("second compaction at count %d, want %d (spaced, not back-to-back at %d)",
-			compactedAt[1], ReasoningLoopCompactAt2, ReasoningLoopCompactAt+1)
-	}
-}
-
-// The density path must catch a model that makes occasional tool calls —
-// enough to reset the consecutive counter but not enough to make progress —
-// which would otherwise run for hours. This is the exact 48-hour pattern:
-// NoToolCount never reaches the consecutive threshold (6) so the consecutive
-// recovery never fires, and without the density abort the scan runs forever.
-func TestNoToolHandlerDensityRecovery(t *testing.T) {
-	state := NewScanState()
-
-	// Simulate the non-consecutive pattern: a tool call every 5 turns resets
-	// NoToolCount to ≤4, so the consecutive compact (needs ≥6) never fires.
-	// 4 of 5 turns are no-tool → ratio 0.8, which clears both the compact
-	// (>0.6) and abort (>0.75) thresholds. Drive enough iterations that the
-	// cumulative density crosses compact, then (after a compaction) abort.
-	var sawCompact, sawAbort bool
-	for i := 0; i < 200; i++ {
-		// Reset the consecutive counter on a tool call (mimics OnHealthyResponse).
-		if i%5 == 0 {
+	var sawAbort bool
+	for i := 0; i < 600; i++ {
+		state.Iteration++
+		// Simulate a tool call (healthy turn) every 12th iteration: resets the
+		// consecutive counter, keeping NoToolCount well below the consecutive
+		// thresholds while the cumulative no-tool ratio stays ~0.92 (> 0.85).
+		if i%12 == 0 {
 			state.NoToolCount = 0
-			state.Iteration++
 			continue
 		}
-		state.Iteration++
 		res := hookNoToolHandler(state, map[string]string{"response": "thinking"})
-
-		if res.ForceCompact {
-			sawCompact = true
-		}
 		if res.ForceSkip {
 			sawAbort = true
 			break
 		}
 	}
-	if !sawCompact {
-		t.Fatalf("density path never compacted — TotalNoToolResponses=%d Iteration=%d (recovery should fire at ratio > %.2f)",
-			state.TotalNoToolResponses, state.Iteration, ReasoningDensityCompactRatio)
-	}
 	if !sawAbort {
-		t.Fatalf("density abort never fired for a non-consecutive reasoning loop — NoToolCount stayed ≤%d so the consecutive path never tripped, and the density abort was expected to catch it. TotalNoToolResponses=%d Iteration=%d",
+		t.Fatalf("density abort never fired in bounded mode: NoToolCount=%d TotalNoTool=%d Iteration=%d",
 			state.NoToolCount, state.TotalNoToolResponses, state.Iteration)
 	}
-	// The abort reason must classify as the reasoning loop, not the generic stall.
-	reason, _ := classifyNoToolAbort(state)
-	if reason != "llm_reasoning_loop" {
+	if reason, _ := classifyNoToolAbort(state); reason != "llm_reasoning_loop" {
 		t.Errorf("classifyNoToolAbort reason = %q, want llm_reasoning_loop", reason)
 	}
 }
 
-// classifyNoToolAbort must report the density-based reasoning loop as a
-// distinct reason from the consecutive stall, so operators can tell a
-// "ran for hours making no progress" scan from a "flooded context" scan.
-func TestClassifyNoToolAbortDensityReason(t *testing.T) {
-	state := &ScanState{
-		NoToolCount:          NoToolAbortAt,
-		RefusalCount:         0,
-		TotalNoToolResponses: 60,
-		Iteration:            49, // 50 iters
-	}
-	reason, detail := classifyNoToolAbort(state)
-	if reason != "llm_reasoning_loop" {
-		t.Errorf("reason = %q, want llm_reasoning_loop", reason)
-	}
-	if !strings.Contains(strings.ToLower(detail), "reasoning loop") {
-		t.Errorf("density detail should mention reasoning loop, got %q", detail)
+// The same non-consecutive pattern must NOT abort when the operator disabled
+// the hard abort — the density net is a bounded-mode-only safety valve.
+func TestNoToolHandler_DensityNoAbortWhenUnbounded(t *testing.T) {
+	state := NewScanState()
+	state.NoToolAbortConfigured = true
+	state.NoToolAbortLimit = 0 // disabled
+
+	for i := 0; i < 600; i++ {
+		state.Iteration++
+		if i%12 == 0 {
+			state.NoToolCount = 0
+			continue
+		}
+		if res := hookNoToolHandler(state, map[string]string{"response": "thinking"}); res.ForceSkip {
+			t.Fatalf("density abort fired with abort disabled at Iteration=%d", state.Iteration)
+		}
 	}
 }
 
-// A safety refusal must still take priority over both recovery paths.
-func TestNoToolHandlerRefusalPriority(t *testing.T) {
+// A safety refusal must take priority over the recovery nudges.
+func TestNoToolHandler_RefusalPriority(t *testing.T) {
 	state := NewScanState()
-	// Three refusals → RefusalCount climbs; the authorization nudge must fire,
-	// not a compaction or abort.
 	for i := 0; i < 3; i++ {
 		res := hookNoToolHandler(state, map[string]string{"response": "I cannot fulfill this request"})
 		if res.ForceSkip {
-			t.Fatal("refusal should nudge, not abort, before the 15 threshold")
-		}
-		if res.ForceCompact {
-			t.Fatal("refusal should not trigger compaction")
+			t.Fatal("refusal should nudge, not abort, this early")
 		}
 		if !strings.Contains(res.Nudge, "AUTHORIZED") {
 			t.Errorf("refusal nudge should re-assert authorization, got %q", res.Nudge)
@@ -206,5 +153,28 @@ func TestNoToolHandlerRefusalPriority(t *testing.T) {
 	}
 	if state.RefusalCount != 3 {
 		t.Errorf("RefusalCount=%d, want 3", state.RefusalCount)
+	}
+}
+
+// classifyNoToolAbort must distinguish the density reasoning loop, a safety
+// refusal, and the generic consecutive stall.
+func TestClassifyNoToolAbort_Reasons(t *testing.T) {
+	// Sustained non-consecutive loop → reasoning loop.
+	dens := &ScanState{TotalNoToolResponses: 90, Iteration: 99} // 100 iters, ratio 0.9
+	if reason, detail := classifyNoToolAbort(dens); reason != "llm_reasoning_loop" ||
+		!strings.Contains(strings.ToLower(detail), "reasoning loop") {
+		t.Errorf("density: reason=%q detail=%q, want llm_reasoning_loop", reason, detail)
+	}
+
+	// Repeated safety refusal → refusal.
+	ref := &ScanState{RefusalCount: 3}
+	if reason, _ := classifyNoToolAbort(ref); reason != "llm_safety_refusal" {
+		t.Errorf("refusal: reason=%q, want llm_safety_refusal", reason)
+	}
+
+	// Short consecutive stall → generic no-tool-calls.
+	stall := &ScanState{TotalNoToolResponses: 5, Iteration: 5}
+	if reason, _ := classifyNoToolAbort(stall); reason != "llm_no_tool_calls" {
+		t.Errorf("stall: reason=%q, want llm_no_tool_calls", reason)
 	}
 }

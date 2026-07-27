@@ -1006,20 +1006,15 @@ func (a *Agent) Run(targets []string, instruction string) {
 				a.emit(Event{Type: "finished", Content: detail, TotalTokens: tokenCount(), Aborted: true, AbortReason: reason})
 				return
 			}
-			// Reasoning-loop recovery: the hook asked for an aggressive
-			// context compaction to break a think-only loop. Collapse the
-			// message history into a digest BEFORE injecting the nudge so
-			// the focused "call a tool now" prompt lands in a clean window
-			// rather than on top of the noisy output that caused the loop.
-			// We intentionally do NOT reset NoToolCount here — the hook
-			// already incremented ReasoningLoopCompactions / DensityCompactions,
-			// and the count climbing toward NoToolAbortAt is what gives a
-			// model that ignores the compaction a bounded number of turns
-			// before the scan gives up.
-			if noToolResult.ForceCompact {
-				a.emit(Event{Type: "message", Content: "🧹 Reasoning loop detected — compacting context to refocus. The model stopped calling tools; collapsing old output into a digest and prompting a concrete next action.", TotalTokens: tokenCount()})
-				a.forcePruneMessages()
-			}
+			// Reasoning-loop recovery is NUDGE-ONLY: we inject a focused
+			// "resume and call a tool" prompt and let the model recover on
+			// its own. We deliberately do NOT compact the context here —
+			// compaction is a context-size concern, unrelated to reasoning
+			// loops, and collapsing the model's own working notes mid-thought
+			// tends to make a stall worse. Proactive size-based compaction
+			// still happens independently in the main loop (shouldPruneBeforeLLM).
+			// NoToolCount is not reset here; the count climbing is what drives
+			// the escalating nudges (and, in bounded mode, the eventual abort).
 			if noToolResult.Nudge != "" {
 				a.msgMu.Lock()
 				a.messages = append(a.messages, llm.Message{Role: "user", Content: noToolResult.Nudge})
