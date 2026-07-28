@@ -254,7 +254,7 @@ func (s *Server) executeScanSession(sess *scanSession) {
 		if sess.sctx != nil {
 			reportedVulns = len(reporting.GetVulnerabilitiesForContext(sess.sctx.ID))
 		}
-		producedResults := reportedVulns > 0 || len(sess.record.Vulns) > 0
+		producedResults := reportedVulns > 0 || len(sess.record.Vulns) > 0 || sess.record.CurrentPhase >= 20 || sess.record.ToolCalls >= 5
 		if !producedResults {
 			finishedAt := time.Now().Format(time.RFC3339)
 			sess.record.Status = "failed"
@@ -279,9 +279,9 @@ func (s *Server) executeScanSession(sess *scanSession) {
 			s.saveScanRecordTo(sess.record, sess.scanDir)
 			return
 		}
-		// (a) findings exist → fall through to a normal "finished" completion.
-		log.Printf("[SCAN] %s: agent stopped calling tools (%s) but had reported %d finding(s); recording as completed with report intact",
-			sess.id, sess.abortReason, reportedVulns+len(sess.record.Vulns))
+		// (a) findings exist or testing was performed → fall through to a normal "finished" completion.
+		log.Printf("[SCAN] %s: agent stopped calling tools (%s) after testing (phase %d, %d tool calls); recording as completed with report intact",
+			sess.id, sess.abortReason, sess.record.CurrentPhase, sess.record.ToolCalls)
 	}
 
 	// 9. Finalize record
