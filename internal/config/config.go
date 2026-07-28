@@ -80,6 +80,11 @@ type Config struct {
 	// restore the hard abort after 15 consecutive no-tool responses.
 	NoToolAbortAt int
 
+	// MaxFinishRejections is how many times the agent's finish call will be
+	// rejected by the gatekeeper before allowing a deadlock bypass.
+	// XALGORIX_MAX_FINISH_REJECTIONS, default 15.
+	MaxFinishRejections int
+
 	// TargetAuth carries operator-supplied authenticated-session credentials
 	// for the target(s), so the agent can test post-authentication attack
 	// surface (IDOR/BOLA, privilege escalation, business logic) — where the
@@ -327,6 +332,7 @@ func load() *Config {
 		DisableBrowser:      envOrBool("XALGORIX_DISABLE_BROWSER", false),
 		MaxIterations:       envOrInt("XALGORIX_MAX_ITERATIONS", 0),
 		NoToolAbortAt:       envOrInt("XALGORIX_NO_TOOL_ABORT_AT", 30),
+		MaxFinishRejections: envOrInt("XALGORIX_MAX_FINISH_REJECTIONS", 15),
 		TargetAuth:          envOr("XALGORIX_TARGET_AUTH", ""),
 		TargetAuthSecondary: envOr("XALGORIX_TARGET_AUTH_B", ""),
 		OOBPublicURL:        envOr("XALGORIX_OOB_PUBLIC_URL", ""),

@@ -719,6 +719,7 @@ func (a *Agent) Run(targets []string, instruction string) {
 		// Thread the configurable no-tool abort threshold (0 = never give up).
 		a.state.NoToolAbortLimit = a.cfg.NoToolAbortAt
 		a.state.NoToolAbortConfigured = true
+		a.state.MaxFinishRejections = a.cfg.MaxFinishRejections
 	}
 	a.state.ScanContextID = a.scanCtx.ID
 	a.state.DiscoveryMode = a.discoveryMode
