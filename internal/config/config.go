@@ -326,7 +326,7 @@ func load() *Config {
 		legacyCWD:           cwd,
 		DisableBrowser:      envOrBool("XALGORIX_DISABLE_BROWSER", false),
 		MaxIterations:       envOrInt("XALGORIX_MAX_ITERATIONS", 0),
-		NoToolAbortAt:       envOrInt("XALGORIX_NO_TOOL_ABORT_AT", 0),
+		NoToolAbortAt:       envOrInt("XALGORIX_NO_TOOL_ABORT_AT", 30),
 		TargetAuth:          envOr("XALGORIX_TARGET_AUTH", ""),
 		TargetAuthSecondary: envOr("XALGORIX_TARGET_AUTH_B", ""),
 		OOBPublicURL:        envOr("XALGORIX_OOB_PUBLIC_URL", ""),
