@@ -1071,10 +1071,10 @@ func hookTechDetector(state *ScanState, args map[string]string) HookResult {
 func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 	state.FinishAttempts++
 
-	// Allow finish if the agent has repeatedly attempted to finish (>= 3 attempts)
+	// Allow finish if the agent has repeatedly attempted to finish (>= 16 attempts, i.e. rejected 15 times)
 	// to prevent infinite finish-rejection deadlocks when the model refuses or is unable
 	// to execute further commands.
-	if state.FinishAttempts >= 3 {
+	if state.FinishAttempts >= 16 {
 		return HookResult{}
 	}
 
@@ -1207,7 +1207,7 @@ func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 	// Matches the system prompt: "Minimum 50 iterations for a thorough assessment"
 	// Only applies to large surface areas (> 15 endpoints) or when depth is low.
 	if iter < 50 {
-		if state.FinishAttempts <= 2 {
+		if state.FinishAttempts <= 15 {
 			scannerNote := ""
 			if !state.ScannerUsed {
 				scannerNote = "\n- You haven't used any automated scanners (nuclei/ffuf) yet — consider running them on promising endpoints"

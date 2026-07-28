@@ -339,20 +339,18 @@ func TestFinishGatekeeper_AllowsAfterRepeatedAttempts(t *testing.T) {
 	state.Iteration = 10
 	state.TerminalCalls = 2 // normally blocked (< 5)
 
-	// First two attempts should block
-	res1 := hookFinishGatekeeper(state, nil)
-	if !res1.Block {
-		t.Error("Attempt 1 should block")
-	}
-	res2 := hookFinishGatekeeper(state, nil)
-	if !res2.Block {
-		t.Error("Attempt 2 should block")
+	// First 15 attempts should block
+	for i := 1; i <= 15; i++ {
+		res := hookFinishGatekeeper(state, nil)
+		if !res.Block {
+			t.Errorf("Attempt %d should block", i)
+		}
 	}
 
-	// 3rd attempt should be allowed to prevent infinite deadlock
-	res3 := hookFinishGatekeeper(state, nil)
-	if res3.Block {
-		t.Error("Attempt 3 should be allowed to prevent deadlock loop")
+	// 16th attempt should be allowed to prevent infinite deadlock
+	res16 := hookFinishGatekeeper(state, nil)
+	if res16.Block {
+		t.Error("Attempt 16 should be allowed to prevent deadlock loop")
 	}
 }
 
