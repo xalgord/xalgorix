@@ -60,8 +60,29 @@ function matchFilter(e: FeedEvent, f: FeedFilter): boolean {
     case "llm":
       return t === "llm" || t === "token" || t === "llm_output";
     default:
+      if (isInternalLLMInstruction(e.content || e.error || e.output)) {
+        return false;
+      }
       return true;
   }
+}
+
+function isInternalLLMInstruction(text?: string | null): boolean {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  return (
+    t.includes("authorization reminder") ||
+    t.includes("do not call") ||
+    t.includes("your next tool call must") ||
+    t.includes("must use tools") ||
+    t.includes("repeated call:") ||
+    t.includes("no progress:") ||
+    t.includes("pivot required:") ||
+    t.includes("force finishing") ||
+    t.includes("loop limit reached") ||
+    t.includes("consecutive responses with no tool call") ||
+    t.includes("consecutive empty responses")
+  );
 }
 
 const TYPE_COLOR: Record<string, string> = {

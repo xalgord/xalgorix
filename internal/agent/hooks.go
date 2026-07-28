@@ -97,11 +97,14 @@ type ScanState struct {
 	// browser/search stuck logic, so it cannot conflict with StuckDomain.
 	// These counters are NOT reset by OnHealthyResponse: a "healthy" response
 	// that re-issues the same call is exactly the loop we want to catch.
-	LastToolName          string
-	LastToolArgsHash      string
-	ConsecutiveSameCall   int // same (tool, normalized args) called back-to-back
-	LastResultFP          string
-	ConsecutiveSameResult int // same result-output fingerprint back-to-back
+	LastToolName                string
+	LastToolArgsHash            string
+	ConsecutiveSameCall         int // same (tool, normalized args) called back-to-back
+	ConsecutiveSameCallNudges   int // consecutive repeat-call nudges without a different call
+	LastResultFP                string
+	ConsecutiveSameResult       int // same result-output fingerprint back-to-back
+	ConsecutiveSameResultNudges int // consecutive repeat-result nudges without a different result
+	ConsecutiveNoOpCalls        int // consecutive trivial/no-op terminal calls (e.g. echo done/ok/a, pwd)
 
 	// Blocked-call loop detection. The three block guards (activity policy,
 	// phase restriction, out-of-scope) short-circuit the dispatch BEFORE the
@@ -794,11 +797,36 @@ func hookStuckTracker(state *ScanState, args map[string]string) HookResult {
 				state.LastToolName = toolName
 				state.LastToolArgsHash = argsHash
 				state.ConsecutiveSameCall = 1
+				state.ConsecutiveSameCallNudges = 0
+			}
+
+			if toolName == "terminal_execute" {
+				if isTrivialCommand(args["command"]) {
+					state.ConsecutiveNoOpCalls++
+				} else {
+					state.ConsecutiveNoOpCalls = 0
+				}
+			} else {
+				state.ConsecutiveNoOpCalls = 0
 			}
 		}
 	}
 
 	return HookResult{}
+}
+
+func isTrivialCommand(cmd string) bool {
+	c := strings.TrimSpace(strings.ToLower(cmd))
+	if c == "pwd" || c == "whoami" || c == "true" || c == "echo" {
+		return true
+	}
+	if strings.HasPrefix(c, "echo ") {
+		arg := strings.Trim(strings.TrimPrefix(c, "echo "), "\"' ")
+		if len(arg) <= 10 && !strings.ContainsAny(arg, "|&;$><`") {
+			return true
+		}
+	}
+	return false
 }
 
 // ── hookResultRepeatTracker ──────────────────────────────────────────────────
@@ -820,6 +848,7 @@ func hookResultRepeatTracker(state *ScanState, args map[string]string) HookResul
 	} else {
 		state.LastResultFP = fp
 		state.ConsecutiveSameResult = 1
+		state.ConsecutiveSameResultNudges = 0
 	}
 	return HookResult{}
 }
@@ -832,6 +861,20 @@ func hookStuckNudge(state *ScanState, args map[string]string) HookResult {
 		return HookResult{}
 	}
 
+	// ── Trivial / No-Op command loop ──
+	if state.ConsecutiveNoOpCalls >= 8 {
+		return HookResult{
+			ForceSkip:   true,
+			EmitMessage: fmt.Sprintf("⛔ Loop limit reached: Agent executed %d consecutive no-op echo/dummy commands without taking real testing action. Force finishing to prevent infinite loop.", state.ConsecutiveNoOpCalls),
+		}
+	}
+	if state.ConsecutiveNoOpCalls >= 3 {
+		return HookResult{
+			Nudge:     fmt.Sprintf("⚠️ NO-OP COMMAND DETECTED: You have executed %d trivial/no-op commands in a row (e.g. echo/pwd). Do NOT run dummy commands — take real security testing action or call finish.", state.ConsecutiveNoOpCalls),
+			ForceSkip: true,
+		}
+	}
+
 	// ── Repeated identical tool call (issue #158) ──
 	// The agent re-issued the same tool with the same args across consecutive
 	// iterations. This is never productive — repeating an identical action
@@ -839,6 +882,13 @@ func hookStuckNudge(state *ScanState, args map[string]string) HookResult {
 	// redundant call. Checked BEFORE the browser hard-limit so a terminal/
 	// http/other-tool loop is caught regardless of StuckIterations.
 	if state.ConsecutiveSameCall >= RepeatCallSoftNudge {
+		state.ConsecutiveSameCallNudges++
+		if state.ConsecutiveSameCallNudges >= 4 {
+			return HookResult{
+				ForceSkip:   true,
+				EmitMessage: fmt.Sprintf("⛔ Loop limit reached: Agent repeatedly re-issued identical %q call %d times despite warnings. Force finishing scan to prevent infinite loop.", state.LastToolName, state.ConsecutiveSameCallNudges),
+			}
+		}
 		hard := state.ConsecutiveSameCall >= RepeatCallHardSkip
 		verb := "repeated"
 		if hard {
@@ -853,8 +903,6 @@ DO NOT call %q with those same arguments again. Instead:
 
 Your next tool call MUST differ from the last one.`, verb, state.LastToolName, state.ConsecutiveSameCall, state.LastToolName)
 
-		// Reset so the nudge doesn't fire every iteration; a new identical
-		// run will re-accumulate.
 		state.ConsecutiveSameCall = 0
 		// LLM-only: this is an instruction TO the model (it also rides on
 		// Nudge, which is what steers the conversation). Do NOT emit it to
@@ -869,6 +917,13 @@ Your next tool call MUST differ from the last one.`, verb, state.LastToolName, s
 	// Args vary but the result is byte-identical several times in a row — the
 	// agent is spinning without progress. Force a pivot.
 	if state.ConsecutiveSameResult >= RepeatResultHardSkip {
+		state.ConsecutiveSameResultNudges++
+		if state.ConsecutiveSameResultNudges >= 4 {
+			return HookResult{
+				ForceSkip:   true,
+				EmitMessage: fmt.Sprintf("⛔ Loop limit reached: Agent tool calls produced byte-identical output %d times despite warnings. Force finishing scan to prevent infinite loop.", state.ConsecutiveSameResultNudges),
+			}
+		}
 		msg := fmt.Sprintf(`⛔ NO PROGRESS: Your last %d tool calls produced byte-identical output. You are looping without making progress.
 
 Change your approach: target a different endpoint, use a different payload/technique, or consult a skill (read_skill). If this avenue is exhausted, add_note your findings and move on.

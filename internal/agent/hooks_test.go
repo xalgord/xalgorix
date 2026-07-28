@@ -1001,3 +1001,52 @@ func TestRepeatDetector_ResetOnSuccessLeavesRepeatCounters(t *testing.T) {
 		t.Error("ConsecutiveErrors/NoToolCount should be reset by OnHealthyResponse")
 	}
 }
+
+func TestRepeatDetector_CeilingAbortsLoop(t *testing.T) {
+	state := NewScanState()
+	args := map[string]string{"tool_name": "terminal_execute", "command": "curl -sk https://example.com/api"}
+
+	var finalMessage string
+	for i := 0; i < 25; i++ {
+		hookStuckTracker(state, args)
+		res := hookStuckNudge(state, args)
+		if res.EmitMessage != "" {
+			finalMessage = res.EmitMessage
+			break
+		}
+	}
+
+
+	if finalMessage == "" || !strings.Contains(finalMessage, "Loop limit reached") {
+		t.Fatalf("expected loop limit abort message, got: %q", finalMessage)
+	}
+}
+
+func TestTrivialNoOpCommand_LoopDetector(t *testing.T) {
+	state := NewScanState()
+
+	// Initial no-op calls should trigger a nudge at 3
+	for i := 1; i <= 3; i++ {
+		hookStuckTracker(state, map[string]string{"tool_name": "terminal_execute", "command": "echo done"})
+	}
+	res := hookStuckNudge(state, map[string]string{"tool_name": "terminal_execute", "command": "echo done"})
+	if !res.ForceSkip || !strings.Contains(res.Nudge, "NO-OP COMMAND DETECTED") {
+		t.Fatalf("expected NO-OP COMMAND DETECTED nudge, got: %+v", res)
+	}
+
+	// Sustained no-op calls should trigger an abort at 8
+	var abortMessage string
+	for i := 4; i <= 8; i++ {
+		hookStuckTracker(state, map[string]string{"tool_name": "terminal_execute", "command": fmt.Sprintf("echo %d", i)})
+		nudge := hookStuckNudge(state, map[string]string{"tool_name": "terminal_execute", "command": fmt.Sprintf("echo %d", i)})
+		if nudge.EmitMessage != "" {
+			abortMessage = nudge.EmitMessage
+			break
+		}
+	}
+
+	if abortMessage == "" || !strings.Contains(abortMessage, "Loop limit reached") {
+		t.Fatalf("expected Loop limit reached for no-ops, got %q", abortMessage)
+	}
+}
+
