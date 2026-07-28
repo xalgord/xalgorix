@@ -334,6 +334,28 @@ func TestFinishGatekeeper_BlocksLowCommands(t *testing.T) {
 	}
 }
 
+func TestFinishGatekeeper_AllowsAfterRepeatedAttempts(t *testing.T) {
+	state := NewScanState()
+	state.Iteration = 10
+	state.TerminalCalls = 2 // normally blocked (< 5)
+
+	// First two attempts should block
+	res1 := hookFinishGatekeeper(state, nil)
+	if !res1.Block {
+		t.Error("Attempt 1 should block")
+	}
+	res2 := hookFinishGatekeeper(state, nil)
+	if !res2.Block {
+		t.Error("Attempt 2 should block")
+	}
+
+	// 3rd attempt should be allowed to prevent infinite deadlock
+	res3 := hookFinishGatekeeper(state, nil)
+	if res3.Block {
+		t.Error("Attempt 3 should be allowed to prevent deadlock loop")
+	}
+}
+
 func TestFinishGatekeeper_BlocksNoRecon(t *testing.T) {
 	state := NewScanState()
 	state.Iteration = 10

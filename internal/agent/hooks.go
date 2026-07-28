@@ -1071,6 +1071,13 @@ func hookTechDetector(state *ScanState, args map[string]string) HookResult {
 func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 	state.FinishAttempts++
 
+	// Allow finish if the agent has repeatedly attempted to finish (>= 3 attempts)
+	// to prevent infinite finish-rejection deadlocks when the model refuses or is unable
+	// to execute further commands.
+	if state.FinishAttempts >= 3 {
+		return HookResult{}
+	}
+
 	// Discovery mode (Phase 1 enumeration): allow finish after minimum work
 	if state.DiscoveryMode {
 		if state.TerminalCalls < 3 {
