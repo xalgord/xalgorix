@@ -720,6 +720,7 @@ func (a *Agent) Run(targets []string, instruction string) {
 		a.state.NoToolAbortLimit = a.cfg.NoToolAbortAt
 		a.state.NoToolAbortConfigured = true
 		a.state.MaxFinishRejections = a.cfg.MaxFinishRejections
+		a.state.MinIterations = a.cfg.MinIterations
 	}
 	a.state.ScanContextID = a.scanCtx.ID
 	a.state.DiscoveryMode = a.discoveryMode

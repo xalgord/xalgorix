@@ -71,6 +71,7 @@ type Config struct {
 	legacyCWD      string // Captured os.Getwd() at config load time. Used only by the migration warning.
 	DisableBrowser bool   // XALGORIX_DISABLE_BROWSER
 	MaxIterations  int    // XALGORIX_MAX_ITERATIONS — 0 = unlimited
+	MinIterations  int    // XALGORIX_MIN_ITERATIONS — minimum testing floor (default 50)
 
 	// NoToolAbortAt is how many CONSECUTIVE no-tool-call responses force-stop a
 	// scan (the "reasoning loop" abort). XALGORIX_NO_TOOL_ABORT_AT, default 0
@@ -331,6 +332,7 @@ func load() *Config {
 		legacyCWD:           cwd,
 		DisableBrowser:      envOrBool("XALGORIX_DISABLE_BROWSER", false),
 		MaxIterations:       envOrInt("XALGORIX_MAX_ITERATIONS", 0),
+		MinIterations:       envOrInt("XALGORIX_MIN_ITERATIONS", 50),
 		NoToolAbortAt:       envOrInt("XALGORIX_NO_TOOL_ABORT_AT", 30),
 		MaxFinishRejections: envOrInt("XALGORIX_MAX_FINISH_REJECTIONS", 15),
 		TargetAuth:          envOr("XALGORIX_TARGET_AUTH", ""),

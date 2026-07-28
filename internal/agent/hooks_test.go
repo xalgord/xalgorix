@@ -474,6 +474,35 @@ func TestFinishGatekeeper_DiscoveryModeBlocksTooFew(t *testing.T) {
 	}
 }
 
+func TestFinishGatekeeper_BlocksInvalidPlanTaskSkips(t *testing.T) {
+	state := NewScanState()
+	state.Iteration = 55
+	state.TerminalCalls = 30
+	state.ReconDone = true
+	state.EndpointInventorySaved = true
+	state.VulnClassesTested["sqli"] = true
+	state.VulnClassesTested["xss"] = true
+	state.VulnClassesTested["ssti"] = true
+	state.VulnClassesTested["cmdi"] = true
+	state.VulnClassesTested["path_traversal"] = true
+	state.VulnClassesTested["ssrf"] = true
+	state.VulnClassesTested["crlf"] = true
+	state.FinishAttempts = 2 // > 1 so vuln class soft nudge is past
+	plan := NewPlan()
+	plan.add(&Task{ID: "recon", Phase: 1, Title: "Recon", Status: TaskCompleted})
+	plan.add(&Task{ID: "test-dirbust", Phase: 2, Title: "Dirbust", Status: TaskSkipped, Notes: "RCE already found on /eval"})
+	plan.add(&Task{ID: "test-xss", Phase: 3, Title: "XSS", Status: TaskSkipped, Notes: "SQLi already achieved auth bypass"})
+	state.Plan = plan
+
+	result := hookFinishGatekeeper(state, nil)
+	if !result.Block {
+		t.Error("Gatekeeper should block when tasks are skipped with invalid early RCE/SQLi shortcuts")
+	}
+	if !strings.Contains(result.BlockReason, "INVALID PLAN TASK SKIPS DETECTED") {
+		t.Errorf("Unexpected block reason: %s", result.BlockReason)
+	}
+}
+
 // ── minInt / maxInt tests ────────────────────────────────────────────────────
 
 func TestMinMaxInt(t *testing.T) {

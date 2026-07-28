@@ -134,6 +134,7 @@ func allEnvSettingDefinitions() []envSettingDefinition {
 		{Key: "XALGORIX_CONTEXT_COMPACT_TOKENS", Label: "Context compaction budget (tokens, override)", Category: "LLM", Description: "Optional ABSOLUTE override for the compaction trigger. Leave at -1 (auto) to derive the trigger from the context window × ratio above. Set a positive token count to force a fixed budget instead. 0 disables auto-compaction. Default -1 (auto).", DefaultValue: "-1", InputType: "number"},
 		{Key: "XALGORIX_MEMORY_COMPRESSOR_TIMEOUT", Label: "Memory compressor timeout", Category: "LLM", Description: "Timeout in seconds for context compression.", DefaultValue: "30", InputType: "number"},
 		{Key: "XALGORIX_MAX_ITERATIONS", Label: "Max iterations", Category: "Runtime", Description: "Maximum agent iterations per scan. 0 means unlimited.", DefaultValue: "0", InputType: "number"},
+		{Key: "XALGORIX_MIN_ITERATIONS", Label: "Min iterations (testing floor)", Category: "Runtime", Description: "Minimum testing floor in iterations before the gatekeeper permits finish. Ensures deep probing (OAST, ReDoS, fuzzing) before concluding.", DefaultValue: "50", InputType: "number"},
 		{Key: "XALGORIX_MAX_FINISH_REJECTIONS", Label: "Max finish rejections", Category: "Runtime", Description: "Number of times the agent's finish call will be rejected by the gatekeeper before allowing a deadlock bypass, enforcing deeper testing coverage.", DefaultValue: "15", InputType: "number"},
 		{Key: "XALGORIX_MAX_TOOL_CALLS", Label: "Max tool calls (budget)", Category: "Runtime", Description: "Per-scan tool-call cap; the scan stops cleanly when reached (findings preserved). 0 = unlimited.", DefaultValue: "0", InputType: "number", RequiresRestart: true},
 		{Key: "XALGORIX_MAX_DURATION", Label: "Max duration seconds (budget)", Category: "Runtime", Description: "Per-scan wall-clock cap in seconds; the scan stops cleanly when reached. 0 = unlimited.", DefaultValue: "0", InputType: "number", RequiresRestart: true},
@@ -757,6 +758,8 @@ func (s *Server) applyEnvironmentToRuntimeConfig(values map[string]string) {
 			s.cfg.MemCompTimeout = parseIntSetting(value, 30)
 		case "XALGORIX_MAX_ITERATIONS":
 			s.cfg.MaxIterations = parseIntSetting(value, 0)
+		case "XALGORIX_MIN_ITERATIONS":
+			s.cfg.MinIterations = parseIntSetting(value, 50)
 		case "XALGORIX_MAX_FINISH_REJECTIONS":
 			s.cfg.MaxFinishRejections = parseIntSetting(value, 15)
 		case "XALGORIX_WORKSPACE":
@@ -873,6 +876,8 @@ func (s *Server) envSettingValue(key string) string {
 		return strconv.Itoa(s.cfg.MemCompTimeout)
 	case "XALGORIX_MAX_ITERATIONS":
 		return strconv.Itoa(s.cfg.MaxIterations)
+	case "XALGORIX_MIN_ITERATIONS":
+		return strconv.Itoa(s.cfg.MinIterations)
 	case "XALGORIX_MAX_FINISH_REJECTIONS":
 		return strconv.Itoa(s.cfg.MaxFinishRejections)
 	case "XALGORIX_WORKSPACE":
@@ -1133,6 +1138,8 @@ func normalizeEnvSettingValue(def envSettingDefinition, value string) (string, e
 		return strconv.Itoa(clampInt(parseIntSetting(value, 30), 5, 600)), nil
 	case "XALGORIX_MAX_ITERATIONS":
 		return strconv.Itoa(clampInt(parseIntSetting(value, 0), 0, 1000)), nil
+	case "XALGORIX_MIN_ITERATIONS":
+		return strconv.Itoa(clampInt(parseIntSetting(value, 50), 1, 500)), nil
 	case "XALGORIX_MAX_FINISH_REJECTIONS":
 		return strconv.Itoa(clampInt(parseIntSetting(value, 15), 1, 100)), nil
 	}

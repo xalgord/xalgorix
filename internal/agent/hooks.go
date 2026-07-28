@@ -51,6 +51,7 @@ type ScanState struct {
 	ScannerUsed                bool
 	FinishAttempts             int
 	MaxFinishRejections        int
+	MinIterations              int
 	DiscoveryMode              bool
 	ReconOnlyMode              bool
 	AllowedPhases              []int
@@ -1208,10 +1209,14 @@ func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 		}
 	}
 
-	// ── Iteration floor: 50 ──
-	// Matches the system prompt: "Minimum 50 iterations for a thorough assessment"
-	// Only applies to large surface areas (> 15 endpoints) or when depth is low.
-	if iter < 50 {
+	minIter := state.MinIterations
+	if minIter <= 0 {
+		minIter = 50
+	}
+
+	// ── Iteration floor ──
+	// Matches the system prompt: "Minimum iterations for a thorough assessment"
+	if iter < minIter {
 		if state.FinishAttempts <= maxRejections {
 			scannerNote := ""
 			if !state.ScannerUsed {
@@ -1223,7 +1228,7 @@ func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 			}
 			coverageNote := fmt.Sprintf("\n- Endpoints tested: %d (injection: %d, access control: %d, dirbusting hosts: %d, depth: %.1f/endpoint)",
 				totalEndpoints, injectionCount, accessControlCount, dirBustingCount, depth)
-			nudgeMsg := fmt.Sprintf(`⚠️ Only %d/50 iterations completed. You still have capacity to test more.
+			nudgeMsg := fmt.Sprintf(`⚠️ Only %d/%d iterations completed. You still have capacity to test more.
 
 Before finishing, verify you have covered:
 - All discovered endpoints and parameters tested MANUALLY
@@ -1231,7 +1236,7 @@ Before finishing, verify you have covered:
 - Technology-specific CVEs
 - API endpoints found in JavaScript files%s%s%s
 
-Continue testing. Call finish again after iteration 50.`, iter, coverageNote, scannerNote, skillNote)
+Continue testing. Call finish again after iteration %d.`, iter, minIter, coverageNote, scannerNote, skillNote, minIter)
 
 			return HookResult{
 				Block:       true,
@@ -1261,7 +1266,7 @@ Continue testing. Call finish again after iteration 50.`, iter, coverageNote, sc
 		}
 	}
 
-	// Only nudge once (first finish attempt after iter 50) and only if ≥3 classes missing
+	// Only nudge once (first finish attempt after minIter) and only if ≥3 classes missing
 	if len(missingClasses) >= 3 && state.FinishAttempts <= 1 {
 		sort.Strings(missingClasses) // deterministic order
 		return HookResult{
@@ -1273,23 +1278,41 @@ Continue testing. Call finish again after iteration 50.`, iter, coverageNote, sc
 	}
 
 	// ── Plan-based finish gate ──
-	// If a structural plan exists and still has actionable pending tasks (any
-	// task that isn't the verify/report tail), block finish with the specific
-	// remaining tasks. The verify + report tasks are the plan's own finish
-	// step, so they don't block — completing them IS finishing. This is the
-	// decomposition layer's enforcement: an unfinished plan means the surface
-	// isn't covered, regardless of iteration count.
+	// If a structural plan exists, block finish if there are pending/active tasks,
+	// OR if tasks were skipped using invalid early-abort excuses (e.g. "RCE already found").
 	if state.Plan != nil && !state.Plan.IsEmpty() {
 		var remaining []string
+		var invalidSkips []string
+
 		for _, t := range state.Plan.Tasks {
-			if t.Status != TaskPending && t.Status != TaskActive {
-				continue
-			}
 			if t.ID == "verify" || t.ID == "report" {
 				continue // the finish step itself
 			}
-			remaining = append(remaining, fmt.Sprintf("  • [%s] phase %d — %s", t.ID, t.Phase, t.Title))
+			if t.Status == TaskPending || t.Status == TaskActive {
+				remaining = append(remaining, fmt.Sprintf("  • [%s] phase %d — %s", t.ID, t.Phase, t.Title))
+				continue
+			}
+			if t.Status == TaskSkipped && state.FinishAttempts <= maxRejections {
+				note := strings.ToLower(t.Notes)
+				if strings.Contains(note, "rce") || strings.Contains(note, "sqli") ||
+					strings.Contains(note, "already achieved") || strings.Contains(note, "already found") ||
+					strings.Contains(note, "already bypass") {
+					invalidSkips = append(invalidSkips, fmt.Sprintf("  • [%s] skipped with excuse: %q", t.ID, t.Notes))
+				}
+			}
 		}
+
+		if len(invalidSkips) > 0 {
+			list := strings.Join(invalidSkips, "\n")
+			return HookResult{
+				Block: true,
+				BlockReason: fmt.Sprintf("⚠️ INVALID PLAN TASK SKIPS DETECTED:\n%s\n\n"+
+					"Finding RCE or SQLi on one endpoint does NOT justify skipping vulnerability testing on other endpoints or classes.\n"+
+					"A comprehensive penetration test requires auditing all attack surface tasks. Re-open and execute these tasks before finishing.",
+					list),
+			}
+		}
+
 		if len(remaining) > 0 {
 			// Cap the list so a huge plan doesn't flood the block reason.
 			list := strings.Join(remaining, "\n")
