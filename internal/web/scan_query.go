@@ -382,6 +382,15 @@ func isCompletedScanStatus(status string) bool {
 	}
 }
 
+func isFinalScanStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "finished", "completed", "failed":
+		return true
+	default:
+		return false
+	}
+}
+
 func isTerminalScanStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "finished", "completed", "stopped", "failed":
@@ -463,8 +472,8 @@ func (s *Server) applyInstanceSnapshot(rec *ScanRecord, includeEvents bool) {
 	// still win for those (see TestApplyInstanceSnapshotDoesNotErasePersistedResumeData).
 	// But a completed scan is done forever: a stale in-memory instance left
 	// after a restart/auto-resume must not downgrade it back to "running".
-	if isCompletedScanStatus(rec.Status) && !isCompletedScanStatus(snapshot.Status) {
-		log.Printf("[scan] %s (instance %s): kept completed disk status %q over stale in-memory instance status %q — not downgrading a finished scan to running",
+	if isFinalScanStatus(rec.Status) && !isFinalScanStatus(snapshot.Status) {
+		log.Printf("[scan] %s (instance %s): kept final disk status %q over stale in-memory instance status %q — not downgrading a final scan to running",
 			rec.ID, rec.InstanceID, rec.Status, snapshot.Status)
 	} else {
 		rec.Status = snapshot.Status

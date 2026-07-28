@@ -14,14 +14,16 @@ func TestApplyInstanceSnapshot_KeepsTerminalOverStaleRunning(t *testing.T) {
 	s.instances["inst-crowd"] = &ScanInstance{ID: "inst-crowd", Status: "running", CurrentPhase: 11}
 	s.instancesMu.Unlock()
 
-	rec := &ScanRecord{ID: "scan-crowd", InstanceID: "inst-crowd", Status: "completed", CurrentPhase: 22}
-	s.applyInstanceSnapshot(rec, false)
+	for _, status := range []string{"completed", "finished", "failed"} {
+		rec := &ScanRecord{ID: "scan-crowd", InstanceID: "inst-crowd", Status: status, CurrentPhase: 22}
+		s.applyInstanceSnapshot(rec, false)
 
-	if rec.Status != "completed" {
-		t.Fatalf("terminal status was downgraded to %q by a stale running instance", rec.Status)
-	}
-	if rec.CurrentPhase != 22 {
-		t.Errorf("phase regressed from 22 to %d", rec.CurrentPhase)
+		if rec.Status != status {
+			t.Fatalf("terminal status %q was downgraded to %q by a stale running instance", status, rec.Status)
+		}
+		if rec.CurrentPhase != 22 {
+			t.Errorf("phase regressed from 22 to %d", rec.CurrentPhase)
+		}
 	}
 }
 
