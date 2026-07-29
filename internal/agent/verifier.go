@@ -155,7 +155,10 @@ func (a *Agent) verifyFinding(req reporting.VerificationRequest) reporting.Verif
 				observed.WriteString(res.Output)
 				observed.WriteString("\n")
 			}
-			a.emit(Event{Type: "tool_result", ToolName: "verify:" + tc.Name, ToolResult: res})
+			// Only emit valid tool results to the live feed; suppress malformed schema errors (e.g. missing params)
+			if res.Error == "" || (!strings.Contains(res.Error, "missing required parameter") && !strings.Contains(res.Error, "unknown tool")) {
+				a.emit(Event{Type: "tool_result", ToolName: "verify:" + tc.Name, ToolResult: res})
+			}
 			msgs = append(msgs, llm.Message{Role: "user", Content: fmt.Sprintf("[%s output]\n%s", tc.Name, truncStr(out, 4000))})
 			if verdict != nil {
 				break
@@ -294,6 +297,11 @@ Claimed proof (DO NOT TRUST — reproduce it yourself):
 - "inconclusive" if you could NOT reproduce it AND could NOT disprove it — e.g. it needs authentication, a second account, specific state, or timing you don't have, or it is a blind/stored finding that fires somewhere you cannot observe.
 
 CRITICAL: NEVER mark a finding "rejected" merely because you could not reproduce it. Rejection means you actively DISPROVED it. If you have not disproven it, the verdict is "inconclusive" — that finding is preserved (flagged for manual review), not dropped. Dropping a real vulnerability is a serious error; preserving an unproven one as inconclusive is safe. Reserve "rejected" for findings you are confident are false.
+
+## TOOL USAGE FORMAT
+- http_request: REQUIRED parameter "url" (e.g. <parameter name="url">https://example.com/api</parameter>). Optional: "method" ("GET"/"POST"), "headers", "body". Note: "method" is a PARAMETER inside http_request, NOT a tool name!
+- terminal_execute: REQUIRED parameter "command" (e.g. <parameter name="command">curl -s https://...</parameter>).
+- submit_verdict: REQUIRED parameters "verdict" and "reason".
 
 Re-test now, then call submit_verdict exactly once.
 
