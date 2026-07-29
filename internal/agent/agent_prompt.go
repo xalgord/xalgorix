@@ -427,31 +427,47 @@ grep -oE 'src="[^"]*\.js[^"]*"' /tmp/main_page.html | sort -u
 grep -oE 'href="[^"]*"' /tmp/main_page.html | grep -v '^href="http' | sort -u | head -50
 ` + "`" + `
 
-**Iteration 3: Download ALL JS bundles + deep grep for endpoints (CRITICAL)**
+**Iteration 3: Download ALL JS bundles + dynamic chunk discovery + deep grep for endpoints (CRITICAL)**
 ` + "`" + `bash` + "`" + `
-# Download every JS file found. This is WHERE MOST FINDINGS COME FROM.
-# For each JS URL from iteration 2:
+# Download main JS files AND discover dynamically loaded split chunks (e.g. chunk-*.js, *_app.js)
+# This is WHERE MOST HIDDEN APIS AND ENDPOINTS ORIGINATE.
 curl -s "https://TARGET/path/to/bundle.js" -A "Mozilla/5.0" -o /tmp/bundle.js
-# Then grep for:
+# Extract dynamic sub-chunks & dynamic imports
+grep -oE '("[^"]*chunk[^"]*\.js"|"[0-9]+\.[0-9a-f]+\.js")' /tmp/main_page.html /tmp/bundle.js | tr -d '"' | sort -u > /tmp/js_chunks.txt
+for chunk in $(cat /tmp/js_chunks.txt); do
+  curl -s "https://TARGET/$chunk" -A "Mozilla/5.0" --max-time 10 >> /tmp/bundle.js 2>/dev/null
+done
+
+# Deep grep across all combined JS source:
 grep -oE '"https?://[^"]+' /tmp/bundle.js | sort -u > /tmp/js_urls.txt       # Full URLs
 grep -oE '"/api/[^"]*"' /tmp/bundle.js | sort -u > /tmp/js_api_paths.txt      # API paths
-grep -oE '"/(v[0-9]+|access|admin|auth|connect)/[^"]*"' /tmp/bundle.js | sort -u  # Versioned paths
-grep -oE '[a-z]+\.(vanhack|TARGET_DOMAIN)\.[a-z]+' /tmp/bundle.js | sort -u   # Subdomains
+grep -oE '"/(v[0-9]+|access|admin|auth|connect|user|internal)/[^"]*"' /tmp/bundle.js | sort -u  # Versioned paths
+grep -oE '[a-z0-9-]+\.(TARGET_DOMAIN)\.[a-z]+' /tmp/bundle.js | sort -u   # Subdomains
 grep -oE '(apiUrl|baseURL|API_URL|apiBase)[^,]*' /tmp/bundle.js | head -10     # API base URLs
-grep -oE '(token|secret|key|password|api_key)\s*[:=]\s*"[^"]*"' /tmp/bundle.js # Leaked secrets
+grep -oE '(token|secret|key|password|api_key|jwt|bearer)\s*[:=]\s*"[^"]*"' /tmp/bundle.js # Leaked secrets
 ` + "`" + `
 
-**Iteration 4: Test ALL discovered subdomains + API bases**
+**Iteration 4: Test ALL subdomains, API bases, HTTP Verbs & Header Bypasses**
 ` + "`" + `bash` + "`" + `
 # For each subdomain/API base found in JS:
 for host in SUBDOMAINS_FROM_STEP3; do
   echo "--- $host ---"
   curl -skI "https://$host" -A "Mozilla/5.0" --max-time 10 2>&1 | head -20
 done
-# Check common API paths on each live host:
-for path in /swagger.json /swagger/v1/swagger.json /swagger/v2/swagger.json /api-docs /graphql /.well-known/openid-configuration /actuator /health; do
+
+# Check common API paths & test HTTP Verb Tampering + Header Bypasses on protected (401/403) endpoints:
+for path in /swagger.json /swagger/v1/swagger.json /api-docs /graphql /.well-known/openid-configuration /actuator/env /health; do
   curl -skI "https://TARGET$path" -A "Mozilla/5.0" --max-time 5 2>&1 | head -5
 done
+
+# HTTP Verb & Header Override Permutations on 401/403 endpoints:
+# 1. Alternative Verbs: OPTIONS, HEAD, PUT, PATCH, DELETE
+curl -skI -X OPTIONS "https://TARGET/api/protected" -A "Mozilla/5.0"
+curl -skI -X PUT "https://TARGET/api/protected" -A "Mozilla/5.0"
+# 2. Header Overrides for Auth/Route Bypasses:
+curl -skI "https://TARGET/api/protected" -H "X-HTTP-Method-Override: PUT"
+curl -skI "https://TARGET/api/protected" -H "X-Forwarded-For: 127.0.0.1"
+curl -skI "https://TARGET/api/protected" -H "X-Original-URL: /api/protected"
 ` + "`" + `
 
 **Iteration 5: Save complete endpoint inventory**

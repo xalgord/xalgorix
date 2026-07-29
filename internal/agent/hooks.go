@@ -469,12 +469,19 @@ func hookWorkTracker(state *ScanState, args map[string]string) HookResult {
 			strings.Contains(cmd, "dirsearch") || strings.Contains(cmd, "feroxbuster") {
 			state.VulnClassesTested["dirbusting"] = true
 		}
+		if strings.Contains(cmd, "arjun") || strings.Contains(cmd, "x8 ") ||
+			strings.Contains(cmd, "paramspider") || strings.Contains(cmd, "parameth") {
+			state.VulnClassesTested["parameter_mining"] = true
+		}
 
 		// Detect access control testing — track unique endpoints
 		isAccessControl := strings.Contains(cmd, "/user/1") || strings.Contains(cmd, "/user/2") ||
 			strings.Contains(cmd, "id=1") || strings.Contains(cmd, "id=2") ||
 			strings.Contains(cmd, "role=admin") || strings.Contains(cmd, "isadmin") ||
 			strings.Contains(cmd, "x-forwarded-for") || strings.Contains(cmd, "x-original-url") ||
+			strings.Contains(cmd, "x-http-method-override") || strings.Contains(cmd, "x-rewrite-url") ||
+			strings.Contains(cmd, "-x options") || strings.Contains(cmd, "-x put") ||
+			strings.Contains(cmd, "-x patch") || strings.Contains(cmd, "-x delete") ||
 			(strings.Contains(cmd, "admin") && strings.Contains(cmd, "curl")) ||
 			strings.Contains(cmd, "authorization")
 		if isAccessControl {
