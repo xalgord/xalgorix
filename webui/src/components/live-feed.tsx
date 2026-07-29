@@ -27,8 +27,9 @@ const FILTERS: { key: FeedFilter; label: string }[] = [
 ];
 
 function matchFilter(e: FeedEvent, f: FeedFilter): boolean {
-  if (f === "all") return true;
   const t = e.type || "";
+  if (t === "thinking" || t === "thought") return false;
+  if (f === "all") return true;
   switch (f) {
     case "tools":
       return (

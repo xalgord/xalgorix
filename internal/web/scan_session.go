@@ -524,6 +524,10 @@ func (s *Server) processEvent(evt agent.Event, sess *scanSession) {
 	}
 	if evt.Type == "tool_call" {
 		sess.record.ToolCalls++
+		// If no thinking event was emitted for this turn, fallback to tracking iteration on tool_call
+		if sess.record.Iterations < sess.record.ToolCalls {
+			sess.record.Iterations = sess.record.ToolCalls
+		}
 	}
 	if evt.TotalTokens > 0 {
 		sess.record.TotalTokens = sess.recordTokenOffset + evt.TotalTokens
@@ -541,6 +545,9 @@ func (s *Server) processEvent(evt agent.Event, sess *scanSession) {
 			}
 			if evt.Type == "tool_call" {
 				inst.ToolCalls++
+				if inst.Iterations < inst.ToolCalls {
+					inst.Iterations = inst.ToolCalls
+				}
 			}
 			if evt.TotalTokens > 0 {
 				// Tokens are cumulative within a session but reset between sessions,
@@ -558,6 +565,11 @@ func (s *Server) processEvent(evt agent.Event, sess *scanSession) {
 			inst.mu.Unlock()
 		}
 		s.instancesMu.RUnlock()
+	}
+
+	// Filter thinking events from being stored or broadcast to the frontend
+	if evt.Type == "thinking" {
+		return
 	}
 
 	// Accumulate events for persistence (limit stored output size)
