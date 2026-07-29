@@ -299,9 +299,9 @@ const (
 	//      call — just often enough to reset NoToolCount — the consecutive path
 	//      never trips. In BOUNDED mode only, a sustained high no-tool ratio
 	//      well past a warm-up window aborts rather than running for hours.
-	NoToolSoftNudgeAt   = 8  // consecutive no-tool → gentle "use tools" reminder
-	NoToolStrongNudgeAt = 16 // consecutive no-tool → firm "resume, call a tool NOW" nudge (re-fires every turn after)
-	NoToolAbortAt       = 30 // consecutive no-tool → force-stop scan (bounded mode only; default disabled)
+	NoToolSoftNudgeAt   = 1   // consecutive no-tool → instant "use XML tools NOW" nudge on 1st prose response
+	NoToolStrongNudgeAt = 3   // consecutive no-tool → firm "resume, call a tool NOW" nudge (re-fires every turn after)
+	NoToolAbortAt       = 100 // consecutive no-tool → force-stop scan safety ceiling (bounded mode only)
 
 	ReasoningDensityMinResponses  = 40   // need ≥ this many no-tool responses before the density safety net applies
 	ReasoningDensityAbortRatio    = 0.85 // > this fraction of no-tool responses …
@@ -1281,14 +1281,15 @@ Continue testing. Call finish again after iteration %d.`, iter, minIter, coverag
 	// This is a soft nudge (not a hard block) — fires once per scan to tell the agent
 	// what it missed, then allows subsequent finish attempts through.
 	mandatoryClasses := map[string]string{
-		"sqli":           "SQLi: try ' OR 1=1--, sqlmap -u, UNION SELECT on input params",
-		"xss":            "XSS: try <script>alert(1)</script>, \"><img src=x onerror=alert(1)> in inputs",
-		"ssti":           "SSTI: try {{7*7}}, ${7*7}, <%=7*7%> in template-rendered inputs",
-		"cmdi":           "Command Injection: try ;id, |id, $(id) in parameters processed server-side",
-		"path_traversal": "Path Traversal: try ../../../etc/passwd, ..%2f..%2f in file/path params",
-		"ssrf":           "SSRF: try http://169.254.169.254, http://127.0.0.1 in URL params",
-		"crlf":           "CRLF: try %0d%0aInjected-Header:true in URL params and headers",
-		"xxe":            "XXE: try <!DOCTYPE test [<!ENTITY xxe SYSTEM \"http://...\">]> in XML endpoints",
+		"sqli":             "SQLi: try ' OR 1=1--, sqlmap -u, UNION SELECT on input params",
+		"xss":              "XSS: try <script>alert(1)</script>, \"><img src=x onerror=alert(1)> in inputs",
+		"ssti":             "SSTI: try {{7*7}}, ${7*7}, <%=7*7%> in template-rendered inputs",
+		"cmdi":             "Command Injection: try ;id, |id, $(id) in parameters processed server-side",
+		"path_traversal":   "Path Traversal: try ../../../etc/passwd, ..%2f..%2f in file/path params",
+		"ssrf":             "SSRF: try http://169.254.169.254, http://127.0.0.1 in URL params",
+		"crlf":             "CRLF: try %0d%0aInjected-Header:true in URL params and headers",
+		"xxe":              "XXE: try <!DOCTYPE test [<!ENTITY xxe SYSTEM \"http://...\">]> in XML endpoints",
+		"parameter_mining": "Parameter Mining: try arjun -u, x8, or ffuf parameter key discovery on endpoint URLs",
 	}
 
 	var missingClasses []string
@@ -1303,7 +1304,7 @@ Continue testing. Call finish again after iteration %d.`, iter, minIter, coverag
 		sort.Strings(missingClasses) // deterministic order
 		return HookResult{
 			Block: true,
-			BlockReason: fmt.Sprintf("⚠️ Coverage gap: you haven't tested %d/8 mandatory vulnerability classes:\n\n%s\n\n"+
+			BlockReason: fmt.Sprintf("⚠️ Coverage gap: you haven't tested %d/9 mandatory vulnerability classes:\n\n%s\n\n"+
 				"Run at least ONE test for each missing class on the most promising endpoints, then call finish again.",
 				len(missingClasses), strings.Join(missingClasses, "\n")),
 		}
