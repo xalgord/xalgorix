@@ -89,6 +89,7 @@ type ScanState struct {
 	ConsecutiveBrowser int
 	ConsecutiveSearch  int
 	ConsecutiveErrors  int
+	ConsecutiveTargetErrors int // consecutive host-unreachable/connection-refused errors
 	EmptyResponseCount int
 	NoToolCount        int
 	RefusalCount       int // consecutive responses that look like a model-side safety refusal
@@ -357,6 +358,7 @@ func RegisterDefaultHooks(reg *HookRegistry) {
 	reg.Register(OnToolCall, hookCurlPreference)
 	reg.Register(OnStuckCheck, hookStuckNudge)
 	reg.Register(OnToolResult, hookWAFDetector)
+	reg.Register(OnToolResult, hookTargetHealthDetector)
 	reg.Register(OnToolResult, hookTechDetector)
 	reg.Register(OnToolResult, hookResultRepeatTracker)
 	reg.Register(OnFinishAttempt, hookFinishGatekeeper)
@@ -1034,6 +1036,45 @@ func hookWAFDetector(state *ScanState, args map[string]string) HookResult {
 			}
 			return HookResult{}
 		}
+	}
+
+	return HookResult{}
+}
+
+// ── hookTargetHealthDetector ──────────────────────────────────────────────────
+// Detects target network failures, host offline events, and IP bans mid-scan.
+func hookTargetHealthDetector(state *ScanState, args map[string]string) HookResult {
+	output := strings.ToLower(args["output"])
+	errorMsg := strings.ToLower(args["error"])
+	combined := output + " " + errorMsg
+
+	healthFailures := []string{
+		"connection refused", "could not resolve host", "name or service not known",
+		"no route to host", "operation timed out", "connection timed out",
+		"network is unreachable", "host is down", "ssl_error_syscall",
+		"curl: (7) failed to connect", "curl: (6) could not resolve host",
+	}
+
+	isHealthFailure := false
+	for _, failSignal := range healthFailures {
+		if strings.Contains(combined, failSignal) {
+			isHealthFailure = true
+			break
+		}
+	}
+
+	if isHealthFailure {
+		state.ConsecutiveTargetErrors++
+		if state.ConsecutiveTargetErrors == 3 {
+			return HookResult{
+				Nudge: `⚠️ TARGET UNREACHABLE / IP BAN ALERT: The target host stopped responding across 3 consecutive calls (connection refused / timeout / unreachable).
+Verify if the target application went offline, or if your client IP was banned by a firewall.
+If the host is unreachable, document what was tested in notes (add_note) and finish the scan gracefully.`,
+				EmitMessage: "⚠️ TARGET OFFLINE OR IP BANNED: Target host stopped responding across 3 consecutive requests.",
+			}
+		}
+	} else if strings.Contains(combined, "http/") || strings.Contains(combined, "200 ok") || strings.Contains(combined, "301") || strings.Contains(combined, "302") || strings.Contains(combined, "404") {
+		state.ConsecutiveTargetErrors = 0
 	}
 
 	return HookResult{}
