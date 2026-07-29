@@ -438,13 +438,13 @@ for chunk in $(cat /tmp/js_chunks.txt); do
   curl -s "https://TARGET/$chunk" -A "Mozilla/5.0" --max-time 10 >> /tmp/bundle.js 2>/dev/null
 done
 
-# Deep grep across all combined JS source:
+# Deep grep across all combined JS source (deduplicated & sorted for consistent iteration order):
 grep -oE '"https?://[^"]+' /tmp/bundle.js | sort -u > /tmp/js_urls.txt       # Full URLs
 grep -oE '"/api/[^"]*"' /tmp/bundle.js | sort -u > /tmp/js_api_paths.txt      # API paths
-grep -oE '"/(v[0-9]+|access|admin|auth|connect|user|internal)/[^"]*"' /tmp/bundle.js | sort -u  # Versioned paths
-grep -oE '[a-z0-9-]+\.(TARGET_DOMAIN)\.[a-z]+' /tmp/bundle.js | sort -u   # Subdomains
-grep -oE '(apiUrl|baseURL|API_URL|apiBase)[^,]*' /tmp/bundle.js | head -10     # API base URLs
-grep -oE '(token|secret|key|password|api_key|jwt|bearer)\s*[:=]\s*"[^"]*"' /tmp/bundle.js # Leaked secrets
+grep -oE '"/(v[0-9]+|access|admin|auth|connect|user|internal)/[^"]*"' /tmp/bundle.js | sort -u > /tmp/js_versioned_paths.txt # Versioned paths
+grep -oE '[a-z0-9-]+\.(TARGET_DOMAIN)\.[a-z]+' /tmp/bundle.js | sort -u > /tmp/js_subdomains.txt # Subdomains (sorted)
+grep -oE '(apiUrl|baseURL|API_URL|apiBase)[^,]*' /tmp/bundle.js | sort -u | head -10     # API base URLs
+grep -oE '(token|secret|key|password|api_key|jwt|bearer)\s*[:=]\s*"[^"]*"' /tmp/bundle.js | sort -u # Leaked secrets
 ` + "`" + `
 
 **Iteration 4: Test ALL subdomains, API bases, HTTP Verbs & Header Bypasses**

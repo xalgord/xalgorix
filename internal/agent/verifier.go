@@ -122,8 +122,11 @@ func (a *Agent) verifyFinding(req reporting.VerificationRequest) reporting.Verif
 
 		resp, err := a.client.Chat(msgs)
 		if err != nil {
-			// One retry, then give up (inconclusive — never auto-confirm on error).
-			resp, err = a.client.Chat(msgs)
+			// Up to 2 retries on temporary network/LLM errors before marking inconclusive.
+			for retry := 0; retry < 2 && err != nil; retry++ {
+				time.Sleep(500 * time.Millisecond)
+				resp, err = a.client.Chat(msgs)
+			}
 			if err != nil {
 				return reporting.VerificationVerdict{Inconclusive: true, Reason: "verifier LLM error: " + err.Error()}
 			}

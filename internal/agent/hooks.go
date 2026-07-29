@@ -340,7 +340,7 @@ func noteBlockedToolCall(state *ScanState, name string, args map[string]string) 
 // Each agent role has an optimal temperature tuned for its purpose.
 
 var (
-	TempScanner   = floatPtr(0.2) // creative enough for novel attack paths, structured enough for methodology
+	TempScanner   = floatPtr(0.0) // 100% deterministic baseline for max run-to-run consistency
 	TempReasoner  = floatPtr(0.2) // structured analysis with slight flexibility for nuanced verdicts
 	TempValidator = floatPtr(0.0) // fully deterministic — same input must produce same verdict
 	TempReporter  = floatPtr(0.3) // natural prose without risking fabricated technical details

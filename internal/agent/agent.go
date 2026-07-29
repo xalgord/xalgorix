@@ -799,7 +799,14 @@ func (a *Agent) Run(targets []string, instruction string) {
 		a.msgMu.Lock()
 		msgsSnapshot := make([]llm.Message, len(a.messages))
 		copy(msgsSnapshot, a.messages)
-		a.msgMu.Unlock()
+		// Adaptive Temperature Control:
+		// Default to TempScanner (0.0) for 100% deterministic, consistent scan behavior.
+		// Dynamically boost to 0.2 when stuck or retrying failed calls to allow creative payload variation.
+		scannerTemp := 0.0
+		if a.state.ConsecutiveSameCall >= 2 || a.state.ConsecutiveSameResult >= 2 || a.state.ConsecutiveErrors > 0 {
+			scannerTemp = 0.2
+		}
+		a.client.SetTemperature(&scannerTemp)
 
 		response, err := a.client.Chat(msgsSnapshot)
 		// Update activity after LLM response

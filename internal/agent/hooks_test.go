@@ -556,7 +556,7 @@ func TestRoleTemperatures(t *testing.T) {
 		temp *float64
 		want float64
 	}{
-		{"Scanner", TempScanner, 0.2},
+		{"Scanner", TempScanner, 0.0},
 		{"Reasoner", TempReasoner, 0.2},
 		{"Validator", TempValidator, 0.0},
 		{"Reporter", TempReporter, 0.3},
