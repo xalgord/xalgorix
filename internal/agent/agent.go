@@ -799,6 +799,8 @@ func (a *Agent) Run(targets []string, instruction string) {
 		a.msgMu.Lock()
 		msgsSnapshot := make([]llm.Message, len(a.messages))
 		copy(msgsSnapshot, a.messages)
+		a.msgMu.Unlock()
+
 		// Adaptive Temperature Control:
 		// Default to TempScanner (0.0) for 100% deterministic, consistent scan behavior.
 		// Dynamically boost to 0.2 when stuck or retrying failed calls to allow creative payload variation.
