@@ -52,6 +52,7 @@ type ScanState struct {
 	FinishAttempts             int
 	MaxFinishRejections        int
 	MinIterations              int
+	OASTProbesExecuted         int
 	DiscoveryMode              bool
 	ReconOnlyMode              bool
 	AllowedPhases              []int
@@ -454,6 +455,15 @@ func hookWorkTracker(state *ScanState, args map[string]string) HookResult {
 		if strings.Contains(cmd, "169.254") || strings.Contains(cmd, "metadata") ||
 			strings.Contains(cmd, "ssrf") || strings.Contains(cmd, "127.0.0.1") {
 			state.VulnClassesTested["ssrf"] = true
+		}
+		if strings.Contains(cmd, "xml") || strings.Contains(cmd, "doctype") ||
+			strings.Contains(cmd, "entity") || strings.Contains(cmd, "xxe") {
+			state.VulnClassesTested["xxe"] = true
+		}
+		if strings.Contains(cmd, "interactsh") || strings.Contains(cmd, "oob_callback") ||
+			strings.Contains(cmd, "interact.sh") || strings.Contains(cmd, "oast") ||
+			strings.Contains(cmd, "oob_url") || strings.Contains(cmd, "burpcollaborator") {
+			state.OASTProbesExecuted++
 		}
 		if strings.Contains(cmd, "ffuf") || strings.Contains(cmd, "gobuster") ||
 			strings.Contains(cmd, "dirsearch") || strings.Contains(cmd, "feroxbuster") {
@@ -1101,6 +1111,20 @@ func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 		return HookResult{}
 	}
 
+	// ── Mandatory Out-of-Band (OAST) Probing Gate ──
+	// Blind vulnerability classes (Blind XXE, Blind SSRF, Blind SQLi/RCE) cannot be proven non-existent
+	// using in-band HTTP responses alone. Require at least one OAST/interactsh callback payload attempt
+	// when blind classes (XXE/SSRF) are tested.
+	if state.OASTProbesExecuted == 0 && (state.VulnClassesTested["xxe"] || state.VulnClassesTested["ssrf"]) && state.FinishAttempts <= 2 {
+		return HookResult{
+			Block: true,
+			BlockReason: "⚠️ MANDATORY OUT-OF-BAND (OAST) PROBING REQUIRED:\n" +
+				"You tested blind vulnerability classes (XXE/SSRF), but executed 0 Out-of-Band (OAST/interactsh) callback payload probes.\n" +
+				"In-band HTTP responses alone cannot prove the non-existence of blind XXE or blind SSRF (e.g. egress DNS/HTTP requests).\n" +
+				"Generate an OAST domain (using interactsh / oob_callback) and send external DTD/SSRF payload requests before finishing.",
+		}
+	}
+
 	iter := state.Iteration
 	totalEndpoints := len(state.EndpointsTested)
 	injectionCount := len(state.InjectionEndpoints)
@@ -1257,6 +1281,7 @@ Continue testing. Call finish again after iteration %d.`, iter, minIter, coverag
 		"path_traversal": "Path Traversal: try ../../../etc/passwd, ..%2f..%2f in file/path params",
 		"ssrf":           "SSRF: try http://169.254.169.254, http://127.0.0.1 in URL params",
 		"crlf":           "CRLF: try %0d%0aInjected-Header:true in URL params and headers",
+		"xxe":            "XXE: try <!DOCTYPE test [<!ENTITY xxe SYSTEM \"http://...\">]> in XML endpoints",
 	}
 
 	var missingClasses []string
@@ -1271,9 +1296,23 @@ Continue testing. Call finish again after iteration %d.`, iter, minIter, coverag
 		sort.Strings(missingClasses) // deterministic order
 		return HookResult{
 			Block: true,
-			BlockReason: fmt.Sprintf("⚠️ Coverage gap: you haven't tested %d/7 mandatory vulnerability classes:\n\n%s\n\n"+
+			BlockReason: fmt.Sprintf("⚠️ Coverage gap: you haven't tested %d/8 mandatory vulnerability classes:\n\n%s\n\n"+
 				"Run at least ONE test for each missing class on the most promising endpoints, then call finish again.",
 				len(missingClasses), strings.Join(missingClasses, "\n")),
+		}
+	}
+
+	// ── Mandatory Out-of-Band (OAST) Probing Gate ──
+	// Blind vulnerability classes (Blind XXE, Blind SSRF, Blind SQLi/RCE) cannot be proven non-existent
+	// using in-band HTTP responses alone. Require at least one OAST/interactsh callback payload attempt
+	// when blind classes (XXE/SSRF) are tested.
+	if state.OASTProbesExecuted == 0 && (state.VulnClassesTested["xxe"] || state.VulnClassesTested["ssrf"]) && state.FinishAttempts <= 2 {
+		return HookResult{
+			Block: true,
+			BlockReason: "⚠️ MANDATORY OUT-OF-BAND (OAST) PROBING REQUIRED:\n" +
+				"You tested blind vulnerability classes (XXE/SSRF), but executed 0 Out-of-Band (OAST/interactsh) callback payload probes.\n" +
+				"In-band HTTP responses alone cannot prove the non-existence of blind XXE or blind SSRF (e.g. egress DNS/HTTP requests).\n" +
+				"Generate an OAST domain (using interactsh / oob_callback) and send external DTD/SSRF payload requests before finishing.",
 		}
 	}
 
