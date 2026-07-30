@@ -19,7 +19,7 @@ func Register(r *tools.Registry) {
 		Name:        "oob_callback",
 		Description: "Out-of-band (OAST) callback oracle for CONFIRMING blind vulnerabilities (blind SSRF, blind RCE, blind XSS, XXE, blind SQLi, blind CMDi). Captures DNS, HTTP and SMTP callbacks (via interactsh by default — no server setup needed), so even DNS-only sinks that merely resolve your host are proven. Workflow: (1) action=generate → get a unique callback URL/host; (2) plant it in your payload (an SSRF url param, a command like `curl <url>` or `nslookup <host>`, an XXE SYSTEM entity, a blind-XSS script src); (3) action=poll with the token → any recorded interaction is concrete PROOF the target reached your callback.",
 		Parameters: []tools.Parameter{
-			{Name: "action", Description: "'generate' to mint a new callback URL, or 'poll' to check for interactions on a token.", Required: true},
+			{Name: "action", Description: "'generate' to mint a new callback URL (default if omitted), or 'poll' to check for interactions on a token.", Required: false},
 			{Name: "token", Description: "For action=poll: the token returned by generate.", Required: false},
 		},
 		Execute: execute,

@@ -848,6 +848,10 @@ func formatResumeBriefing(rec *ScanRecord, contextID string) string {
 				lastEvents = append([]string{fmt.Sprintf("Executed tool %s with args: %v", e.ToolName, e.ToolArgs)}, lastEvents...)
 			case "tool_result":
 				out := e.Output
+				errStr := e.Error
+				if strings.Contains(out, "missing required parameter") || strings.Contains(errStr, "missing required parameter") {
+					continue
+				}
 				if len(out) > 300 {
 					out = out[:300] + "... (truncated)"
 				}

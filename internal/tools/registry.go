@@ -312,7 +312,7 @@ func (r *Registry) Execute(name string, args map[string]string) (Result, error) 
 			)
 		}
 		if len(missing) == 1 {
-			return Result{}, fmt.Errorf("missing required parameter '%s' for tool '%s'", missing[0], name)
+			return Result{}, fmt.Errorf("missing required parameter '%s' for tool '%s' — you MUST include <parameter=%s>value</parameter> inside <function=%s>...</function>", missing[0], name, missing[0], name)
 		}
 		return Result{}, fmt.Errorf(
 			"missing required parameters for tool '%s': %s — provide ALL of them in a single call (one <parameter=NAME>…</parameter> per field)",
