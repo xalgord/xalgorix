@@ -731,13 +731,11 @@ func finalizeScanRecordForResponse(rec *ScanRecord) {
 // Running scans from a previous server instance are marked as "stopped" since the agent process is gone.
 func (s *Server) rebuildInstancesFromDisk() {
 	for _, entry := range s.findAllScans() {
-		// If scan was "running" from a previous server instance, it's no longer active.
-		// Persist the correction so /api/scans and /api/instances agree after restart.
+		// If scan was "running" from a previous server instance, transition it to "pending" / "resuming"
+		// so the startup queue resumer can pick it back up without marking it as stopped or failed.
 		if entry.rec.Status == "running" {
-			stoppedAt := time.Now().Format(time.RFC3339)
-			entry.rec.Status = "stopped"
-			entry.rec.StopReason = "server_restart"
-			entry.rec.FinishedAt = stoppedAt
+			entry.rec.Status = "pending"
+			entry.rec.StopReason = "server_restart_resuming"
 			s.saveScanRecordTo(&entry.rec, entry.dir)
 		}
 

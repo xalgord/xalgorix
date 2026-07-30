@@ -1552,16 +1552,16 @@ func TestScanPersistence_ListLatestDeleteAndRebuild(t *testing.T) {
 		t.Fatal("subdomain scan should not be rebuilt as a top-level instance")
 	}
 	inst := s.instances["scan-b"]
-	if inst == nil || inst.Status != "stopped" || inst.StopReason != "server_restart" {
-		t.Fatalf("running scan was not marked stopped on rebuild: %#v", inst)
+	if inst == nil || inst.Status != "pending" || inst.StopReason != "server_restart_resuming" {
+		t.Fatalf("running scan was not marked pending on rebuild: %#v", inst)
 	}
 	_, rebuilt := s.findScanByID("scan-b")
-	if rebuilt == nil || rebuilt.Status != "stopped" || rebuilt.StopReason != "server_restart" || rebuilt.FinishedAt == "" {
-		t.Fatalf("rebuilt scan was not persisted as stopped: %#v", rebuilt)
+	if rebuilt == nil || rebuilt.Status != "pending" || rebuilt.StopReason != "server_restart_resuming" {
+		t.Fatalf("rebuilt scan was not persisted as pending: %#v", rebuilt)
 	}
 	_, rebuiltSub := s.findScanByID("subdomain")
-	if rebuiltSub == nil || rebuiltSub.Status != "stopped" || rebuiltSub.StopReason != "server_restart" {
-		t.Fatalf("subdomain running scan was not persisted as stopped: %#v", rebuiltSub)
+	if rebuiltSub == nil || rebuiltSub.Status != "pending" || rebuiltSub.StopReason != "server_restart_resuming" {
+		t.Fatalf("subdomain running scan was not persisted as pending: %#v", rebuiltSub)
 	}
 
 	rr = httptest.NewRecorder()
@@ -1578,7 +1578,7 @@ func TestScanPersistence_ListLatestDeleteAndRebuild(t *testing.T) {
 		if got.ID == "subdomain" {
 			t.Fatalf("subdomain scan leaked into rebuilt list: %#v", got)
 		}
-		if got.ID == "scan-b" && got.Status != "stopped" {
+		if got.ID == "scan-b" && got.Status != "pending" {
 			t.Fatalf("list scans still returned stale status for %s: %#v", got.ID, got)
 		}
 	}

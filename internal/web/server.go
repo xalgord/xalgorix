@@ -1138,11 +1138,11 @@ func (s *Server) Start() error {
 	// the auto-resume goroutine and both runMultiScan calls would stomp
 	// on the same cancelScan field.
 	go func() {
-		time.Sleep(5 * time.Second) // let HTTP server fully initialize
+		time.Sleep(3 * time.Second) // let HTTP server fully initialize
 		s.queueResumeMu.Lock()
 		defer s.queueResumeMu.Unlock()
-		if s.running.Load() || s.hasPendingOrRunningInstance() || s.hasQueueResumeLaunchingLocked() {
-			log.Printf("[AUTO-RESUME] Skipping — a scan is already pending or running.")
+		if s.running.Load() || s.hasQueueResumeLaunchingLocked() {
+			log.Printf("[AUTO-RESUME] Skipping — a scan execution is already active.")
 			return
 		}
 		entries := autoResumeQueueEntries(s.validQueueStateEntries(true))
