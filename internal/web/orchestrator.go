@@ -96,9 +96,21 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 		ScanContext:         req.ScanContext,
 	}
 	s.seedResumeInstanceFromRecord(instance, req)
-	chatCfg := *scanCfg
-	instance.chatCfg = &chatCfg
 	s.instancesMu.Lock()
+	if req.IsResume {
+		if req.ResumeScanID != "" && req.ResumeScanID != instanceID {
+			delete(s.instances, req.ResumeScanID)
+		}
+		if req.ResumeSubScanID != "" && req.ResumeSubScanID != instanceID {
+			delete(s.instances, req.ResumeSubScanID)
+		}
+		// Remove pre-resume pending placeholders created by rebuildInstancesFromDisk for the same target
+		for id, inst := range s.instances {
+			if id != instanceID && inst.Status == "pending" && len(req.Targets) > 0 && (strings.Contains(inst.Targets, req.Targets[0]) || strings.Contains(req.Targets[0], inst.Targets)) {
+				delete(s.instances, id)
+			}
+		}
+	}
 	s.instances[instanceID] = instance
 	s.instancesMu.Unlock()
 
@@ -489,14 +501,44 @@ func (s *Server) makeScanDir(target string) string {
 	return scanDir
 }
 
+func (s *Server) findLatestScanDirForTarget(target string) string {
+	cleanTarget := normalizeScanTarget(target)
+	if cleanTarget == "" {
+		return ""
+	}
+	var latestDir string
+	var latestTime time.Time
+	for _, entry := range s.findAllScans() {
+		if normalizeScanTarget(entry.rec.Target) == cleanTarget {
+			t, err := time.Parse(time.RFC3339Nano, entry.rec.StartedAt)
+			if err != nil {
+				t, _ = time.Parse(time.RFC3339, entry.rec.StartedAt)
+			}
+			if t.After(latestTime) || latestDir == "" {
+				latestTime = t
+				latestDir = entry.dir
+			}
+		}
+	}
+	return latestDir
+}
+
 func (s *Server) scanDirForResume(req ScanRequest, target string) (string, bool) {
-	if !req.IsResume || req.ResumeScanDir == "" {
+	if !req.IsResume {
 		return s.makeScanDir(target), false
 	}
-	if req.ResumeActiveTarget != "" && req.ResumeActiveTarget != target {
-		return s.makeScanDir(target), false
+	if req.ResumeScanDir != "" {
+		if req.ResumeActiveTarget == "" || req.ResumeActiveTarget == target {
+			if dir, ok := s.resumeScanDirOrNew(req.ResumeScanDir, target); ok {
+				return dir, true
+			}
+		}
 	}
-	return s.resumeScanDirOrNew(req.ResumeScanDir, target)
+	if latestDir := s.findLatestScanDirForTarget(target); latestDir != "" {
+		log.Printf("[AUTO-RESUME] Resuming latest existing scan dir on disk: %s", latestDir)
+		return latestDir, true
+	}
+	return s.makeScanDir(target), false
 }
 
 func (s *Server) scanDirForWildcardSubdomainResume(req ScanRequest, subdomain string, subIndex int) (string, bool) {

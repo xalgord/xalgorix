@@ -730,6 +730,22 @@ func finalizeScanRecordForResponse(rec *ScanRecord) {
 // Skips subdomain scans (those with ParentTarget set) — those are shown under their parent.
 // Running scans from a previous server instance are marked as "stopped" since the agent process is gone.
 func (s *Server) rebuildInstancesFromDisk() {
+	queueEntries := s.validQueueStateEntries(false)
+	qMap := make(map[string]string)
+	for _, qe := range queueEntries {
+		if qe.state != nil && qe.state.InstanceID != "" {
+			if qe.state.ActiveScanDir != "" {
+				qMap[filepath.Clean(qe.state.ActiveScanDir)] = qe.state.InstanceID
+			}
+			if qe.state.ActiveScanID != "" {
+				qMap[qe.state.ActiveScanID] = qe.state.InstanceID
+			}
+			if len(qe.state.Targets) > 0 {
+				qMap[normalizeScanTarget(qe.state.Targets[0])] = qe.state.InstanceID
+			}
+		}
+	}
+
 	for _, entry := range s.findAllScans() {
 		// If scan was "running" from a previous server instance, transition it to "pending" / "resuming"
 		// so the startup queue resumer can pick it back up without marking it as stopped or failed.
@@ -743,8 +759,18 @@ func (s *Server) rebuildInstancesFromDisk() {
 		if entry.rec.ParentTarget != "" {
 			continue
 		}
+
+		instID := entry.rec.ID
+		if mappedID, ok := qMap[filepath.Clean(entry.dir)]; ok {
+			instID = mappedID
+		} else if mappedID, ok := qMap[entry.rec.ID]; ok {
+			instID = mappedID
+		} else if mappedID, ok := qMap[normalizeScanTarget(entry.rec.Target)]; ok {
+			instID = mappedID
+		}
+
 		inst := &ScanInstance{
-			ID:             entry.rec.ID,
+			ID:             instID,
 			Name:           entry.rec.Name,
 			Targets:        entry.rec.Target,
 			ParentTarget:   entry.rec.ParentTarget,
@@ -776,7 +802,7 @@ func (s *Server) rebuildInstancesFromDisk() {
 		inst.ScanIntensity = normalizeActivityMode(inst.ScanIntensity)
 		chatCfg := *s.cfg
 		inst.chatCfg = &chatCfg
-		s.instances[entry.rec.ID] = inst
+		s.instances[instID] = inst
 	}
 	// Statuses may have been rewritten on disk above (running → stopped), so
 	// drop any memoized scan list built before recovery.

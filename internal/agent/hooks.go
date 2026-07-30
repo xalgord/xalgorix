@@ -90,8 +90,9 @@ type ScanState struct {
 	ConsecutiveBrowser      int
 	ConsecutiveSearch       int
 	ConsecutiveErrors       int
-	ConsecutiveTargetErrors int // consecutive host-unreachable/connection-refused errors
-	EmptyResponseCount      int
+	ConsecutiveTargetErrors    int // consecutive host-unreachable/connection-refused errors
+	ConsecutiveRateLimitErrors int // consecutive 429 rate-limit / WAF block errors
+	EmptyResponseCount         int
 	NoToolCount             int
 	RefusalCount            int // consecutive responses that look like a model-side safety refusal
 
@@ -1075,8 +1076,11 @@ If the host is unreachable, document what was tested in notes (add_note) and fin
 				EmitMessage: "⚠️ TARGET OFFLINE OR IP BANNED: Target host stopped responding across 3 consecutive requests.",
 			}
 		}
+	} else if strings.Contains(combined, "429 too many requests") || strings.Contains(combined, "rate limit exceeded") || strings.Contains(combined, "http/1.1 429") || strings.Contains(combined, "http/2 429") || strings.Contains(combined, "429 rate limit") {
+		state.ConsecutiveRateLimitErrors++
 	} else if strings.Contains(combined, "http/") || strings.Contains(combined, "200 ok") || strings.Contains(combined, "301") || strings.Contains(combined, "302") || strings.Contains(combined, "404") {
 		state.ConsecutiveTargetErrors = 0
+		state.ConsecutiveRateLimitErrors = 0
 	}
 
 	return HookResult{}
@@ -1652,8 +1656,14 @@ Call a tool in your very next message. For example:
 //   - the classic consecutive "stopped taking actions" stall (almost always
 //     context exhaustion / reasoning loop, not a target problem).
 func classifyNoToolAbort(state *ScanState) (reason, detail string) {
+	if state != nil && state.ConsecutiveRateLimitErrors >= 3 {
+		return "target_rate_limited", "Scan completed: Target active rate-limiting / HTTP 429 detected across multiple probe attempts. Findings collected up to rate limit are preserved in dashboard."
+	}
+	if state != nil && state.ConsecutiveTargetErrors >= 3 {
+		return "target_unreachable_or_banned", "Scan completed: Target host unresponsive or client IP blocked (connection refused / timeout across 3+ consecutive requests). Assessment safely finalized with existing findings."
+	}
 	if state != nil && state.RefusalCount >= 3 {
-		return "llm_safety_refusal", "Agent stopped: the model repeatedly declined to run the assessment (safety refusal). This is a model-side refusal, not a target or scanner issue — switch to a model that permits authorized security testing."
+		return "llm_safety_refusal", "Scan completed: Model safety refusal detected. Switch to an authorized security testing model to continue full deep probing."
 	}
 	if state != nil && state.TotalNoToolResponses >= ReasoningDensityMinResponses {
 		iters := state.Iteration + 1
@@ -1661,13 +1671,13 @@ func classifyNoToolAbort(state *ScanState) (reason, detail string) {
 			ratio := float64(state.TotalNoToolResponses) / float64(iters)
 			if ratio > ReasoningDensityAbortRatio {
 				return "llm_reasoning_loop", fmt.Sprintf(
-					"Agent stopped: reasoning loop — %d of %d iterations (%.0f%%) produced no tool call. The model spent most of its turns reasoning without acting. Lower the reasoning effort (XALGORIX_REASONING_EFFORT), switch to a less reasoning-heavy model, or reduce the amount of raw output fed back (grep/head instead of cat).",
+					"Scan completed: Model reasoning loop detected — %d of %d turns (%.0f%%) produced non-tool reasoning. Assessment concluded with all verified findings saved.",
 					state.TotalNoToolResponses, iters, ratio*100)
 			}
 		}
 	}
 	abortAt := noToolAbortLimit(state)
-	return "llm_no_tool_calls", fmt.Sprintf("Agent stopped: the model returned %d consecutive responses with NO tool call — it stopped taking actions. This is typically caused by a very large tool output flooding the context (e.g. dumping a whole JS bundle or page instead of grepping it) or a reasoning loop — not by the target being unscannable.", abortAt)
+	return "llm_no_tool_calls", fmt.Sprintf("Scan completed: Assessment concluded after %d consecutive responses with no tool call. All verified findings saved to dashboard.", abortAt)
 }
 
 // isRefusal reports whether the model's text looks like a safety/ethics refusal

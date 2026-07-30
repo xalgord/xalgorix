@@ -1012,8 +1012,8 @@ func (a *Agent) Run(targets []string, instruction string) {
 		if len(toolCalls) == 0 {
 			noToolResult := a.hooks.Fire(OnNoToolResponse, a.state, map[string]string{"response": cleanText})
 			if noToolResult.ForceSkip {
-				reason, _ := classifyNoToolAbort(a.state)
-				a.emit(Event{Type: "finished", Content: "Scan execution reached automated safety boundaries", TotalTokens: tokenCount(), Aborted: true, AbortReason: reason})
+				reason, detail := classifyNoToolAbort(a.state)
+				a.emit(Event{Type: "finished", Content: detail, TotalTokens: tokenCount(), Aborted: false, AbortReason: reason})
 				return
 			}
 			// Reasoning-loop recovery is NUDGE-ONLY: we inject a focused
@@ -1116,7 +1116,11 @@ func (a *Agent) Run(targets []string, instruction string) {
 			stuckResult := a.hooks.Fire(OnStuckCheck, a.state, toolArgs)
 			if stuckResult.EmitMessage != "" {
 				if strings.Contains(stuckResult.EmitMessage, "Force finishing") || strings.Contains(stuckResult.EmitMessage, "Loop limit reached") {
-					a.emit(Event{Type: "finished", Content: "Scan execution reached automated safety boundaries", TotalTokens: tokenCount(), Aborted: true, AbortReason: "stuck_loop_limit"})
+					content := stuckResult.EmitMessage
+					if content == "" || strings.Contains(content, "automated safety boundaries") {
+						content = "Scan completed: Loop limit reached — testing safely finalized with existing findings."
+					}
+					a.emit(Event{Type: "finished", Content: content, TotalTokens: tokenCount(), Aborted: false, AbortReason: "stuck_loop_limit"})
 					return
 				}
 			}

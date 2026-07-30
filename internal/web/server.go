@@ -1151,6 +1151,9 @@ func (s *Server) Start() error {
 		}
 		log.Printf("[AUTO-RESUME] Resuming %d interrupted scan queue(s)", len(entries))
 		for _, entry := range entries {
+			if s.stopReq.Load() {
+				break
+			}
 			req := scanRequestFromQueueState(entry.state, entry.path)
 			if len(req.Targets) == 0 {
 				continue
@@ -1160,10 +1163,10 @@ func (s *Server) Start() error {
 			scanCfg := *s.cfg
 			resumeKey := queueResumeEntryKey(entry)
 			s.markQueueResumeLaunchingLocked(resumeKey)
-			go func(req ScanRequest, scanCfg config.Config, instanceID, resumeKey string) {
+			func() {
 				defer s.clearQueueResumeLaunching(resumeKey)
 				s.runMultiScan(req, &scanCfg, instanceID)
-			}(req, scanCfg, instanceID, resumeKey)
+			}()
 		}
 	}()
 

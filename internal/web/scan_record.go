@@ -210,10 +210,17 @@ func normalizeSeverityBucket(severity string) string {
 }
 
 func (s *Server) seedResumeInstanceFromRecord(inst *ScanInstance, req ScanRequest) {
-	if inst == nil || !req.IsResume || req.ResumeScanDir == "" {
+	if inst == nil || !req.IsResume {
 		return
 	}
-	rec, ok := loadScanRecordFromDir(req.ResumeScanDir)
+	resumeDir := req.ResumeScanDir
+	if resumeDir == "" && len(req.Targets) > 0 {
+		resumeDir = s.findLatestScanDirForTarget(req.Targets[0])
+	}
+	if resumeDir == "" {
+		return
+	}
+	rec, ok := loadScanRecordFromDir(resumeDir)
 	if !ok || rec == nil {
 		return
 	}
