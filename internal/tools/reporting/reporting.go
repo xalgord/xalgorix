@@ -331,6 +331,41 @@ func reportVulnWithContextID(contextID string, args map[string]string) (tools.Re
 	}
 	store.mu.RUnlock()
 
+	// ── Auto-inference for missing/incomplete fields ──
+	if proof == "" {
+		if desc := strings.TrimSpace(args["description"]); len(desc) >= 20 {
+			proof = desc
+			args["exploitation_proof"] = proof
+		} else if tech := strings.TrimSpace(args["technical_analysis"]); len(tech) >= 20 {
+			proof = tech
+			args["exploitation_proof"] = proof
+		} else if poc := strings.TrimSpace(args["poc_description"]); len(poc) >= 20 {
+			proof = poc
+			args["exploitation_proof"] = proof
+		}
+	}
+	if severity != "info" && method == "" {
+		// Infer verification method from proof or title if evidence is present
+		lp := strings.ToLower(proof + " " + title + " " + args["description"])
+		switch {
+		case strings.Contains(lp, "error") || strings.Contains(lp, "sqlstate") || strings.Contains(lp, "syntax"):
+			method = "error_based"
+			args["verification_method"] = method
+		case strings.Contains(lp, "sleep") || strings.Contains(lp, "delay") || strings.Contains(lp, "time"):
+			method = "time_based"
+			args["verification_method"] = method
+		case strings.Contains(lp, "callback") || strings.Contains(lp, "oob") || strings.Contains(lp, "dns"):
+			method = "callback_received"
+			args["verification_method"] = method
+		case strings.Contains(lp, "uid=") || strings.Contains(lp, "secret"):
+			method = "data_extracted"
+			args["verification_method"] = method
+		case strings.Contains(lp, "reflect") || strings.Contains(lp, "script"):
+			method = "reflected"
+			args["verification_method"] = method
+		}
+	}
+
 	// ── Gate 1: Validate verification method ──
 	// verification_method is no longer a registry-required param (so the registry
 	// doesn't batch-reject before this richer, severity-aware gate runs). A real
