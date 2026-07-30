@@ -305,6 +305,12 @@ func (r *Registry) Execute(name string, args map[string]string) (Result, error) 
 		}
 	}
 	if len(missing) > 0 {
+		if name == "report_vulnerability" {
+			return Result{}, fmt.Errorf(
+				"missing required parameters for tool '%s': %s — ⚠️ CRITICAL: You attempted to report a vulnerability but the call failed. You MUST re-call report_vulnerability IMMEDIATELY with ALL required parameters in a single call so this finding is saved to the dashboard",
+				name, strings.Join(missing, ", "),
+			)
+		}
 		if len(missing) == 1 {
 			return Result{}, fmt.Errorf("missing required parameter '%s' for tool '%s'", missing[0], name)
 		}

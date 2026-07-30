@@ -53,6 +53,7 @@ type ScanState struct {
 	MaxFinishRejections        int
 	MinIterations              int
 	OASTProbesExecuted         int
+	PendingFailedReportCalls   int
 	DiscoveryMode              bool
 	ReconOnlyMode              bool
 	AllowedPhases              []int
@@ -84,15 +85,15 @@ type ScanState struct {
 	BrowserAuthContext bool // true after browser login/auth detected — justifies browser use
 
 	// Stuck-loop detection
-	StuckDomain        string
-	StuckIterations    int
-	ConsecutiveBrowser int
-	ConsecutiveSearch  int
-	ConsecutiveErrors  int
+	StuckDomain             string
+	StuckIterations         int
+	ConsecutiveBrowser      int
+	ConsecutiveSearch       int
+	ConsecutiveErrors       int
 	ConsecutiveTargetErrors int // consecutive host-unreachable/connection-refused errors
-	EmptyResponseCount int
-	NoToolCount        int
-	RefusalCount       int // consecutive responses that look like a model-side safety refusal
+	EmptyResponseCount      int
+	NoToolCount             int
+	RefusalCount            int // consecutive responses that look like a model-side safety refusal
 
 	// Repeated-call loop detection (orthogonal to the browser/search stuck
 	// tracking above). Catches the agent regenerating the same tool call with
@@ -361,6 +362,7 @@ func RegisterDefaultHooks(reg *HookRegistry) {
 	reg.Register(OnToolResult, hookTargetHealthDetector)
 	reg.Register(OnToolResult, hookTechDetector)
 	reg.Register(OnToolResult, hookResultRepeatTracker)
+	reg.Register(OnToolResult, hookReportVulnerabilityTracker)
 	reg.Register(OnFinishAttempt, hookFinishGatekeeper)
 	reg.Register(OnEmptyResponse, hookEmptyResponseHandler)
 	reg.Register(OnNoToolResponse, hookNoToolHandler)
@@ -1142,6 +1144,14 @@ func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 		return HookResult{}
 	}
 
+	// Gate: Do not allow finishing if a previous report_vulnerability call failed and hasn't been successfully re-called yet.
+	if state.PendingFailedReportCalls > 0 {
+		return HookResult{
+			Block:       true,
+			BlockReason: "⚠️ UNREPORTED VULNERABILITY DETECTED: You attempted to call report_vulnerability previously, but the tool call failed (e.g. missing required parameters). You MUST successfully re-run report_vulnerability with ALL required fields (title, severity, description, endpoint, exploitation_proof) before finishing, so the vulnerability is saved to the scan report and dashboard.",
+		}
+	}
+
 	// Discovery mode (Phase 1 enumeration): allow finish after minimum work
 	if state.DiscoveryMode {
 		if state.TerminalCalls < 3 {
@@ -1881,6 +1891,26 @@ func extractPaths(blob string) []string {
 	}
 	sort.Strings(paths)
 	return paths
+}
+
+// ── hookReportVulnerabilityTracker ─────────────────────────────────────────
+// Tracks calls to report_vulnerability and maintains PendingFailedReportCalls.
+func hookReportVulnerabilityTracker(state *ScanState, args map[string]string) HookResult {
+	toolName := args["tool"]
+	if toolName != "report_vulnerability" {
+		return HookResult{}
+	}
+	errStr := args["error"]
+	outputStr := args["output"]
+
+	if errStr != "" || strings.Contains(outputStr, "missing required parameter") {
+		state.PendingFailedReportCalls++
+	} else if strings.Contains(outputStr, "Vulnerability reported:") || strings.Contains(outputStr, "RECORDED as EXPLOIT-PROVEN") {
+		if state.PendingFailedReportCalls > 0 {
+			state.PendingFailedReportCalls--
+		}
+	}
+	return HookResult{}
 }
 
 // ── hookResetOnSuccess ───────────────────────────────────────────────────────

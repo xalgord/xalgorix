@@ -1093,7 +1093,6 @@ func TestRepeatDetector_CeilingAbortsLoop(t *testing.T) {
 		}
 	}
 
-
 	if finalMessage == "" || !strings.Contains(finalMessage, "Loop limit reached") {
 		t.Fatalf("expected loop limit abort message, got: %q", finalMessage)
 	}
@@ -1127,3 +1126,48 @@ func TestTrivialNoOpCommand_LoopDetector(t *testing.T) {
 	}
 }
 
+func TestHookReportVulnerabilityTracker_BlocksFinishOnPendingFailedCalls(t *testing.T) {
+	state := NewScanState()
+
+	// 1. Initial state: PendingFailedReportCalls is 0, finish allowed (assuming minimums met)
+	state.Iteration = 10
+	state.TerminalCalls = 10
+	state.ReconDone = true
+	state.EndpointInventorySaved = true
+	state.DiscoveryMode = true
+
+	res := hookFinishGatekeeper(state, map[string]string{})
+	if res.Block {
+		t.Fatalf("expected finish allowed, got blocked: %s", res.BlockReason)
+	}
+
+	// 2. Report vulnerability fails due to missing parameters
+	hookReportVulnerabilityTracker(state, map[string]string{
+		"tool":   "report_vulnerability",
+		"output": "missing required parameter 'title' for tool 'report_vulnerability'",
+	})
+	if state.PendingFailedReportCalls != 1 {
+		t.Fatalf("expected PendingFailedReportCalls = 1, got %d", state.PendingFailedReportCalls)
+	}
+
+	// 3. Calling finish now MUST be blocked
+	res = hookFinishGatekeeper(state, map[string]string{})
+	if !res.Block || !strings.Contains(res.BlockReason, "UNREPORTED VULNERABILITY DETECTED") {
+		t.Fatalf("expected finish to be blocked with UNREPORTED VULNERABILITY DETECTED, got: %+v", res)
+	}
+
+	// 4. Report vulnerability succeeds
+	hookReportVulnerabilityTracker(state, map[string]string{
+		"tool":   "report_vulnerability",
+		"output": "✅ Vulnerability reported: [XALG-1] Test (CRITICAL)",
+	})
+	if state.PendingFailedReportCalls != 0 {
+		t.Fatalf("expected PendingFailedReportCalls = 0 after success, got %d", state.PendingFailedReportCalls)
+	}
+
+	// 5. Calling finish now succeeds again
+	res = hookFinishGatekeeper(state, map[string]string{})
+	if res.Block {
+		t.Fatalf("expected finish allowed after successful report, got blocked: %s", res.BlockReason)
+	}
+}
