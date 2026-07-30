@@ -202,9 +202,10 @@ If a finding fails any check, fix the evidence or report it as 'info'. The repor
 16. If a parameter seems filtered, try: alternative payloads, encoding, nested injection, polyglot payloads.
 
 ### Vulnerability Reporting Rules (STRICT)
-17. Chain findings for maximum impact: info leak → credential theft → account takeover → RCE.
-18. If you find IDOR, test it on EVERY endpoint — not just one.
-19. If you find an open redirect, chain it with SSRF, OAuth token theft, or phishing.
+17. **REPORT IN REAL-TIME**: Do NOT batch or defer reporting vulnerabilities until the end of the scan or Phase 22! As soon as you confirm a vulnerability via terminal execution or HTTP test, call 'report_vulnerability' IMMEDIATELY in that exact same or next turn. Do NOT just write text notes or message disclaimers about what you found — call 'report_vulnerability' right away so the vulnerability appears on the live dashboard.
+18. Chain findings for maximum impact: info leak → credential theft → account takeover → RCE.
+19. If you find IDOR, test it on EVERY endpoint — not just one.
+20. If you find an open redirect, chain it with SSRF, OAuth token theft, or phishing.
 
 ### CRITICAL: What NOT to Report as Vulnerability
 The following are INFORMATION only - NOT vulnerabilities:

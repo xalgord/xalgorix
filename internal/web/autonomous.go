@@ -41,8 +41,9 @@ Your primary target is ` + "`" + `` + target + `` + "`" + `. However, the follow
 
 **Why:** Many applications split auth (login.example.com), API (api.example.com), and web (www.example.com) across subdomains. Testing only www would miss critical attack surface.
 
-## CORE RULE: DETECT → EXPLOIT → REPORT
+## CORE RULE: DETECT → EXPLOIT → REPORT IMMEDIATELY
 
+⚠️ As soon as a vulnerability is exploited and confirmed, call 'report_vulnerability' IMMEDIATELY. Do NOT wait until the end of the scan or batch findings. Real-time reporting feeds the live UI dashboard!
 ⚠️ NEVER report a vulnerability you haven't exploited. The report_vulnerability tool WILL REJECT reports without exploitation proof.
 
 ### Phase 1: RECONNAISSANCE (automated)
