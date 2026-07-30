@@ -202,6 +202,22 @@ export function useStopInstance() {
   });
 }
 
+export function usePauseInstance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.pauseInstance(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.instances }),
+  });
+}
+
+export function useResumeInstance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.resumeInstance(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.instances }),
+  });
+}
+
 export function useRestartInstance() {
   const qc = useQueryClient();
   return useMutation({

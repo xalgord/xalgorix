@@ -31,6 +31,8 @@ import { ErrorState, EmptyState } from "@/components/states";
 import {
   useScan,
   useStopInstance,
+  usePauseInstance,
+  useResumeInstance,
   useStartSavedInstance,
   useDeleteScan,
   useDeleteVuln,
@@ -60,6 +62,7 @@ import {
   MoreHorizontal,
   X,
   Play,
+  Pause,
   Trash2,
   ShieldAlert,
   Terminal,
@@ -79,6 +82,8 @@ export default function ScanDetailPage() {
   const id = scanId ?? "";
   const { data: scan, isLoading, isFetching, error, refetch } = useScan(id);
   const stop = useStopInstance();
+  const pause = usePauseInstance();
+  const resume = useResumeInstance();
   const start = useStartSavedInstance();
   const del = useDeleteScan();
   const subscribe = useWSStore((s) => s.subscribe);
@@ -123,7 +128,10 @@ export default function ScanDetailPage() {
     );
 
   const status = (scan.status || "").toLowerCase();
-  const canStop = status === "running" || status === "paused";
+  const canPause = status === "running";
+  const canResume = status === "paused";
+  const canStop =
+    status === "running" || status === "pending" || status === "paused";
   const canStart =
     status === "saved" ||
     status === "stopped" ||
@@ -205,6 +213,26 @@ export default function ScanDetailPage() {
               disabled={start.isPending}
             >
               <Play className="mr-1 h-4 w-4" /> Start
+            </Button>
+          )}
+          {canPause && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => pause.mutate(scan.instance_id || scan.id)}
+              disabled={pause.isPending}
+            >
+              <Pause className="mr-1 h-4 w-4" /> Pause
+            </Button>
+          )}
+          {canResume && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => resume.mutate(scan.instance_id || scan.id)}
+              disabled={resume.isPending}
+            >
+              <Play className="mr-1 h-4 w-4" /> Resume
             </Button>
           )}
           {canStop && (

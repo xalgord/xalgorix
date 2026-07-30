@@ -16,6 +16,8 @@ import { EmptyState, ErrorState } from "@/components/states"
 import {
   useInstancesPage,
   useStopInstance,
+  usePauseInstance,
+  useResumeInstance,
   useStartSavedInstance,
   useRestartInstance,
   useDeleteScan,
@@ -31,6 +33,7 @@ import {
   MemoryStick,
   HardDrive,
   Play,
+  Pause,
   Square,
   RotateCw,
   Layers,
@@ -269,11 +272,15 @@ function ResourceStat({
 
 function InstanceCard({ instance }: { instance: ScanInstance }) {
   const stop = useStopInstance()
+  const pause = usePauseInstance()
+  const resume = useResumeInstance()
   const start = useStartSavedInstance()
   const restart = useRestartInstance()
   const del = useDeleteScan()
   const status = (instance.status || "").toLowerCase()
-  const canStop = status === "running" || status === "paused"
+  const canPause = status === "running"
+  const canResume = status === "paused"
+  const canStop = status === "running" || status === "pending" || status === "paused"
   const canStart = status === "saved" || status === "stopped" || status === "failed" || status === "finished"
   const isActive = status === "running" || status === "pending" || status === "paused"
 
@@ -350,6 +357,26 @@ function InstanceCard({ instance }: { instance: ScanInstance }) {
               onClick={() => start.mutate(instance.id)}
             >
               <Play className="mr-1 h-3.5 w-3.5" /> Start
+            </Button>
+          )}
+          {canPause && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pause.isPending}
+              onClick={() => pause.mutate(instance.id)}
+            >
+              <Pause className="mr-1 h-3.5 w-3.5" /> Pause
+            </Button>
+          )}
+          {canResume && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={resume.isPending}
+              onClick={() => resume.mutate(instance.id)}
+            >
+              <Play className="mr-1 h-3.5 w-3.5" /> Resume
             </Button>
           )}
           {canStop && (
