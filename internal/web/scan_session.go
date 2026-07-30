@@ -174,6 +174,15 @@ func (s *Server) executeScanSession(sess *scanSession) {
 	sess.record = s.scanRecordForSession(sess)
 	s.saveScanRecordTo(sess.record, sess.scanDir)
 
+	if !sess.resetState && sess.record != nil {
+		if sess.record.Iterations > 0 {
+			agnt.SetInitialIteration(sess.record.Iterations)
+		}
+		if briefing := formatResumeBriefing(sess.record, sctx.ID); briefing != "" {
+			agnt.SetResumeBriefing(briefing)
+		}
+	}
+
 	// 5. Event processing goroutine — drains events and broadcasts to WebSocket
 	done := make(chan struct{})
 	go func() {
@@ -805,6 +814,55 @@ func mapValues(values map[string]string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func formatResumeBriefing(rec *ScanRecord, contextID string) string {
+	if rec == nil {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("🔄 SCENARIO RESUME BRIEFING (Continued scan session from Iteration %d):\n", rec.Iterations))
+	sb.WriteString(fmt.Sprintf("Target: %s\n", rec.Target))
+	if len(rec.Vulns) > 0 {
+		sb.WriteString(fmt.Sprintf("Confirmed Vulnerabilities Reported So Far (%d):\n", len(rec.Vulns)))
+		for _, v := range rec.Vulns {
+			sb.WriteString(fmt.Sprintf(" - [%s] %s (%s)\n", strings.ToUpper(v.Severity), v.Title, v.Endpoint))
+		}
+	} else {
+		sb.WriteString("No vulnerabilities reported yet.\n")
+	}
+
+	notesData := notes.FormatForContextID(contextID)
+	if notesData != "" {
+		sb.WriteString("\nDiscovered Endpoints & Target Notes:\n")
+		sb.WriteString(notesData)
+		sb.WriteString("\n")
+	}
+
+	var lastEvents []string
+	if len(rec.Events) > 0 {
+		for i := len(rec.Events) - 1; i >= 0 && len(lastEvents) < 6; i-- {
+			e := rec.Events[i]
+			if e.Type == "tool_call" {
+				lastEvents = append([]string{fmt.Sprintf("Executed tool %s with args: %v", e.ToolName, e.ToolArgs)}, lastEvents...)
+			} else if e.Type == "tool_result" {
+				out := e.Output
+				if len(out) > 300 {
+					out = out[:300] + "... (truncated)"
+				}
+				lastEvents = append([]string{fmt.Sprintf("Tool result (%s): %s", e.ToolName, out)}, lastEvents...)
+			}
+		}
+	}
+	if len(lastEvents) > 0 {
+		sb.WriteString("\nRecent Execution Events Prior To Restart:\n")
+		for _, te := range lastEvents {
+			sb.WriteString(" • " + te + "\n")
+		}
+	}
+
+	sb.WriteString("\nCONTINUE ASSESSMENT: Resume deep penetration testing from where you left off. Do not re-run basic recon steps already documented above. Target new endpoints or unverified attack vectors now.")
+	return sb.String()
 }
 
 func minInt(a, b int) int {

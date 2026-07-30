@@ -155,6 +155,11 @@ type Agent struct {
 	// scanContextBriefing is built from scanContext in prepareScanEnvironment
 	// and injected as a high-priority user message at the start of Run.
 	scanContextBriefing string
+
+	// initialIter and resumeBriefing preserve iteration count and previous execution
+	// history when a scan is resumed/restarted across server restarts.
+	initialIter    int
+	resumeBriefing string
 }
 
 // AgentOption configures optional behavior on a *Agent. The
@@ -712,9 +717,13 @@ func (a *Agent) Run(targets []string, instruction string) {
 	if a.scanContextBriefing != "" {
 		a.messages = append(a.messages, llm.Message{Role: "user", Content: a.scanContextBriefing})
 	}
+	if a.resumeBriefing != "" {
+		a.messages = append(a.messages, llm.Message{Role: "user", Content: a.resumeBriefing})
+	}
 
 	// Initialize scan state for hooks (replaces 17+ local tracking variables)
 	a.state = NewScanState()
+	a.state.Iteration = a.initialIter
 	if a.cfg != nil {
 		// Thread the configurable no-tool abort threshold (0 = never give up).
 		a.state.NoToolAbortLimit = a.cfg.NoToolAbortAt
@@ -740,7 +749,7 @@ func (a *Agent) Run(targets []string, instruction string) {
 	// Running total of tool calls, for the optional resource budget.
 	toolCallsTotal := 0
 
-	iter := 0
+	iter := a.initialIter
 	for ; (a.maxIter == 0 || iter < a.maxIter) && !a.stopped.Load() && (a.ctx == nil || a.ctx.Err() == nil); iter++ {
 		// Reset activity watchdog on each iteration — IMMEDIATELY, no delay
 		a.touchActivity()
@@ -1428,6 +1437,18 @@ func (a *Agent) SetSourceRepo(s string) { a.sourceRepo = strings.TrimSpace(s) }
 // SetScanContext sets the per-scan context artifact path (OpenAPI/HAR/Postman
 // file or directory) used to seed the attack surface. Call before Run().
 func (a *Agent) SetScanContext(s string) { a.scanContext = strings.TrimSpace(s) }
+
+// SetInitialIteration sets the starting iteration index for resumed runs. Call before Run().
+func (a *Agent) SetInitialIteration(iter int) {
+	if iter > 0 {
+		a.initialIter = iter
+	}
+}
+
+// SetResumeBriefing sets a briefing summarizing prior state when resuming a scan. Call before Run().
+func (a *Agent) SetResumeBriefing(s string) {
+	a.resumeBriefing = strings.TrimSpace(s)
+}
 
 // prepareScanEnvironment wires per-scan authenticated-session credentials and
 // whitebox source into the shared scan context. Runs at the start of Run()
