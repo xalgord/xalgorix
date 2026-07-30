@@ -1697,12 +1697,17 @@ func reasoningLoopResumePrompt(state *ScanState, trigger string) string {
 STOP planning, STOP explaining, STOP apologizing, and STOP outputting plain text reasoning. You are an autonomous testing agent and MUST interact with the target using tool calls. ` + next + `
 
 Your very NEXT response MUST contain an XML tool call:
-1. To run a probe command, call terminal_execute:
+1. If you wish to finish or conclude the scan, call finish:
+<function=finish>
+<parameter=summary>Detailed final summary of findings</parameter>
+</function>
+
+2. To run a probe command, call terminal_execute:
 <function=terminal_execute>
 <parameter=command>your command here</parameter>
 </function>
 
-2. If you have confirmed vulnerabilities to submit, call report_vulnerability:
+3. If you have confirmed vulnerabilities to submit, call report_vulnerability:
 <function=report_vulnerability>
 <parameter=title>Vulnerability Title</parameter>
 <parameter=severity>CRITICAL</parameter>
