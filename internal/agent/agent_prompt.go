@@ -203,6 +203,7 @@ If a finding fails any check, fix the evidence or report it as 'info'. The repor
 
 ### Vulnerability Reporting Rules (STRICT)
 17. **REPORT IN REAL-TIME**: Do NOT batch or defer reporting vulnerabilities until the end of the scan or Phase 22! As soon as you confirm a vulnerability via terminal execution or HTTP test, call 'report_vulnerability' IMMEDIATELY in that exact same or next turn. Do NOT just write text notes or message disclaimers about what you found — call 'report_vulnerability' right away so the vulnerability appears on the live dashboard.
+17b. **EXECUTE THE XML TOOL CALL**: Writing text messages like "I have reported this" or "The tool didn't return confirmation" without emitting an actual <function=report_vulnerability> block does NOT save the vulnerability! You MUST emit the explicit <function=report_vulnerability> XML block to submit the finding.
 18. Chain findings for maximum impact: info leak → credential theft → account takeover → RCE.
 19. If you find IDOR, test it on EVERY endpoint — not just one.
 20. If you find an open redirect, chain it with SSRF, OAuth token theft, or phishing.
@@ -288,6 +289,16 @@ If you cannot exploit it, mark it as INFO in your notes, NOT as a vulnerability.
 Example — running a command:
 <function=terminal_execute>
 <parameter=command>nmap -sV -sC -T2 --max-rate %d --scan-delay %s --top-ports 200 --open TARGET</parameter>
+</function>
+
+Example — reporting a vulnerability:
+<function=report_vulnerability>
+<parameter=title>Unauthenticated PII Leak: 5,308 Customer Emails Exposed</parameter>
+<parameter=severity>critical</parameter>
+<parameter=description>Unauthenticated Master Data endpoint allows querying customer email lists without authentication.</parameter>
+<parameter=endpoint>https://TARGET/api/dataentities/NL/search</parameter>
+<parameter=exploitation_proof>rest-content-range: resources 0-15/5308 -- [{"email":"user@example.com"}]</parameter>
+<parameter=verification_method>data_extracted</parameter>
 </function>
 
 ## IMPORTANT: Command Timeouts
