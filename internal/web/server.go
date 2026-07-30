@@ -1163,10 +1163,10 @@ func (s *Server) Start() error {
 			scanCfg := *s.cfg
 			resumeKey := queueResumeEntryKey(entry)
 			s.markQueueResumeLaunchingLocked(resumeKey)
-			func() {
-				defer s.clearQueueResumeLaunching(resumeKey)
-				s.runMultiScan(req, &scanCfg, instanceID)
-			}()
+			go func(e queueStateEntry, r ScanRequest, cfg config.Config, id string, key string) {
+				defer s.clearQueueResumeLaunching(key)
+				s.runMultiScan(r, &cfg, id)
+			}(entry, req, scanCfg, instanceID, resumeKey)
 		}
 	}()
 
@@ -2434,6 +2434,7 @@ func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request) {
 
 		s.broadcastToInstance(instanceID, WSEvent{Type: "paused", Content: "Scan paused by user"})
 		s.broadcastDashboard(WSEvent{Type: "instance_updated", Content: instanceID})
+		s.notifyAdmissionWake()
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "paused", "instance_id": instanceID})
 		return
 	}

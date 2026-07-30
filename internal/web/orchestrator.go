@@ -248,11 +248,7 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 		// again on the safety-net ticker). This wake fires regardless
 		// of whether the scan finished, errored, was stopped, or
 		// panicked, because it lives in the unconditional defer.
-		// (Task 11.2 / R3.2, R3.6 / Property 5.)
-		select {
-		case s.admissionWake <- struct{}{}:
-		default:
-		}
+		s.notifyAdmissionWake()
 		log.Printf("[INFO] runMultiScan instance %s exited (ranScan=%v)", instanceID, ranScan)
 	}()
 
@@ -1653,5 +1649,12 @@ func cleanTmpSubdomainFiles() {
 				log.Printf("[CLEANUP] Removed stale /tmp file: %s", path)
 			}
 		}
+	}
+}
+
+func (s *Server) notifyAdmissionWake() {
+	select {
+	case s.admissionWake <- struct{}{}:
+	default:
 	}
 }
