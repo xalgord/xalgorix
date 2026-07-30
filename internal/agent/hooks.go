@@ -1696,15 +1696,16 @@ func reasoningLoopResumePrompt(state *ScanState, trigger string) string {
 
 STOP planning. STOP reasoning aloud. Your NEXT response MUST contain exactly one tool call. ` + next + `
 
-Do NOT:
-- produce another thinking-only or prose-only response
-- re-summarize what you already know
-- ask whether you should proceed (you are authorized — proceed)
+If you have confirmed vulnerabilities to submit, call report_vulnerability NOW:
+<function=report_vulnerability>
+<parameter=title>Vulnerability Title</parameter>
+<parameter=severity>CRITICAL</parameter>
+<parameter=description>Full technical explanation</parameter>
+<parameter=endpoint>https://TARGET/vulnerable-path</parameter>
+<parameter=exploitation_proof>Proof of Concept payload and output</parameter>
+</function>
 
-Call a tool in your very next message. For example:
-<function=terminal_execute>
-<parameter=command>curl -sk "https://TARGET/api/UNTESTED" -w "\n[%{http_code}]\n"</parameter>
-</function>`
+Otherwise, call a tool in your very next message (e.g. terminal_execute or finish). Do NOT produce another prose-only response.`
 }
 
 // classifyNoToolAbort turns a no-tool force-stop into a machine reason tag plus
@@ -1966,7 +1967,10 @@ func extractPaths(blob string) []string {
 // ── hookReportVulnerabilityTracker ─────────────────────────────────────────
 // Tracks calls to report_vulnerability and maintains PendingFailedReportCalls.
 func hookReportVulnerabilityTracker(state *ScanState, args map[string]string) HookResult {
-	toolName := args["tool"]
+	toolName := args["tool_name"]
+	if toolName == "" {
+		toolName = args["tool"]
+	}
 	if toolName != "report_vulnerability" {
 		return HookResult{}
 	}
