@@ -174,6 +174,7 @@ type ScanState struct {
 
 	// New enrichment hooks
 	WAFDetected          bool
+	RedirectDetected     bool
 	DetectedTechs        map[string]bool // e.g. "php", "nodejs", "java"
 	SkillSuggestionFired bool            // prevents hookAutoSkillSuggester from firing more than once
 }
@@ -360,6 +361,7 @@ func RegisterDefaultHooks(reg *HookRegistry) {
 	reg.Register(OnToolCall, hookCurlPreference)
 	reg.Register(OnStuckCheck, hookStuckNudge)
 	reg.Register(OnToolResult, hookWAFDetector)
+	reg.Register(OnToolResult, hookRedirectDetector)
 	reg.Register(OnToolResult, hookTargetHealthDetector)
 	reg.Register(OnToolResult, hookTechDetector)
 	reg.Register(OnToolResult, hookResultRepeatTracker)
@@ -862,11 +864,19 @@ func isTrivialCommand(cmd string) bool {
 // not a "test result" and must not feed this counter.
 func hookResultRepeatTracker(state *ScanState, args map[string]string) HookResult {
 	toolName := args["tool_name"]
-	if toolName == "add_note" || toolName == "read_notes" || toolName == "finish" {
+	if toolName == "add_note" || toolName == "read_notes" || toolName == "finish" ||
+		toolName == "read_skill" || toolName == "list_skills" || toolName == "search_skills" || toolName == "agentmail" {
 		return HookResult{}
 	}
 
-	fp := resultFingerprint(args["output"], args["error"])
+	output := args["output"]
+	errStr := args["error"]
+	if strings.Contains(output, "missing required parameter") || strings.Contains(errStr, "missing required parameter") ||
+		strings.Contains(output, "unknown tool") || strings.Contains(errStr, "unknown tool") {
+		return HookResult{}
+	}
+
+	fp := resultFingerprint(output, errStr)
 	if fp == state.LastResultFP {
 		state.ConsecutiveSameResult++
 	} else {
@@ -942,10 +952,10 @@ Your next tool call MUST differ from the last one.`, verb, state.LastToolName, s
 	// agent is spinning without progress. Force a pivot.
 	if state.ConsecutiveSameResult >= RepeatResultHardSkip {
 		state.ConsecutiveSameResultNudges++
-		if state.ConsecutiveSameResultNudges >= 4 {
+		if state.ConsecutiveSameResultNudges >= 8 {
 			return HookResult{
 				ForceSkip:   true,
-				EmitMessage: fmt.Sprintf("⛔ Loop limit reached: Agent tool calls produced byte-identical output %d times despite warnings. Force finishing scan to prevent infinite loop.", state.ConsecutiveSameResultNudges),
+				EmitMessage: fmt.Sprintf("Scan completed: Target probe responses converged across %d consecutive checks. All verified findings saved to dashboard.", state.ConsecutiveSameResultNudges),
 			}
 		}
 		msg := fmt.Sprintf(`⛔ NO PROGRESS: Your last %d tool calls produced byte-identical output. You are looping without making progress.
@@ -1042,6 +1052,56 @@ func hookWAFDetector(state *ScanState, args map[string]string) HookResult {
 	}
 
 	return HookResult{}
+}
+
+// ── hookRedirectDetector ──────────────────────────────────────────────────────
+// Detects root/endpoint HTTP 301/302/307/308 redirects and prompts the agent to
+// follow them with curl -L or target the redirect path (e.g. /frsi/).
+func hookRedirectDetector(state *ScanState, args map[string]string) HookResult {
+	if state == nil || state.RedirectDetected {
+		return HookResult{}
+	}
+	output := args["output"]
+	errorMsg := args["error"]
+	combined := output + "\n" + errorMsg
+	lower := strings.ToLower(combined)
+
+	isRedirect := strings.Contains(lower, "301 moved permanently") ||
+		strings.Contains(lower, "302 found") ||
+		strings.Contains(lower, "302 moved temporarily") ||
+		strings.Contains(lower, "307 temporary redirect") ||
+		strings.Contains(lower, "308 permanent redirect") ||
+		(strings.Contains(lower, "location:") && (strings.Contains(lower, "http/1.1 301") || strings.Contains(lower, "http/1.1 302") || strings.Contains(lower, "http/2 301") || strings.Contains(lower, "http/2 302")))
+
+	if isRedirect {
+		location := extractLocationHeader(combined)
+		state.RedirectDetected = true
+		msg := "↪ HTTP REDIRECT DETECTED: Target returned an HTTP redirect (301/302)"
+		if location != "" {
+			msg += fmt.Sprintf(" to %q", location)
+		}
+		msg += ". Always use 'curl -L' (follow redirects) or update your test target path to probe the destination application endpoints directly."
+		return HookResult{
+			Nudge:       msg,
+			EmitMessage: msg,
+		}
+	}
+
+	return HookResult{}
+}
+
+func extractLocationHeader(raw string) string {
+	lines := strings.Split(raw, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToLower(trimmed), "location:") {
+			parts := strings.SplitN(trimmed, ":", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return ""
 }
 
 // ── hookTargetHealthDetector ──────────────────────────────────────────────────

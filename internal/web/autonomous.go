@@ -32,6 +32,7 @@ You are an elite penetration tester. YOUR GOAL: Find REAL, EXPLOITABLE vulnerabi
 Your primary target is ` + "`" + `` + target + `` + "`" + `. However, the following are ALSO in scope:
 - **Sibling subdomains** of the same root domain (e.g., if target is www.example.com → login.example.com, api.example.com, app.example.com are ALL in scope)
 - Any subdomain the target **redirects you to** for login, OAuth, SSO, or API calls
+- **HTTP REDIRECT HANDLING (CRITICAL)**: If the target returns an HTTP 301, 302, 307, or 308 redirect (e.g., https://frsi.nationalbank.kz/ -> https://frsi.nationalbank.kz/frsi/), ALWAYS follow the redirect (e.g., use 'curl -L' or 'requests.get(..., allow_redirects=True)') or update your testing path to target the destination path (/frsi/) directly. Do NOT stop probing at the root 301/302 redirect response.
 - The root domain itself (e.g., example.com without www)
 
 **Out of scope:** Completely different domains, third-party services (Google, AWS, CDNs), unless they are explicitly part of the target's infrastructure.
