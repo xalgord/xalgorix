@@ -871,8 +871,7 @@ func hookResultRepeatTracker(state *ScanState, args map[string]string) HookResul
 
 	output := args["output"]
 	errStr := args["error"]
-	if strings.Contains(output, "missing required parameter") || strings.Contains(errStr, "missing required parameter") ||
-		strings.Contains(output, "unknown tool") || strings.Contains(errStr, "unknown tool") {
+	if strings.Contains(output, "unknown tool") || strings.Contains(errStr, "unknown tool") {
 		return HookResult{}
 	}
 
