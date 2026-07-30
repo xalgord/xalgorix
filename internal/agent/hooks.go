@@ -1694,9 +1694,15 @@ func reasoningLoopResumePrompt(state *ScanState, trigger string) string {
 	}
 	return prefix + `
 
-STOP planning. STOP reasoning aloud. Your NEXT response MUST contain exactly one tool call. ` + next + `
+STOP planning, STOP explaining, STOP apologizing, and STOP outputting plain text reasoning. You are an autonomous testing agent and MUST interact with the target using tool calls. ` + next + `
 
-If you have confirmed vulnerabilities to submit, call report_vulnerability NOW:
+Your very NEXT response MUST contain an XML tool call:
+1. To run a probe command, call terminal_execute:
+<function=terminal_execute>
+<parameter=command>your command here</parameter>
+</function>
+
+2. If you have confirmed vulnerabilities to submit, call report_vulnerability:
 <function=report_vulnerability>
 <parameter=title>Vulnerability Title</parameter>
 <parameter=severity>CRITICAL</parameter>
@@ -1705,7 +1711,7 @@ If you have confirmed vulnerabilities to submit, call report_vulnerability NOW:
 <parameter=exploitation_proof>Proof of Concept payload and output</parameter>
 </function>
 
-Otherwise, call a tool in your very next message (e.g. terminal_execute or finish). Do NOT produce another prose-only response.`
+Call ONE tool NOW. Do NOT output any plain text without a tool call.`
 }
 
 // classifyNoToolAbort turns a no-tool force-stop into a machine reason tag plus

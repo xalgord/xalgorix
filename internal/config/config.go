@@ -333,7 +333,7 @@ func load() *Config {
 		DisableBrowser:      envOrBool("XALGORIX_DISABLE_BROWSER", false),
 		MaxIterations:       envOrInt("XALGORIX_MAX_ITERATIONS", 0),
 		MinIterations:       envOrInt("XALGORIX_MIN_ITERATIONS", 50),
-		NoToolAbortAt:       envOrInt("XALGORIX_NO_TOOL_ABORT_AT", 30),
+		NoToolAbortAt:       envOrInt("XALGORIX_NO_TOOL_ABORT_AT", 0),
 		MaxFinishRejections: envOrInt("XALGORIX_MAX_FINISH_REJECTIONS", 15),
 		TargetAuth:          envOr("XALGORIX_TARGET_AUTH", ""),
 		TargetAuthSecondary: envOr("XALGORIX_TARGET_AUTH_B", ""),
