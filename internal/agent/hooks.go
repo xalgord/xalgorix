@@ -1903,7 +1903,7 @@ func hookReportVulnerabilityTracker(state *ScanState, args map[string]string) Ho
 	errStr := args["error"]
 	outputStr := args["output"]
 
-	if errStr != "" || strings.Contains(outputStr, "missing required parameter") {
+	if errStr != "" || strings.Contains(outputStr, "missing required parameter") || strings.Contains(outputStr, "❌ REJECTED") {
 		state.PendingFailedReportCalls++
 	} else if strings.Contains(outputStr, "Vulnerability reported:") || strings.Contains(outputStr, "RECORDED as EXPLOIT-PROVEN") {
 		if state.PendingFailedReportCalls > 0 {

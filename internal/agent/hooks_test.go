@@ -1150,16 +1150,29 @@ func TestHookReportVulnerabilityTracker_BlocksFinishOnPendingFailedCalls(t *test
 		t.Fatalf("expected PendingFailedReportCalls = 1, got %d", state.PendingFailedReportCalls)
 	}
 
+	// 2b. Report vulnerability fails due to Gate 1 (missing verification_method)
+	hookReportVulnerabilityTracker(state, map[string]string{
+		"tool":   "report_vulnerability",
+		"output": "❌ REJECTED: 'SQL Injection' reported as CRITICAL but has NO verification_method",
+	})
+	if state.PendingFailedReportCalls != 2 {
+		t.Fatalf("expected PendingFailedReportCalls = 2, got %d", state.PendingFailedReportCalls)
+	}
+
 	// 3. Calling finish now MUST be blocked
 	res = hookFinishGatekeeper(state, map[string]string{})
 	if !res.Block || !strings.Contains(res.BlockReason, "UNREPORTED VULNERABILITY DETECTED") {
 		t.Fatalf("expected finish to be blocked with UNREPORTED VULNERABILITY DETECTED, got: %+v", res)
 	}
 
-	// 4. Report vulnerability succeeds
+	// 4. Report vulnerability succeeds (for call 1 and 2)
 	hookReportVulnerabilityTracker(state, map[string]string{
 		"tool":   "report_vulnerability",
 		"output": "✅ Vulnerability reported: [XALG-1] Test (CRITICAL)",
+	})
+	hookReportVulnerabilityTracker(state, map[string]string{
+		"tool":   "report_vulnerability",
+		"output": "✅ Vulnerability reported: [XALG-2] Test 2 (CRITICAL)",
 	})
 	if state.PendingFailedReportCalls != 0 {
 		t.Fatalf("expected PendingFailedReportCalls = 0 after success, got %d", state.PendingFailedReportCalls)

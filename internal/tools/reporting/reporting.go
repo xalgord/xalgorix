@@ -338,7 +338,7 @@ func reportVulnWithContextID(contextID string, args map[string]string) (tools.Re
 	// advisory and may omit it. Any method that IS provided must be valid.
 	if severity != "info" && method == "" {
 		return tools.Result{
-			Output: fmt.Sprintf("❌ REJECTED: '%s' reported as %s but has NO verification_method. Exploit the vulnerability first, then report HOW you verified it (one of: %s). If it is not exploitable, downgrade severity to 'info'.",
+			Output: fmt.Sprintf("❌ REJECTED: '%s' reported as %s but has NO verification_method — ⚠️ CRITICAL: You MUST re-call report_vulnerability IMMEDIATELY with 'verification_method' specified (one of: %s) and ALL other required parameters so this finding is saved to the dashboard. If it is not exploitable, downgrade severity to 'info'.",
 				title, strings.ToUpper(severity), formatValidMethods()),
 		}, nil
 	}
