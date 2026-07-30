@@ -121,7 +121,14 @@ type scanEntry struct {
 func (s *Server) findAllScans() []scanEntry {
 	var results []scanEntry
 	_ = filepath.WalkDir(s.dataDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == "scratch" || name == "reports" || name == "logs" || name == "artifacts" || name == "tools" || name == "snapshots" || name == "notes" || name == ".git" {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if d.Name() != "scan.json" {
@@ -179,7 +186,14 @@ func (s *Server) findAllScanSummaries() []scanEntry {
 	seen := make(map[string]struct{})
 
 	_ = filepath.WalkDir(s.dataDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == "scratch" || name == "reports" || name == "logs" || name == "artifacts" || name == "tools" || name == "snapshots" || name == "notes" || name == ".git" {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if d.Name() != "scan.json" {
