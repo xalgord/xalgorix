@@ -85,16 +85,16 @@ type ScanState struct {
 	BrowserAuthContext bool // true after browser login/auth detected — justifies browser use
 
 	// Stuck-loop detection
-	StuckDomain             string
-	StuckIterations         int
-	ConsecutiveBrowser      int
-	ConsecutiveSearch       int
-	ConsecutiveErrors       int
+	StuckDomain                string
+	StuckIterations            int
+	ConsecutiveBrowser         int
+	ConsecutiveSearch          int
+	ConsecutiveErrors          int
 	ConsecutiveTargetErrors    int // consecutive host-unreachable/connection-refused errors
 	ConsecutiveRateLimitErrors int // consecutive 429 rate-limit / WAF block errors
 	EmptyResponseCount         int
-	NoToolCount             int
-	RefusalCount            int // consecutive responses that look like a model-side safety refusal
+	NoToolCount                int
+	RefusalCount               int // consecutive responses that look like a model-side safety refusal
 
 	// Repeated-call loop detection (orthogonal to the browser/search stuck
 	// tracking above). Catches the agent regenerating the same tool call with

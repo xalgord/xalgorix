@@ -843,9 +843,10 @@ func formatResumeBriefing(rec *ScanRecord, contextID string) string {
 	if len(rec.Events) > 0 {
 		for i := len(rec.Events) - 1; i >= 0 && len(lastEvents) < 6; i-- {
 			e := rec.Events[i]
-			if e.Type == "tool_call" {
+			switch e.Type {
+			case "tool_call":
 				lastEvents = append([]string{fmt.Sprintf("Executed tool %s with args: %v", e.ToolName, e.ToolArgs)}, lastEvents...)
-			} else if e.Type == "tool_result" {
+			case "tool_result":
 				out := e.Output
 				if len(out) > 300 {
 					out = out[:300] + "... (truncated)"
