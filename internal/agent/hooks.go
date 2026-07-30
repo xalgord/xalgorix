@@ -1300,15 +1300,13 @@ func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 			}
 			coverageNote := fmt.Sprintf("\n- Endpoints tested: %d (injection: %d, access control: %d, dirbusting hosts: %d, depth: %.1f/endpoint)",
 				totalEndpoints, injectionCount, accessControlCount, dirBustingCount, depth)
-			nudgeMsg := fmt.Sprintf(`⚠️ Only %d/%d iterations completed. You still have capacity to test more.
+			nudgeMsg := fmt.Sprintf(`⚠️ You are at iteration %d/%d. Do NOT stop early — perform DEEP FUZZING on discovered endpoints now:
 
-Before finishing, verify you have covered:
-- All discovered endpoints and parameters tested MANUALLY
-- Common vulnerability classes (SQLi, XSS, SSRF, IDOR, broken auth)
-- Technology-specific CVEs
-- API endpoints found in JavaScript files%s%s%s
+1. **Parameter & Payload Fuzzing**: Perform boundary testing, parameter key discovery (arjun/x8), and ReDoS regex fuzzing on input parameters.
+2. **Load Deep Knowledge Skills**: Use read_skill to load vulnerability-specific bypass techniques for the target's stack.
+3. **Automated Scanning**: Run nuclei or ffuf on discovered API routes for hidden endpoints.%s%s%s
 
-Continue testing. Call finish again after iteration %d.`, iter, minIter, coverageNote, scannerNote, skillNote, minIter)
+Execute your next tool call NOW.`, iter, minIter, coverageNote, scannerNote, skillNote)
 
 			return HookResult{
 				Block:       true,
