@@ -4,6 +4,7 @@ package agentsgraph
 import (
 	"fmt"
 	"log"
+	"os"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -72,38 +73,38 @@ func Register(r *tools.Registry, agentRunner AgentRunner) {
 		Execute: createAgent,
 	})
 
-	// Asynchronous sub-agent — runs in background
-	r.Register(&tools.Tool{
-		Name:        "spawn_agent",
-		Description: "Spawn a sub-agent asynchronously and return an agent_id immediately. You can continue doing other work and use check_agent or wait_agent later to get results. Max 3 concurrent sub-agents allowed.",
-		Parameters: []tools.Parameter{
-			{Name: "name", Description: "Name for the sub-agent (e.g. 'Directory Brute-forcing')", Required: true},
-			{Name: "task", Description: "Task description for the sub-agent", Required: true},
-			{Name: "target", Description: "Target URL/path for the sub-agent", Required: false},
-		},
-		Execute: spawnAgent,
-	})
+	// Async sub-agent tools are gated behind XALGORIX_ENABLE_ASYNC_AGENTS to prevent zombie goroutines & semaphore leaks
+	if os.Getenv("XALGORIX_ENABLE_ASYNC_AGENTS") == "true" {
+		r.Register(&tools.Tool{
+			Name:        "spawn_agent",
+			Description: "Spawn a sub-agent asynchronously and return an agent_id immediately. You can continue doing other work and use check_agent or wait_agent later to get results. Max 3 concurrent sub-agents allowed.",
+			Parameters: []tools.Parameter{
+				{Name: "name", Description: "Name for the sub-agent (e.g. 'Directory Brute-forcing')", Required: true},
+				{Name: "task", Description: "Task description for the sub-agent", Required: true},
+				{Name: "target", Description: "Target URL/path for the sub-agent", Required: false},
+			},
+			Execute: spawnAgent,
+		})
 
-	// Check status
-	r.Register(&tools.Tool{
-		Name:        "check_agent",
-		Description: "Check the status and partial results of an asynchronously spawned sub-agent.",
-		Parameters: []tools.Parameter{
-			{Name: "agent_id", Description: "The ID returned by spawn_agent", Required: true},
-		},
-		Execute: checkAgent,
-	})
+		r.Register(&tools.Tool{
+			Name:        "check_agent",
+			Description: "Check the status and partial results of an asynchronously spawned sub-agent.",
+			Parameters: []tools.Parameter{
+				{Name: "agent_id", Description: "The ID returned by spawn_agent", Required: true},
+			},
+			Execute: checkAgent,
+		})
 
-	// Wait for completion
-	r.Register(&tools.Tool{
-		Name:        "wait_agent",
-		Description: "Block and wait until a spawned sub-agent completes or fails.",
-		Parameters: []tools.Parameter{
-			{Name: "agent_id", Description: "The ID returned by spawn_agent", Required: true},
-			{Name: "timeout", Description: "Timeout in seconds to wait (default 600)", Required: false},
-		},
-		Execute: waitAgent,
-	})
+		r.Register(&tools.Tool{
+			Name:        "wait_agent",
+			Description: "Block and wait until a spawned sub-agent completes or fails.",
+			Parameters: []tools.Parameter{
+				{Name: "agent_id", Description: "The ID returned by spawn_agent", Required: true},
+				{Name: "timeout", Description: "Timeout in seconds to wait (default 600)", Required: false},
+			},
+			Execute: waitAgent,
+		})
+	}
 }
 
 func createAgent(args map[string]string) (tools.Result, error) {

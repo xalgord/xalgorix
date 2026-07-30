@@ -149,7 +149,7 @@ func (a *Agent) verifyFinding(req reporting.VerificationRequest) reporting.Verif
 			// Route through the SAME scope guard + hard-timeout the main agent
 			// applies, so the verifier cannot probe out-of-scope/local hosts and
 			// a hung re-test cannot outlive the report_vulnerability call.
-			res := a.execVerifierToolGuarded(vreg, tc.Name, tc.Args)
+			res := a.execVerifierToolGuarded(vreg, tc.Name, tc.Args, deadline)
 			out := res.Output
 			if res.Error != "" {
 				out = "error: " + res.Error
@@ -219,7 +219,7 @@ func (a *Agent) verifyFinding(req reporting.VerificationRequest) reporting.Verif
 // localhost/RFC1918/dashboard-listener guard and the per-tool watchdog —
 // letting it probe hosts the main agent blocks and leaving a hung tool running
 // past the report_vulnerability ceiling.
-func (a *Agent) execVerifierToolGuarded(vreg *tools.Registry, name string, args map[string]string) tools.Result {
+func (a *Agent) execVerifierToolGuarded(vreg *tools.Registry, name string, args map[string]string, deadline time.Time) tools.Result {
 	if blocked, reason := a.shouldBlockForOutOfScope(name, args); blocked {
 		return tools.Result{Output: "⛔ OUT-OF-SCOPE TARGET BLOCKED — " + reason +
 			"\nYou cannot probe this host during verification. If the finding depends on reaching it, it is not independently verifiable here — submit an 'inconclusive' verdict."}
@@ -240,6 +240,14 @@ func (a *Agent) execVerifierToolGuarded(vreg *tools.Registry, name string, args 
 	}()
 
 	timeout := a.hardTimeoutFor(name)
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return tools.Result{Error: "[verifier deadline reached]"}
+	}
+	if remaining < timeout {
+		timeout = remaining
+	}
+
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
@@ -247,12 +255,6 @@ func (a *Agent) execVerifierToolGuarded(vreg *tools.Registry, name string, args 
 		a.touchActivity()
 		return res
 	case <-timer.C:
-		switch name {
-		case "terminal_execute", "python_action":
-			a.scanCtx.Terminal.KillAll()
-		case "browser_action":
-			browser.CleanupContext(a.scanCtx.ID)
-		}
 		return tools.Result{Error: fmt.Sprintf("[verifier tool %q TIMEOUT after %s]", name, timeout)}
 	case <-a.ctx.Done():
 		return tools.Result{Error: "agent stopped during verification"}
