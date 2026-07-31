@@ -754,7 +754,6 @@ func (c *Client) chatWithRetry(messages []Message) (string, error) {
 
 		// Track if last error was a rate limit for the post-loop wrapper
 		if isRateLimitError(errStr) {
-			lastErr = fmt.Errorf("rate limited: %w", err)
 			// A 429/usage-window response is not made more likely to succeed by
 			// replaying the same full context three to five times immediately.
 			// Return to the agent loop so its bounded, interruptible backoff owns

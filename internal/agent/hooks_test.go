@@ -1211,7 +1211,7 @@ func TestHookReportVulnerabilityTracker_CapsMalformedRecovery(t *testing.T) {
 		}
 	}
 	if res := hookReportRetryGuard(state, map[string]string{
-		"tool_name":    "report_vulnerability",
+		"tool_name":   "report_vulnerability",
 		"title":       "A corrected finding",
 		"severity":    "medium",
 		"description": "complete corrected description",
