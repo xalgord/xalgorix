@@ -1150,22 +1150,23 @@ func TestHookReportVulnerabilityTracker_BlocksFinishOnPendingFailedCalls(t *test
 		t.Fatalf("expected PendingFailedReportCalls = 1, got %d", state.PendingFailedReportCalls)
 	}
 
-	// 2b. Report vulnerability fails due to Gate 1 (missing verification_method)
+	// 2b. A semantic rejection is a resolved candidate, not an unresolved
+	// schema failure. It must not deadlock the finish path.
 	hookReportVulnerabilityTracker(state, map[string]string{
 		"tool":   "report_vulnerability",
 		"output": "❌ REJECTED: 'SQL Injection' reported as CRITICAL but has NO verification_method",
 	})
-	if state.PendingFailedReportCalls != 2 {
-		t.Fatalf("expected PendingFailedReportCalls = 2, got %d", state.PendingFailedReportCalls)
+	if state.PendingFailedReportCalls != 0 {
+		t.Fatalf("semantic rejection must clear PendingFailedReportCalls, got %d", state.PendingFailedReportCalls)
 	}
 
-	// 3. Calling finish now MUST be blocked
+	// 3. Calling finish after the semantic rejection is allowed.
 	res = hookFinishGatekeeper(state, map[string]string{})
-	if !res.Block || !strings.Contains(res.BlockReason, "UNREPORTED VULNERABILITY DETECTED") {
-		t.Fatalf("expected finish to be blocked with UNREPORTED VULNERABILITY DETECTED, got: %+v", res)
+	if res.Block {
+		t.Fatalf("expected finish to be allowed after semantic rejection, got: %+v", res)
 	}
 
-	// 4. Report vulnerability succeeds (for call 1 and 2)
+	// 4. A successful report is also a terminal resolution.
 	hookReportVulnerabilityTracker(state, map[string]string{
 		"tool":   "report_vulnerability",
 		"output": "✅ Vulnerability reported: [XALG-1] Test (CRITICAL)",
@@ -1182,5 +1183,42 @@ func TestHookReportVulnerabilityTracker_BlocksFinishOnPendingFailedCalls(t *test
 	res = hookFinishGatekeeper(state, map[string]string{})
 	if res.Block {
 		t.Fatalf("expected finish allowed after successful report, got blocked: %s", res.BlockReason)
+	}
+}
+
+func TestHookReportVulnerabilityTracker_CapsMalformedRecovery(t *testing.T) {
+	state := NewScanState()
+	state.Iteration = 10
+	state.TerminalCalls = 10
+	state.ReconDone = true
+	state.EndpointInventorySaved = true
+	state.DiscoveryMode = true
+	for i := 0; i < maxReportRepairAttempts; i++ {
+		res := hookReportVulnerabilityTracker(state, map[string]string{
+			"tool":   "report_vulnerability",
+			"output": "missing required parameters for tool 'report_vulnerability': title, severity",
+		})
+		if i < maxReportRepairAttempts-1 && state.PendingFailedReportCalls != 1 {
+			t.Fatalf("attempt %d: pending = %d, want 1", i+1, state.PendingFailedReportCalls)
+		}
+		if i == maxReportRepairAttempts-1 {
+			if state.PendingFailedReportCalls != 0 || !state.ReportRetryLimitReached {
+				t.Fatalf("limit state = pending %d, reached %v; want 0,true", state.PendingFailedReportCalls, state.ReportRetryLimitReached)
+			}
+			if res.Nudge == "" {
+				t.Fatal("expected a final repair nudge")
+			}
+		}
+	}
+	if res := hookReportRetryGuard(state, map[string]string{
+		"tool_name":    "report_vulnerability",
+		"title":       "A corrected finding",
+		"severity":    "medium",
+		"description": "complete corrected description",
+	}); res.ForceSkip {
+		t.Fatal("a later complete report must not be blocked by an earlier malformed-call limit")
+	}
+	if res := hookFinishGatekeeper(state, nil); res.Block {
+		t.Fatalf("finish must be allowed after the repair limit, got: %s", res.BlockReason)
 	}
 }

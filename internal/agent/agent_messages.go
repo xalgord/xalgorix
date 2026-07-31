@@ -131,6 +131,13 @@ func alignPruneCutoff(messages []llm.Message, start int) int {
 // discards raw tool-output bytes the agent no longer needs.
 const pruneThresholdBytes = 500 * 1024
 
+// maxMessagesBeforePrune is a second safety boundary independent of byte
+// size. A long run of short tool calls can still make the model resend a very
+// large number of message envelopes on every iteration, especially after a
+// provider rate-limit retry. Keep the old proven message-count guard alongside
+// the window-relative byte ceiling.
+const maxMessagesBeforePrune = 100
+
 // maxRecentMsgBytes caps EACH kept-recent message during pruning. Compaction
 // summarizes OLD messages, but the recent window was kept verbatim — a run of
 // large tool outputs (even after the per-call cap) could still balloon the
@@ -205,6 +212,9 @@ func (a *Agent) shouldPruneBeforeLLM() bool {
 	}
 	a.msgMu.Lock()
 	defer a.msgMu.Unlock()
+	if len(a.messages) > maxMessagesBeforePrune {
+		return true
+	}
 
 	size := 0
 	for i := range a.messages {
@@ -220,14 +230,10 @@ func (a *Agent) pruneMessages() {
 	a.msgMu.Lock()
 	defer a.msgMu.Unlock()
 
-	// Compact only when the serialized buffer has actually grown past the
-	// configured ceiling — a fraction (ContextCompactRatio, ~0.75) of the
-	// model's context window (LLMContextWindow), or an explicit
-	// ContextCompactTokens budget. This replaces the old fixed 100-message
-	// trigger, which compacted far too early on large-context models and
-	// degraded output quality by discarding useful working context. The size
-	// scan mirrors shouldPruneBeforeLLM but is inlined here because msgMu is
-	// already held (shouldPruneBeforeLLM would re-lock and deadlock).
+	// Compact when either the serialized buffer has grown past the configured
+	// ceiling or the message-count safety boundary is reached. The size scan
+	// mirrors shouldPruneBeforeLLM but is inlined here because msgMu is already
+	// held (shouldPruneBeforeLLM would re-lock and deadlock).
 	threshold := a.compactThresholdBytes()
 	if threshold <= 0 {
 		return // auto-compaction disabled
@@ -236,7 +242,7 @@ func (a *Agent) pruneMessages() {
 	for i := range a.messages {
 		size += len(a.messages[i].Content) + perMessageOverheadBytes
 	}
-	if size <= threshold {
+	if size <= threshold && len(a.messages) <= maxMessagesBeforePrune {
 		return
 	}
 

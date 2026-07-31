@@ -883,6 +883,25 @@ func (s *Server) runWildcardTarget(_ context.Context, scanCfg *config.Config, re
 			TotalTargets: total,
 		})
 	}
+
+	// A wildcard target is one user-visible scan, but every discovered live
+	// subdomain is intentionally expanded into a full agent session: coverage
+	// takes priority over an arbitrary fan-out limit. A positive limit remains
+	// available as an explicit emergency control, but the default is unlimited.
+	wildcardLimit := 0
+	if scanCfg != nil {
+		wildcardLimit = scanCfg.MaxWildcardSubdomains
+	}
+	if wildcardLimit > 0 && len(subdomains) > wildcardLimit {
+		skipped := len(subdomains) - wildcardLimit
+		subdomains = subdomains[:wildcardLimit]
+		log.Printf("[wildcard] Explicitly capped full subdomain scans at %d; skipping %d candidates (XALGORIX_MAX_WILDCARD_SUBDOMAINS)", wildcardLimit, skipped)
+		s.broadcastToInstance(req.InstanceID, WSEvent{
+			Type:    "message",
+			Target:  target,
+			Content: fmt.Sprintf("⚠️ Explicit wildcard scan resource cap: scanning %d subdomains; %d additional candidates were discovered but not expanded into full LLM sessions.", wildcardLimit, skipped),
+		})
+	}
 	pendingSubScans := make([]SubScanSummary, 0, len(subdomains))
 	resumeFromSubIndex = clampInt(resumeFromSubIndex, 0, len(subdomains))
 	for i, subdomain := range subdomains {

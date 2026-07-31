@@ -66,6 +66,15 @@ var (
 	// Normalize quotes around = in tags: <function = "name"> → <function=name>
 	stripQuotesRe = regexp.MustCompile(`<(function|parameter)\s*=\s*["']?([^>"']+?)["']?\s*>`)
 
+	// MiniMax occasionally emits a parameter name as a nested/garbled open
+	// tag, for example `<parameter<parameter>command</parameter>` or
+	// `<parameter<poc_description</parameter>`. These fragments otherwise make
+	// the whole assistant turn look like prose, causing the no-tool recovery
+	// loop. The repair is deliberately limited to identifier-shaped names.
+	malformedNestedParamRe = regexp.MustCompile(`(?s)<parameter<parameter>\s*([A-Za-z_][A-Za-z0-9_-]*)\s*</parameter>`)
+	malformedBareParamRe   = regexp.MustCompile(`(?s)<parameter<([A-Za-z_][A-Za-z0-9_-]*)\s*</parameter>`)
+	malformedBodyParamRe   = regexp.MustCompile(`(?s)(<parameter=[A-Za-z_][A-Za-z0-9_-]*>)\s*<parameter>`)
+
 	// CleanContent regexes — compiled once
 	toolPattern    = regexp.MustCompile(`(?s)<function=[^>]+>.*?</function>`)
 	incompleteFunc = regexp.MustCompile(`(?s)<function=[^>]+>.*$`)
@@ -205,6 +214,9 @@ func normalizeFormat(content string) string {
 	content = repairFnOpenRe.ReplaceAllString(content, "${1}<function=${2}>${3}")
 	// Repair bare-name+quote drops (codeant.ai shape). Same ${1} boundary trick.
 	content = repairBareNameQuotedRe.ReplaceAllString(content, "${1}<function=${2}>${3}")
+	content = malformedNestedParamRe.ReplaceAllString(content, "<parameter=${1}>")
+	content = malformedBareParamRe.ReplaceAllString(content, "<parameter=${1}>")
+	content = malformedBodyParamRe.ReplaceAllString(content, "${1}")
 
 	// Normalize quotes/spaces around = signs: <function = "name"> → <function=name>
 	content = stripQuotesRe.ReplaceAllStringFunc(content, func(s string) string {

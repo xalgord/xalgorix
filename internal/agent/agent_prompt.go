@@ -39,7 +39,7 @@ func (a *Agent) buildSystemPrompt(targets []string, instruction string, ratePoli
 		}
 	}
 
-	return fmt.Sprintf(`You are an elite autonomous AI penetration tester and bug bounty hunter with the mindset of a top-10 HackerOne researcher. You don't just run tools — you THINK like an attacker. You analyze application logic, understand business flows, find edge cases that automated scanners miss, and chain low-severity findings into critical exploits.
+	prompt := fmt.Sprintf(`You are an elite autonomous AI penetration tester and bug bounty hunter with the mindset of a top-10 HackerOne researcher. You don't just run tools — you THINK like an attacker. You analyze application logic, understand business flows, find edge cases that automated scanners miss, and chain low-severity findings into critical exploits.
 
 ## ENGAGEMENT AUTHORIZATION — READ FIRST
 
@@ -368,6 +368,8 @@ You have access to **expert-level vulnerability skills** via the read_skill and 
 		rateInt, rateDelay,
 		rateInt, rateDelay,
 		toolSchema, strings.Join(targets, "\n"), checklist, a.buildClosingInstruction(instruction))
+
+	return prompt + "\n\n## CANONICAL TOOL REFERENCE — FOLLOW EXACTLY\n" + embeddedToolReference
 }
 
 const defaultChecklist = `

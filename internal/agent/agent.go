@@ -65,11 +65,26 @@ func init() {
 // tool not explicitly listed in toolHardTimeout.
 const defaultToolHardTimeout = 15 * time.Minute
 
-// maxCumulativeRateLimitWait bounds the total time the agent loop may spend
-// parked in the provider-rate-limit backoff. A persistently 429'd provider
-// would otherwise stall the scan indefinitely because touchActivity() keeps
-// the idle watchdog alive during the wait. Set to 0 to disable the ceiling.
-const maxCumulativeRateLimitWait = 6 * time.Hour
+// maxCumulativeRateLimitWait is the safe fallback when a caller constructs a
+// Config literal instead of loading the environment-backed configuration. A
+// provider usage-window exhaustion is not a normal transient tool failure;
+// waiting for hours while replaying the same context can consume the next
+// window without making progress.
+const maxCumulativeRateLimitWait = 30 * time.Minute
+
+// maxRateLimitWait returns the per-scan ceiling for provider rate-limit waits.
+// A negative configured value disables the ceiling for operators who
+// explicitly need the old behavior; zero means "use the safe default" for
+// programmatic Config literals.
+func (a *Agent) maxRateLimitWait() time.Duration {
+	if a.cfg == nil || a.cfg.MaxRateLimitWaitSec == 0 {
+		return maxCumulativeRateLimitWait
+	}
+	if a.cfg.MaxRateLimitWaitSec < 0 {
+		return 0
+	}
+	return time.Duration(a.cfg.MaxRateLimitWaitSec) * time.Second
+}
 
 // hardTimeoutFor returns the configured hard-timeout ceiling for the given
 // tool name, falling back to defaultToolHardTimeout when the tool is not
@@ -845,9 +860,10 @@ func (a *Agent) Run(targets []string, instruction string) {
 				continue
 			}
 
-			// Rate limit: wait indefinitely with 30-minute intervals until
-			// the LLM recovers. Don't count toward consecutive errors and
-			// don't skip the current target.
+			// Rate limit: wait in a bounded interval for a transient provider
+			// recovery. Do not keep a scan alive for the whole provider usage
+			// window: every retry resends the entire conversation and can make
+			// the next window disappear too.
 			isRateLimited := strings.Contains(errStr, "rate limited") ||
 				strings.Contains(errStr, "429") ||
 				strings.Contains(errStr, "too many requests") ||
@@ -858,25 +874,42 @@ func (a *Agent) Run(targets []string, instruction string) {
 					a.state.ConsecutiveErrors = 0
 				}
 				// Bound the total time the scan may spend parked on provider
-				// rate limits. Without a ceiling a persistently 429'd provider
-				// keeps the scan alive forever (touchActivity defeats the idle
-				// watchdog on purpose during the wait). Once the cumulative
-				// wait exceeds maxCumulativeRateLimitWait, fail the scan cleanly.
-				if maxCumulativeRateLimitWait > 0 && a.state.CumulativeRateLimitWait >= maxCumulativeRateLimitWait {
+				// rate limits. Once the configured ceiling is reached, fail the
+				// scan cleanly instead of issuing another context-sized request.
+				maxWait := a.maxRateLimitWait()
+				if maxWait > 0 && a.state.CumulativeRateLimitWait >= maxWait {
 					a.emit(Event{Type: "error", Content: fmt.Sprintf("⛔ Agent stopped: LLM provider rate limited for a cumulative %s without recovering.", a.state.CumulativeRateLimitWait), TotalTokens: tokenCount()})
 					a.emit(Event{Type: "finished", Content: fmt.Sprintf("Agent stopped: provider rate limited for a cumulative %s without recovering.", a.state.CumulativeRateLimitWait), TotalTokens: tokenCount(), Aborted: true, AbortReason: "llm_rate_limited"})
 					return
 				}
-				a.emit(Event{Type: "error", Content: "⏳ Rate limited by LLM provider — waiting 30 minutes before retrying (will NOT skip this target)", TotalTokens: tokenCount()})
-				// Sleep in 1-minute chunks so we can bail out if the agent is stopped
-				for waited := 0; waited < 30; waited++ {
+				waitFor := 30 * time.Minute
+				if maxWait > 0 && maxWait-a.state.CumulativeRateLimitWait < waitFor {
+					waitFor = maxWait - a.state.CumulativeRateLimitWait
+				}
+				if waitFor <= 0 {
+					a.emit(Event{Type: "finished", Content: "Agent stopped: provider rate-limit wait budget exhausted.", TotalTokens: tokenCount(), Aborted: true, AbortReason: "llm_rate_limited"})
+					return
+				}
+				a.emit(Event{Type: "error", Content: fmt.Sprintf("⏳ Rate limited by LLM provider — waiting up to %s before stopping this scan", waitFor.Round(time.Minute)), TotalTokens: tokenCount()})
+				// Sleep in 1-minute chunks so we can bail out if the agent is stopped.
+				for waited := time.Duration(0); waited < waitFor; {
 					if a.stopped.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
 						break
 					}
-					time.Sleep(1 * time.Minute)
-					a.state.CumulativeRateLimitWait += 1 * time.Minute
+					chunk := time.Minute
+					if waitFor-waited < chunk {
+						chunk = waitFor - waited
+					}
+					time.Sleep(chunk)
+					waited += chunk
+					a.state.CumulativeRateLimitWait += chunk
 				}
 				a.touchActivity() // keep watchdog alive during long wait
+				if maxWait > 0 && a.state.CumulativeRateLimitWait >= maxWait {
+					a.emit(Event{Type: "error", Content: fmt.Sprintf("⛔ Agent stopped: provider rate-limit wait budget exhausted after %s.", a.state.CumulativeRateLimitWait), TotalTokens: tokenCount()})
+					a.emit(Event{Type: "finished", Content: "Agent stopped: provider rate-limit wait budget exhausted; existing findings were preserved.", TotalTokens: tokenCount(), Aborted: true, AbortReason: "llm_rate_limited"})
+					return
+				}
 				continue
 			}
 
@@ -1119,7 +1152,22 @@ func (a *Agent) Run(targets []string, instruction string) {
 			// block loop (no allowed call in between) escalates.
 			a.state.ConsecutiveBlockedCalls = 0
 
-			a.hooks.Fire(OnToolCall, a.state, toolArgs)
+			toolCallHook := a.hooks.Fire(OnToolCall, a.state, toolArgs)
+			if toolCallHook.Nudge != "" {
+				a.msgMu.Lock()
+				a.messages = append(a.messages, llm.Message{Role: "user", Content: toolCallHook.Nudge})
+				a.msgMu.Unlock()
+			}
+			if toolCallHook.EmitMessage != "" {
+				a.emit(Event{Type: "message", Content: toolCallHook.EmitMessage, TotalTokens: tokenCount()})
+				if strings.Contains(toolCallHook.EmitMessage, "Force finishing") || strings.Contains(toolCallHook.EmitMessage, "Loop limit reached") {
+					a.emit(Event{Type: "finished", Content: toolCallHook.EmitMessage, TotalTokens: tokenCount(), Aborted: false, AbortReason: "report_retry_limit"})
+					return
+				}
+			}
+			if toolCallHook.ForceSkip {
+				continue
+			}
 
 			// ── Hook: OnStuckCheck (nudge/force-skip based on stuck counters) ──
 			stuckResult := a.hooks.Fire(OnStuckCheck, a.state, toolArgs)
@@ -1173,6 +1221,11 @@ func (a *Agent) Run(targets []string, instruction string) {
 			toolResultHook := a.hooks.Fire(OnToolResult, a.state, resultArgs)
 			if toolResultHook.EmitMessage != "" {
 				a.emit(Event{Type: "message", Content: toolResultHook.EmitMessage, TotalTokens: tokenCount()})
+			}
+			if toolResultHook.Nudge != "" {
+				a.msgMu.Lock()
+				a.messages = append(a.messages, llm.Message{Role: "user", Content: toolResultHook.Nudge})
+				a.msgMu.Unlock()
 			}
 
 			// ── Hook: OnFinishAttempt ──

@@ -6,6 +6,7 @@ import (
 
 	"github.com/xalgord/xalgorix/v4/internal/config"
 	"github.com/xalgord/xalgorix/v4/internal/llm"
+	"github.com/xalgord/xalgorix/v4/internal/scanctx"
 )
 
 func msgsOfSize(totalBytes int) []llm.Message {
@@ -89,5 +90,27 @@ func TestCompactThreshold_RatioClamp(t *testing.T) {
 	want := int(float64(100_000)*0.75) * bytesPerTokenEstimate
 	if got := a.compactThresholdBytes(); got != want {
 		t.Fatalf("threshold = %d, want %d (ratio should clamp to default)", got, want)
+	}
+}
+
+func TestShouldPruneBeforeLLM_MessageCountBoundary(t *testing.T) {
+	a := &Agent{cfg: &config.Config{ContextCompactTokens: 30000}, scanCtx: scanctx.Default()}
+	a.messages = []llm.Message{{Role: "system", Content: "sys"}}
+	for i := 0; i < maxMessagesBeforePrune-1; i++ {
+		a.messages = append(a.messages, llm.Message{Role: "user", Content: "short"})
+	}
+	if a.shouldPruneBeforeLLM() {
+		t.Fatal("message count below the boundary should not trigger pruning")
+	}
+	a.messages = append(a.messages, llm.Message{Role: "assistant", Content: "short"})
+	if !a.shouldPruneBeforeLLM() {
+		t.Fatal("message count above the boundary must trigger pruning even when byte size is small")
+	}
+	a.pruneMessages()
+	if len(a.messages) >= maxMessagesBeforePrune {
+		t.Fatalf("pruned message count = %d, want less than %d", len(a.messages), maxMessagesBeforePrune)
+	}
+	if a.messages[0].Role != "system" {
+		t.Fatal("pruning must preserve the system message")
 	}
 }

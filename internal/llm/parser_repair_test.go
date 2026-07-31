@@ -88,6 +88,20 @@ func TestParseToolCalls_RepairsMalformedOpenTag(t *testing.T) {
 			wantKey:  "summary",
 			wantVal:  "done",
 		},
+		{
+			name:     "nested parameter tag emitted by MiniMax",
+			input:    "<function=terminal_execute>\n<parameter<parameter>command</parameter>\n<parameter>echo repaired</parameter>\n</function>",
+			wantName: "terminal_execute",
+			wantKey:  "command",
+			wantVal:  "echo repaired",
+		},
+		{
+			name:     "bare malformed parameter name",
+			input:    "<function=finish>\n<parameter<summary</parameter>\n<parameter>done</parameter>\n</function>",
+			wantName: "finish",
+			wantKey:  "summary",
+			wantVal:  "done",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

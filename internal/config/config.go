@@ -28,7 +28,11 @@ type Config struct {
 	OllamaCompatible bool     // XALGORIX_OLLAMA_COMPATIBLE — force Ollama request semantics for a custom endpoint
 	Temperature      *float64 // XALGORIX_TEMPERATURE — LLM temperature (0.0-2.0), default 0.2; pointer to distinguish unset from 0.0
 	LLMMaxRetries    int      // XALGORIX_LLM_MAX_RETRIES
-	MemCompTimeout   int      // XALGORIX_MEMORY_COMPRESSOR_TIMEOUT
+	// MaxRateLimitWaitSec bounds how long a scan waits for a provider rate
+	// limit before stopping cleanly. XALGORIX_MAX_RATE_LIMIT_WAIT, default
+	// 1800 seconds (30 minutes).
+	MaxRateLimitWaitSec int
+	MemCompTimeout      int // XALGORIX_MEMORY_COMPRESSOR_TIMEOUT
 	// MaxOutputTokens caps the model's completion length per call (the
 	// OpenAI-compatible `max_tokens` / Anthropic `max_tokens`). Reasoning
 	// models (e.g. MiniMax-M3) spend part of this budget on hidden thinking
@@ -72,13 +76,15 @@ type Config struct {
 	DisableBrowser bool   // XALGORIX_DISABLE_BROWSER
 	MaxIterations  int    // XALGORIX_MAX_ITERATIONS — 0 = unlimited
 	MinIterations  int    // XALGORIX_MIN_ITERATIONS — minimum testing floor (default 50)
+	// MaxWildcardSubdomains optionally caps the number of full agent sessions
+	// spawned by one wildcard target. XALGORIX_MAX_WILDCARD_SUBDOMAINS,
+	// default -1 (unlimited). Set a positive value only as an explicit
+	// emergency resource cap; coverage is the default priority.
+	MaxWildcardSubdomains int
 
 	// NoToolAbortAt is how many CONSECUTIVE no-tool-call responses force-stop a
-	// scan (the "reasoning loop" abort). XALGORIX_NO_TOOL_ABORT_AT, default 0
-	// (never give up): the agent keeps nudging + periodically compacting
-	// context so the model can fix its own malformed output and resume, bounded
-	// only by the other budgets (iterations/duration/tokens). Set to e.g. 15 to
-	// restore the hard abort after 15 consecutive no-tool responses.
+	// scan (the "reasoning loop" abort). XALGORIX_NO_TOOL_ABORT_AT, default 30.
+	// Set to 0 only when an operator explicitly wants unbounded recovery.
 	NoToolAbortAt int
 
 	// MaxFinishRejections is how many times the agent's finish call will be
@@ -318,6 +324,7 @@ func load() *Config {
 		OllamaCompatible:     envOrBool("XALGORIX_OLLAMA_COMPATIBLE", false),
 		Temperature:          envOrFloatPtr("XALGORIX_TEMPERATURE", 0.2),
 		LLMMaxRetries:        envOrInt("XALGORIX_LLM_MAX_RETRIES", 5),
+		MaxRateLimitWaitSec:  envOrInt("XALGORIX_MAX_RATE_LIMIT_WAIT", 30*60),
 		MaxOutputTokens:      envOrInt("XALGORIX_MAX_OUTPUT_TOKENS", 8192),
 		ContextCompactTokens: envOrInt("XALGORIX_CONTEXT_COMPACT_TOKENS", -1),
 		LLMContextWindow:     envOrInt("XALGORIX_LLM_CONTEXT_WINDOW", 128000),
@@ -325,29 +332,30 @@ func load() *Config {
 		MemCompTimeout:       envOrInt("XALGORIX_MEMORY_COMPRESSOR_TIMEOUT", 30),
 
 		// Runtime
-		RuntimeBackend:      "native", // Always native in Go version
-		Workspace:           workspace,
-		DataDir:             dataDir,
-		WorkspaceRoot:       dataDir,
-		legacyCWD:           cwd,
-		DisableBrowser:      envOrBool("XALGORIX_DISABLE_BROWSER", false),
-		MaxIterations:       envOrInt("XALGORIX_MAX_ITERATIONS", 0),
-		MinIterations:       envOrInt("XALGORIX_MIN_ITERATIONS", 50),
-		NoToolAbortAt:       envOrInt("XALGORIX_NO_TOOL_ABORT_AT", 0),
-		MaxFinishRejections: envOrInt("XALGORIX_MAX_FINISH_REJECTIONS", 15),
-		TargetAuth:          envOr("XALGORIX_TARGET_AUTH", ""),
-		TargetAuthSecondary: envOr("XALGORIX_TARGET_AUTH_B", ""),
-		OOBPublicURL:        envOr("XALGORIX_OOB_PUBLIC_URL", ""),
-		OOBPort:             envOrInt("XALGORIX_OOB_PORT", 0),
-		InteractshServer:    envOr("XALGORIX_INTERACTSH_SERVER", ""),
-		InteractshToken:     envOr("XALGORIX_INTERACTSH_TOKEN", ""),
-		OOBDisable:          envOrBool("XALGORIX_OOB_DISABLE", false),
-		SourceRepo:          envOr("XALGORIX_SOURCE_REPO", ""),
-		ScanContext:         envOr("XALGORIX_SCAN_CONTEXT", ""),
-		ScanHeaders:         loadScanHeaders(),
-		MaxToolCalls:        envOrInt("XALGORIX_MAX_TOOL_CALLS", 0),
-		MaxDurationSec:      envOrInt("XALGORIX_MAX_DURATION", 0),
-		MaxTokens:           envOrInt("XALGORIX_MAX_TOKENS", 0),
+		RuntimeBackend:        "native", // Always native in Go version
+		Workspace:             workspace,
+		DataDir:               dataDir,
+		WorkspaceRoot:         dataDir,
+		legacyCWD:             cwd,
+		DisableBrowser:        envOrBool("XALGORIX_DISABLE_BROWSER", false),
+		MaxIterations:         envOrInt("XALGORIX_MAX_ITERATIONS", 0),
+		MinIterations:         envOrInt("XALGORIX_MIN_ITERATIONS", 50),
+		MaxWildcardSubdomains: envOrInt("XALGORIX_MAX_WILDCARD_SUBDOMAINS", -1),
+		NoToolAbortAt:         envOrInt("XALGORIX_NO_TOOL_ABORT_AT", 30),
+		MaxFinishRejections:   envOrInt("XALGORIX_MAX_FINISH_REJECTIONS", 15),
+		TargetAuth:            envOr("XALGORIX_TARGET_AUTH", ""),
+		TargetAuthSecondary:   envOr("XALGORIX_TARGET_AUTH_B", ""),
+		OOBPublicURL:          envOr("XALGORIX_OOB_PUBLIC_URL", ""),
+		OOBPort:               envOrInt("XALGORIX_OOB_PORT", 0),
+		InteractshServer:      envOr("XALGORIX_INTERACTSH_SERVER", ""),
+		InteractshToken:       envOr("XALGORIX_INTERACTSH_TOKEN", ""),
+		OOBDisable:            envOrBool("XALGORIX_OOB_DISABLE", false),
+		SourceRepo:            envOr("XALGORIX_SOURCE_REPO", ""),
+		ScanContext:           envOr("XALGORIX_SCAN_CONTEXT", ""),
+		ScanHeaders:           loadScanHeaders(),
+		MaxToolCalls:          envOrInt("XALGORIX_MAX_TOOL_CALLS", 0),
+		MaxDurationSec:        envOrInt("XALGORIX_MAX_DURATION", 0),
+		MaxTokens:             envOrInt("XALGORIX_MAX_TOKENS", 0),
 
 		// Scan retention: 0 disables automatic pruning (keep forever).
 		ScanRetentionDays: envOrInt("XALGORIX_SCAN_RETENTION_DAYS", 0),

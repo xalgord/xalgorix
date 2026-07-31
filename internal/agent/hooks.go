@@ -42,24 +42,30 @@ var notesBlobForContext func(scanContextID string) string
 // ScanState holds all mutable state that hooks can read and write.
 // It replaces the loose local variables previously scattered in Run().
 type ScanState struct {
-	Iteration                  int
-	ScanContextID              string // owning scan-context ID, so hooks can reach shared stores (notes) without an import cycle
-	TerminalCalls              int
-	SkillsLoaded               int
-	UniqueToolsUsed            map[string]bool
-	ReconDone                  bool
-	ScannerUsed                bool
-	FinishAttempts             int
-	MaxFinishRejections        int
-	MinIterations              int
-	OASTProbesExecuted         int
-	PendingFailedReportCalls   int
-	DiscoveryMode              bool
-	ReconOnlyMode              bool
-	AllowedPhases              []int
-	PassiveReconGuardActive    bool
-	PassiveReconPassiveLookups int
-	PassiveReconBlockedActive  int
+	Iteration                int
+	ScanContextID            string // owning scan-context ID, so hooks can reach shared stores (notes) without an import cycle
+	TerminalCalls            int
+	SkillsLoaded             int
+	UniqueToolsUsed          map[string]bool
+	ReconDone                bool
+	ScannerUsed              bool
+	FinishAttempts           int
+	MaxFinishRejections      int
+	MinIterations            int
+	OASTProbesExecuted       int
+	PendingFailedReportCalls int
+	// ReportFailureAttempts counts malformed/failed report submissions for the
+	// current recovery episode. It is deliberately bounded so a bad XML turn
+	// cannot keep the finish gate closed forever.
+	ReportFailureAttempts        int
+	ReportFinishRecoveryAttempts int
+	ReportRetryLimitReached      bool
+	DiscoveryMode                bool
+	ReconOnlyMode                bool
+	AllowedPhases                []int
+	PassiveReconGuardActive      bool
+	PassiveReconPassiveLookups   int
+	PassiveReconBlockedActive    int
 
 	// Coverage counters — track UNIQUE endpoints per test category.
 	// These replace the old boolean flags (InjectionTested, etc.) which
@@ -145,11 +151,10 @@ type ScanState struct {
 	TotalNoToolResponses int
 
 	// NoToolAbortLimit is the consecutive no-tool-call count at which the scan
-	// force-stops (from config XALGORIX_NO_TOOL_ABORT_AT). 0 = never give up:
-	// the agent keeps nudging so the model can fix its own malformed output and
-	// resume. Set from cfg when the agent
-	// initializes ScanState; falls back to NoToolAbortAt when zero-valued only
-	// if the operator did not explicitly disable it (see abortLimit()).
+	// force-stops (from config XALGORIX_NO_TOOL_ABORT_AT). 0 = never give up;
+	// the loaded default is 30, which bounds malformed-output loops while still
+	// allowing normal parser recovery. Set from cfg when the agent initializes
+	// ScanState; see noToolAbortLimit for the explicit-zero behavior.
 	NoToolAbortLimit int
 	// NoToolAbortConfigured records that NoToolAbortLimit was explicitly set
 	// from config (so a value of 0 means "disabled", not "unset default").
@@ -296,8 +301,8 @@ const (
 	//   1. Consecutive: NoToolCount climbs. A gentle reminder fires at
 	//      NoToolSoftNudgeAt, a firm "resume and call a tool" nudge at
 	//      NoToolStrongNudgeAt (and every turn after). In bounded mode the scan
-	//      aborts at NoToolAbortAt; the default is "never give up" (abort
-	//      disabled), so it keeps nudging indefinitely.
+	//      aborts at NoToolAbortAt; the loaded configuration default is 30,
+	//      while an explicit zero still disables the abort.
 	//
 	//   2. Density (non-consecutive): if the model makes an occasional tool
 	//      call — just often enough to reset NoToolCount — the consecutive path
@@ -356,6 +361,7 @@ func floatPtr(f float64) *float64 { return &f }
 // RegisterDefaultHooks registers all built-in behavioral hooks.
 func RegisterDefaultHooks(reg *HookRegistry) {
 	// Order matters: tracking → detection → policy → reset
+	reg.Register(OnToolCall, hookReportRetryGuard)
 	reg.Register(OnToolCall, hookWorkTracker)
 	reg.Register(OnToolCall, hookStuckTracker)
 	reg.Register(OnToolCall, hookCurlPreference)
@@ -372,6 +378,37 @@ func RegisterDefaultHooks(reg *HookRegistry) {
 	reg.Register(OnIterationStart, hookAutoSkillSuggester)
 	reg.Register(OnIterationStart, hookPlanner)
 	reg.Register(OnHealthyResponse, hookResetOnSuccess)
+}
+
+const maxReportRepairAttempts = 3
+
+// hookReportRetryGuard prevents a model from repeatedly invoking a report
+// that has already failed the schema validator three times. The old behavior
+// let malformed report calls continue indefinitely while the finish gate
+// insisted on a successful re-report, creating the post-reset loop seen in
+// the Leather export.
+func hookReportRetryGuard(state *ScanState, args map[string]string) HookResult {
+	if state == nil || args["tool_name"] != "report_vulnerability" || !state.ReportRetryLimitReached {
+		return HookResult{}
+	}
+	// The limit applies to the malformed recovery episode, not to every
+	// finding in the scan. A later complete report is a legitimate new attempt
+	// (or a corrected candidate) and must be allowed through.
+	if strings.TrimSpace(args["title"]) != "" &&
+		strings.TrimSpace(args["severity"]) != "" &&
+		strings.TrimSpace(args["description"]) != "" {
+		state.ReportRetryLimitReached = false
+		state.ReportFailureAttempts = 0
+		state.ReportFinishRecoveryAttempts = 0
+		return HookResult{}
+	}
+
+	msg := "⛔ Loop limit reached: report_vulnerability has already failed its parameter validation three times. Do not call it again for this candidate. Preserve any evidence in add_note if needed. Force finishing to prevent another report/finish usage loop."
+	return HookResult{
+		ForceSkip:   true,
+		Nudge:       msg,
+		EmitMessage: msg,
+	}
 }
 
 // ── hookWorkTracker ──────────────────────────────────────────────────────────
@@ -1196,6 +1233,23 @@ func hookTechDetector(state *ScanState, args map[string]string) HookResult {
 func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 	state.FinishAttempts++
 
+	// A malformed report must be recoverable, but it must not create a second
+	// infinite loop in which the model calls finish forever and waits for a
+	// success that it cannot produce. Give the model three clear recovery
+	// attempts, then allow a safe finish with the existing findings.
+	if state.PendingFailedReportCalls > 0 && !state.ReportRetryLimitReached {
+		state.ReportFinishRecoveryAttempts++
+		if state.ReportFinishRecoveryAttempts >= maxReportRepairAttempts {
+			state.PendingFailedReportCalls = 0
+			state.ReportRetryLimitReached = true
+			return HookResult{}
+		}
+		return HookResult{
+			Block:       true,
+			BlockReason: "⚠️ REPORT NOT SAVED: the previous report_vulnerability call failed parameter validation. Make one complete corrected call using the canonical XML format with title, severity, and description; exploitation_proof and verification_method are required for actionable severities, while endpoint is optional. If the candidate is not exploitable, do not keep resubmitting it—record a note and finish.",
+		}
+	}
+
 	// Allow finish if the agent has repeatedly attempted to finish (>= MaxFinishRejections + 1 attempts)
 	// to prevent infinite finish-rejection deadlocks when the model refuses or is unable
 	// to execute further commands.
@@ -1205,14 +1259,6 @@ func hookFinishGatekeeper(state *ScanState, args map[string]string) HookResult {
 	}
 	if state.FinishAttempts > maxRejections {
 		return HookResult{}
-	}
-
-	// Gate: Do not allow finishing if a previous report_vulnerability call failed and hasn't been successfully re-called yet.
-	if state.PendingFailedReportCalls > 0 {
-		return HookResult{
-			Block:       true,
-			BlockReason: "⚠️ UNREPORTED VULNERABILITY DETECTED: You attempted to call report_vulnerability previously, but the tool call failed (e.g. missing required parameters). You MUST successfully re-run report_vulnerability with ALL required fields (title, severity, description, endpoint, exploitation_proof) before finishing, so the vulnerability is saved to the scan report and dashboard.",
-		}
 	}
 
 	// Discovery mode (Phase 1 enumeration): allow finish after minimum work
@@ -1552,8 +1598,8 @@ func hookEmptyResponseHandler(state *ScanState, args map[string]string) HookResu
 //  1. Consecutive — NoToolCount climbs. A gentle "use tools" reminder fires at
 //     NoToolSoftNudgeAt (8), a firm "resume and call a tool NOW" nudge at
 //     NoToolStrongNudgeAt (16) and every turn after. In BOUNDED mode the scan
-//     aborts at NoToolAbortAt (30); the default is "never give up" (abort
-//     disabled), so it keeps nudging indefinitely and never force-stops.
+//     aborts at NoToolAbortAt (the loaded default is 30); an explicit zero
+//     keeps nudging indefinitely and disables the force-stop.
 //
 //  2. Density (non-consecutive) — the model makes an occasional tool call,
 //     just often enough to reset the consecutive counter. In BOUNDED mode
@@ -1975,7 +2021,11 @@ func extractPaths(blob string) []string {
 }
 
 // ── hookReportVulnerabilityTracker ─────────────────────────────────────────
-// Tracks calls to report_vulnerability and maintains PendingFailedReportCalls.
+// Tracks calls to report_vulnerability and maintains the bounded recovery
+// state used by hookFinishGatekeeper. Semantic rejections (false positives,
+// unsupported informational claims, verifier rejection) are terminal outcomes
+// for that candidate; they are not schema failures and must not deadlock the
+// scan's finish path.
 func hookReportVulnerabilityTracker(state *ScanState, args map[string]string) HookResult {
 	toolName := args["tool_name"]
 	if toolName == "" {
@@ -1987,11 +2037,41 @@ func hookReportVulnerabilityTracker(state *ScanState, args map[string]string) Ho
 	errStr := args["error"]
 	outputStr := args["output"]
 
-	if errStr != "" || strings.Contains(outputStr, "missing required parameter") || strings.Contains(outputStr, "❌ REJECTED") {
-		state.PendingFailedReportCalls++
-	} else if strings.Contains(outputStr, "Vulnerability reported:") || strings.Contains(outputStr, "RECORDED as EXPLOIT-PROVEN") {
-		if state.PendingFailedReportCalls > 0 {
-			state.PendingFailedReportCalls--
+	isSchemaFailure := errStr != "" ||
+		strings.Contains(outputStr, "missing required parameter") ||
+		strings.Contains(outputStr, "missing required parameters")
+	isSemanticRejection := strings.Contains(outputStr, "❌ REJECTED") ||
+		strings.Contains(outputStr, "REJECTED by independent verifier")
+	isSuccessfulResolution := strings.Contains(outputStr, "Vulnerability reported:") ||
+		strings.Contains(outputStr, "RECORDED as EXPLOIT-PROVEN") ||
+		strings.Contains(outputStr, "DUPLICATE:")
+
+	switch {
+	case isSchemaFailure:
+		state.ReportFailureAttempts++
+		state.ReportFinishRecoveryAttempts = 0
+		state.PendingFailedReportCalls = 1
+		if state.ReportFailureAttempts >= maxReportRepairAttempts {
+			state.PendingFailedReportCalls = 0
+			state.ReportRetryLimitReached = true
+			return HookResult{
+				Nudge: "⛔ REPORT REPAIR STOPPED: report_vulnerability failed three times. Do not call it again for this candidate. Save any useful evidence with add_note and call finish now; already-saved findings are preserved.",
+			}
+		}
+	case isSuccessfulResolution:
+		state.PendingFailedReportCalls = 0
+		state.ReportFailureAttempts = 0
+		state.ReportFinishRecoveryAttempts = 0
+		state.ReportRetryLimitReached = false
+	case isSemanticRejection:
+		// The reporting pipeline deliberately rejected this candidate. Treating
+		// that as an unresolved failed call caused CORS/OAuth false positives to
+		// block finish forever while the model kept resubmitting them.
+		state.PendingFailedReportCalls = 0
+		state.ReportFailureAttempts = 0
+		state.ReportFinishRecoveryAttempts = 0
+		return HookResult{
+			Nudge: "The reporting gate rejected this candidate. Do not resubmit the same claim with the same evidence. If a distinct informational finding is justified, submit one valid info report; otherwise record a note and call finish.",
 		}
 	}
 	return HookResult{}

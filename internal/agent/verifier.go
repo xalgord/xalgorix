@@ -14,7 +14,7 @@
 //   - Restricted tools: read-only re-testing only (terminal/curl, http, browser,
 //     notes, web_search). It CANNOT call report_vulnerability or spawn agents,
 //     so it can never recurse or self-confirm.
-//   - Bounded: a turn cap and an 8-minute wall-clock deadline keep it safely
+//   - Bounded: a turn cap and a 3-minute wall-clock deadline keep it safely
 //     under report_vulnerability's 15-minute tool watchdog (avoiding any race
 //     on the shared LLM client, which the blocked main loop is not using).
 package agent
@@ -36,13 +36,11 @@ import (
 )
 
 const (
-	// Turn/time budget for the independent verifier. Kept comfortably under
-	// report_vulnerability's 15-minute tool watchdog. Bumped from 16/8m because
-	// real re-tests (baseline control + exploit + read the result) were running
-	// out of turns and returning a budget-exhaustion "inconclusive", which then
-	// dropped genuinely-proven findings.
-	verifierMaxTurns = 24
-	verifierDeadline = 10 * time.Minute
+	// Turn/time budget for the independent verifier. A verifier is a bounded
+	// confirmation pass, not a second full scan. The previous 24-turn/10-minute
+	// budget could consume most of a provider window for one report.
+	verifierMaxTurns = 8
+	verifierDeadline = 3 * time.Minute
 )
 
 // verifyFinding is the FindingVerifier installed into the reporting package.
@@ -122,8 +120,10 @@ func (a *Agent) verifyFinding(req reporting.VerificationRequest) reporting.Verif
 
 		resp, err := a.client.Chat(msgs)
 		if err != nil {
-			// Up to 2 retries on temporary network/LLM errors before marking inconclusive.
-			for retry := 0; retry < 2 && err != nil; retry++ {
+			// One retry is enough for a transient transport failure. More retries
+			// multiply provider usage while the main scan is already blocked on
+			// report_vulnerability.
+			for retry := 0; retry < 1 && err != nil; retry++ {
 				time.Sleep(500 * time.Millisecond)
 				resp, err = a.client.Chat(msgs)
 			}
