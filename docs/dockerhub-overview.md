@@ -76,4 +76,4 @@ An extensive toolset ships preinstalled — `nmap`, `nuclei`, `httpx`, `subfinde
 - **Hosted (no install):** https://www.xalgorix.com
 - **One-line install (any Linux, amd64/arm64):** `curl -sSL https://www.xalgorix.com/install | bash`
 
-Released under the MIT License.
+Released under the Apache License 2.0.
