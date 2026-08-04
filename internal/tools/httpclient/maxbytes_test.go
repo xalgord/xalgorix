@@ -20,7 +20,17 @@ func sizedServer(t *testing.T, n int) *httptest.Server {
 }
 
 // countBodyAs counts the 'A' payload bytes returned in the tool output.
+//
+// It counts ONLY within the response-body section, not the whole output. The
+// output also prints response headers, and the `Date` header's month
+// abbreviation contains a capital 'A' in April ("Apr") and August ("Aug") — so
+// counting 'A' across the entire output inflated the payload count by one for
+// two months of the year, failing these tests every April and August.
 func countBodyAs(out string) int {
+	const marker = "--- Response Body (text) ---\n"
+	if i := strings.Index(out, marker); i >= 0 {
+		return strings.Count(out[i+len(marker):], "A")
+	}
 	return strings.Count(out, "A")
 }
 
