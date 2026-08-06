@@ -168,8 +168,8 @@ export default function NewScanPage() {
   async function uploadScanContext(file?: File) {
     if (!file) return;
     setError(null);
-    if (!/\.(json|ya?ml|har|xml|apk|txt)$/i.test(file.name)) {
-      setError("Context must be an OpenAPI/Swagger spec, HAR, Postman collection, Burp export, or Android APK (.json, .yaml, .yml, .har, .xml, .apk).");
+    if (!/\.(json|ya?ml|har|xml|apk|apks|xapk|aab|txt)$/i.test(file.name)) {
+      setError("Context must be an OpenAPI/Swagger spec, HAR, Postman collection, Burp export, or Android app (.json, .yaml, .yml, .har, .xml, .apk, .apks, .xapk, .aab).");
       return;
     }
     setContextUploading(true);
@@ -332,7 +332,7 @@ export default function NewScanPage() {
               <Input
                 id="scanContext"
                 type="file"
-                accept=".json,.yaml,.yml,.har,.xml,.apk,.txt"
+                accept=".json,.yaml,.yml,.har,.xml,.apk,.apks,.xapk,.aab,.txt"
                 disabled={contextUploading}
                 className="hidden"
                 onChange={(e) => {

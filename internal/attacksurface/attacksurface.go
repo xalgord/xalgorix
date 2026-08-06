@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -73,6 +74,16 @@ func isAuthHeader(name string) bool {
 	return false
 }
 
+// isAndroidArchive reports whether a path names a ZIP-based Android artifact:
+// a plain APK, a split-APK bundle (.apks/.xapk) or an app bundle (.aab).
+func isAndroidArchive(p string) bool {
+	switch strings.ToLower(filepath.Ext(p)) {
+	case ".apk", ".apks", ".xapk", ".aab":
+		return true
+	}
+	return false
+}
+
 // LoadFromPath parses a single artifact file or every file in a directory,
 // merging the results. Unparseable files are skipped (best-effort).
 func LoadFromPath(path string) (*Result, error) {
@@ -87,6 +98,20 @@ func LoadFromPath(path string) (*Result, error) {
 
 	merged := &Result{AuthHeaders: map[string]string{}}
 	parseInto := func(p string) {
+		// ZIP-based Android artifacts are streamed from disk: reading a
+		// multi-hundred-MB APK into memory just to hand it to a zip reader
+		// caused a large allocation spike (and, on constrained hosts, an
+		// OOM kill that dropped in-memory dashboard sessions).
+		if isAndroidArchive(p) {
+			if zrc, err := zip.OpenReader(p); err == nil {
+				defer zrc.Close()
+				if r := parseAPKZip(&zrc.Reader, 0); r != nil {
+					merged.merge(r)
+				}
+				return
+			}
+			// Fall through: a mislabelled extension is still worth sniffing.
+		}
 		data, err := os.ReadFile(p)
 		if err != nil || len(data) == 0 {
 			return
@@ -109,7 +134,11 @@ func LoadFromPath(path string) (*Result, error) {
 	}
 
 	merged.finalize()
-	if len(merged.Endpoints) == 0 && len(merged.AuthHeaders) == 0 {
+	// BaseURLs count as usable context: an artifact can yield backend hosts
+	// without concrete paths (common for APKs that build request paths at
+	// runtime), and those hosts still seed the attack surface. Only fail when
+	// nothing at all was recovered.
+	if len(merged.Endpoints) == 0 && len(merged.AuthHeaders) == 0 && len(merged.BaseURLs) == 0 {
 		return merged, fmt.Errorf("no usable endpoints or auth found in %q", path)
 	}
 	return merged, nil
@@ -518,6 +547,46 @@ func parseAPK(data []byte) *Result {
 	if err != nil {
 		return nil
 	}
+	return parseAPKZip(zr, 0)
+}
+
+// maxAPKNesting bounds descent into nested APKs so a hostile or accidentally
+// self-referential bundle can't drive unbounded recursion. One level covers
+// real-world layouts: .apks/.xapk/.aab hold plain .apk members.
+const maxAPKNesting = 1
+
+// maxNestedAPKBytes caps how much of an inner APK we buffer. zip readers need
+// random access, so a nested member has to be materialized — this bounds that
+// cost rather than trusting the declared size.
+const maxNestedAPKBytes = 300 << 20 // 300MB
+
+// parseNestedAPK reads one inner APK member and parses it. Errors are swallowed
+// (best-effort, consistent with the rest of the package): a single unreadable
+// split shouldn't discard the whole bundle.
+func parseNestedAPK(f *zip.File, depth int) *Result {
+	if f.UncompressedSize64 > maxNestedAPKBytes {
+		return nil
+	}
+	rc, err := f.Open()
+	if err != nil {
+		return nil
+	}
+	defer rc.Close()
+	inner, err := io.ReadAll(io.LimitReader(rc, maxNestedAPKBytes))
+	if err != nil || len(inner) == 0 {
+		return nil
+	}
+	zr, err := zip.NewReader(bytes.NewReader(inner), int64(len(inner)))
+	if err != nil {
+		return nil
+	}
+	return parseAPKZip(zr, depth)
+}
+
+// parseAPKZip walks an already-open APK (or split-APK bundle) archive. Taking a
+// *zip.Reader rather than a []byte lets callers stream large files straight from
+// disk instead of holding the whole archive in memory.
+func parseAPKZip(zr *zip.Reader, depth int) *Result {
 	res := &Result{AuthHeaders: map[string]string{}, Formats: []string{"apk"}}
 	urlSet := map[string]bool{}
 	hostSet := map[string]bool{}
@@ -542,11 +611,27 @@ func parseAPK(data []byte) *Result {
 
 	for _, f := range zr.File {
 		name := strings.ToLower(f.Name)
+
+		// Split-APK bundles (.apks/.xapk) and app bundles (.aab) are ZIPs whose
+		// members are themselves APKs, so descend into them. Without this the
+		// entry filter below matches nothing and the bundle looks empty.
+		if depth < maxAPKNesting && (strings.HasSuffix(name, ".apk") ||
+			strings.HasSuffix(name, ".apks") || strings.HasSuffix(name, ".xapk")) {
+			if inner := parseNestedAPK(f, depth+1); inner != nil {
+				res.merge(inner)
+			}
+			continue
+		}
+
 		// Scan the code + resources + config; skip large media/binaries.
+		// lib/**.so is included because React Native and Flutter builds keep
+		// their endpoints in native libraries (Dart AOT snapshots, JSI
+		// bundles) rather than in classes.dex.
 		relevant := strings.HasSuffix(name, ".dex") ||
 			strings.HasSuffix(name, ".arsc") ||
 			strings.HasSuffix(name, ".xml") ||
 			strings.HasSuffix(name, ".json") ||
+			strings.HasSuffix(name, ".so") ||
 			strings.HasPrefix(name, "assets/") ||
 			strings.Contains(name, "androidmanifest")
 		if !relevant {
@@ -556,7 +641,14 @@ func parseAPK(data []byte) *Result {
 		if err != nil {
 			continue
 		}
-		buf := make([]byte, perFileCap)
+		// Size the buffer to the entry instead of always allocating the cap:
+		// an APK has many small entries, and a flat 12MB alloc per entry was a
+		// large, needless memory spike.
+		bufSize := perFileCap
+		if size := f.UncompressedSize64; size > 0 && size < uint64(perFileCap) {
+			bufSize = int(size)
+		}
+		buf := make([]byte, bufSize)
 		n, _ := readFull(rc, buf)
 		rc.Close()
 		scanBytes(buf[:n])

@@ -183,9 +183,12 @@ func (s *Server) handleUploadContext(w http.ResponseWriter, r *http.Request) {
 
 	originalName := filepath.Base(header.Filename)
 	ext := strings.ToLower(filepath.Ext(originalName))
-	allowedExts := map[string]bool{".json": true, ".yaml": true, ".yml": true, ".har": true, ".xml": true, ".apk": true, ".txt": true}
+	// .apks/.xapk are split-APK bundles and .aab is an app bundle — all ZIP
+	// containers holding one or more inner .apk files, which the parser
+	// descends into.
+	allowedExts := map[string]bool{".json": true, ".yaml": true, ".yml": true, ".har": true, ".xml": true, ".apk": true, ".apks": true, ".xapk": true, ".aab": true, ".txt": true}
 	if !allowedExts[ext] {
-		http.Error(w, "unsupported context format: "+ext+" (allowed: json, yaml, yml, har, xml, apk, txt — OpenAPI/Swagger, HAR, Postman, Burp, or Android APK)", http.StatusBadRequest)
+		http.Error(w, "unsupported context format: "+ext+" (allowed: json, yaml, yml, har, xml, apk, apks, xapk, aab, txt — OpenAPI/Swagger, HAR, Postman, Burp, or an Android app)", http.StatusBadRequest)
 		return
 	}
 
@@ -235,5 +238,10 @@ func (s *Server) handleUploadContext(w http.ResponseWriter, r *http.Request) {
 		"endpoints": len(res.Endpoints),
 		"formats":   res.Formats,
 		"has_auth":  len(res.AuthHeaders) > 0,
+		// Surfaced so a sparse-but-valid parse (e.g. an APK yielding only
+		// hosts, or one that builds paths at runtime) can be explained in the
+		// UI instead of failing the upload.
+		"base_urls": len(res.BaseURLs),
+		"notes":     res.Notes,
 	})
 }
