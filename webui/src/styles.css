@@ -11,8 +11,17 @@
   --color-popover: #0a0a0a;
   --color-popover-foreground: #fafafa;
 
-  --color-primary: #fafafa;
-  --color-primary-foreground: #0a0a0a;
+  /* Restrained crimson brand accent. These oklch values are intentionally
+     identical to the Xalgorix SaaS tokens (src/styles.css) so the dashboard and
+     the hosted product share one accent — change them together. */
+  --color-brand: oklch(0.56 0.22 20);
+  --color-brand-foreground: oklch(0.985 0 0);
+  --color-brand-hover: oklch(0.52 0.22 20);
+  --color-brand-subtle: oklch(0.2 0.035 20);
+  --color-brand-border: oklch(0.4 0.12 20);
+
+  --color-primary: var(--color-brand);
+  --color-primary-foreground: var(--color-brand-foreground);
 
   --color-secondary: #111111;
   --color-secondary-foreground: #fafafa;
@@ -20,12 +29,12 @@
   --color-muted: #111111;
   --color-muted-foreground: #a1a1aa;
 
-  --color-accent: #1a1a1a;
-  --color-accent-foreground: #fafafa;
+  --color-accent: var(--color-brand-subtle);
+  --color-accent-foreground: oklch(0.985 0 0);
 
   --color-border: #262626;
   --color-input: #1a1a1a;
-  --color-ring: #404040;
+  --color-ring: oklch(0.65 0.22 20);
 
   --color-destructive: #ef4444;
   --color-destructive-foreground: #fafafa;
@@ -70,6 +79,56 @@
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
     overflow: hidden;
+  }
+
+  /* Crosshair "radar target" motif in the top-right, mirroring the Xalgorix SaaS
+     backdrop: centre dot, crosshair, conic tick marks and concentric rings, all
+     faded out by a radial mask. Decorative only — pointer-events are disabled
+     and #root sits above it. */
+  body::before {
+    content: "";
+    position: fixed;
+    top: clamp(72px, 12vh, 140px);
+    right: clamp(-120px, -4vw, -36px);
+    width: clamp(280px, 32vw, 440px);
+    aspect-ratio: 1;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(
+        to right,
+        transparent 49.7%,
+        color-mix(in oklch, var(--color-brand) 10%, transparent) 49.8% 50.2%,
+        transparent 50.3%
+      ),
+      linear-gradient(
+        to bottom,
+        transparent 49.7%,
+        color-mix(in oklch, var(--color-brand) 10%, transparent) 49.8% 50.2%,
+        transparent 50.3%
+      ),
+      repeating-conic-gradient(
+        from 22.5deg at center,
+        color-mix(in oklch, var(--color-brand) 4%, transparent) 0 0.2deg,
+        transparent 0.2deg 45deg
+      ),
+      radial-gradient(
+        circle at center,
+        color-mix(in oklch, var(--color-brand) 10%, transparent) 0 1.5%,
+        transparent 1.8% 18%,
+        color-mix(in oklch, var(--color-brand) 12%, transparent) 18.2% 18.55%,
+        transparent 18.8% 32%,
+        color-mix(in oklch, var(--color-brand) 8%, transparent) 32.2% 32.55%,
+        transparent 32.8% 46%,
+        color-mix(in oklch, var(--color-brand) 5%, transparent) 46.2% 46.45%,
+        transparent 46.7%
+      );
+    mask-image: radial-gradient(circle, black 0 62%, transparent 78%);
+  }
+
+  #root {
+    position: relative;
+    z-index: 1;
   }
 
   *,

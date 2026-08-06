@@ -26,8 +26,10 @@ export function AppShell() {
   const handleSidebarToggle = useCallback(() => setSidebarOpen((o) => !o), []);
   const handleSidebarClose = useCallback(() => setSidebarOpen(false), []);
 
+  // No bg-background on the shell: body paints it, so the decorative radar
+  // motif behind the shell stays visible through transparent regions.
   return (
-    <div className="flex h-screen overflow-hidden bg-background text-foreground">
+    <div className="flex h-screen overflow-hidden text-foreground">
       {/* Desktop sidebar */}
       <div className="hidden md:block">
         <Sidebar />
