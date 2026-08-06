@@ -15,6 +15,10 @@ on:
     branches:
       - main
       - master
+  # Allows re-running CI on demand. Needed when push/pull_request events are
+  # dropped or never scheduled — e.g. during an Actions incident, which leaves a
+  # merged commit on main with no coverage and no way to ask for a fresh run.
+  workflow_dispatch:
 
 permissions:
   contents: read
