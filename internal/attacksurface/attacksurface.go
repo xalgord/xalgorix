@@ -104,7 +104,7 @@ func LoadFromPath(path string) (*Result, error) {
 		// OOM kill that dropped in-memory dashboard sessions).
 		if isAndroidArchive(p) {
 			if zrc, err := zip.OpenReader(p); err == nil {
-				defer zrc.Close()
+				defer func() { _ = zrc.Close() }()
 				if r := parseAPKZip(&zrc.Reader, 0); r != nil {
 					merged.merge(r)
 				}
