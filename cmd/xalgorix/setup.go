@@ -35,6 +35,16 @@ type setupPrompter struct {
 	out io.Writer
 }
 
+func (p *setupPrompter) printf(format string, args ...any) error {
+	_, err := fmt.Fprintf(p.out, format, args...)
+	return err
+}
+
+func (p *setupPrompter) println(args ...any) error {
+	_, err := fmt.Fprintln(p.out, args...)
+	return err
+}
+
 func runSetup(in io.Reader, out io.Writer) (bool, error) {
 	path := config.EnvFilePath()
 	existing, err := config.ReadEnvFile(path)
@@ -43,12 +53,20 @@ func runSetup(in io.Reader, out io.Writer) (bool, error) {
 	}
 	p := &setupPrompter{in: in, buf: bufio.NewReader(in), out: out}
 
-	fmt.Fprintln(out, "\nWelcome to Xalgorix setup")
-	fmt.Fprintln(out, "Configure an LLM in a few steps. You can change advanced options later in Settings.")
-	fmt.Fprintf(out, "Configuration: %s (saved with mode 0600)\n\n", path)
+	if err := p.println("\nWelcome to Xalgorix setup"); err != nil {
+		return false, err
+	}
+	if err := p.println("Configure an LLM in a few steps. You can change advanced options later in Settings."); err != nil {
+		return false, err
+	}
+	if err := p.printf("Configuration: %s (saved with mode 0600)\n\n", path); err != nil {
+		return false, err
+	}
 
 	for i, provider := range setupProviders {
-		fmt.Fprintf(out, "  %d. %s\n", i+1, provider.name)
+		if err := p.printf("  %d. %s\n", i+1, provider.name); err != nil {
+			return false, err
+		}
 	}
 	defaultChoice := setupProviderIndex(existingProvider(existing)) + 1
 	choice, err := p.choice("Choose your LLM provider", defaultChoice, len(setupProviders))
@@ -127,14 +145,20 @@ func runSetup(in io.Reader, out io.Writer) (bool, error) {
 	cfg.APIKey = apiKey
 	cfg.LLMProfile = ""
 
-	fmt.Fprintf(out, "\n✓ Saved %s with provider %s and model %s.\n", path, selected.name, model)
-	fmt.Fprintln(out, "  Your API key was not displayed and the file is readable only by your user.")
+	if err := p.printf("\n✓ Saved %s with provider %s and model %s.\n", path, selected.name, model); err != nil {
+		return false, err
+	}
+	if err := p.println("  Your API key was not displayed and the file is readable only by your user."); err != nil {
+		return false, err
+	}
 	launch, err := p.yesNo("Start the Web UI now?", true)
 	if err != nil {
 		return false, err
 	}
 	if !launch {
-		fmt.Fprintln(out, "\nSetup complete. Start later with: xalgorix --web")
+		if err := p.println("\nSetup complete. Start later with: xalgorix --web"); err != nil {
+			return false, err
+		}
 	}
 	return launch, nil
 }
@@ -173,9 +197,11 @@ func bareSetupModel(model, provider string) string {
 
 func (p *setupPrompter) line(label, defaultValue string) (string, error) {
 	if defaultValue != "" {
-		fmt.Fprintf(p.out, "%s [%s]: ", label, defaultValue)
-	} else {
-		fmt.Fprintf(p.out, "%s: ", label)
+		if err := p.printf("%s [%s]: ", label, defaultValue); err != nil {
+			return "", err
+		}
+	} else if err := p.printf("%s: ", label); err != nil {
+		return "", err
 	}
 	line, err := p.buf.ReadString('\n')
 	if err != nil && err != io.EOF {
@@ -200,7 +226,9 @@ func (p *setupPrompter) required(label, defaultValue string) (string, error) {
 		if value != "" {
 			return value, nil
 		}
-		fmt.Fprintln(p.out, "  A value is required.")
+		if err := p.println("  A value is required."); err != nil {
+			return "", err
+		}
 	}
 }
 
@@ -214,23 +242,29 @@ func (p *setupPrompter) choice(label string, defaultValue, max int) (int, error)
 		if convErr == nil && n >= 1 && n <= max {
 			return n, nil
 		}
-		fmt.Fprintf(p.out, "  Enter a number from 1 to %d.\n", max)
+		if err := p.printf("  Enter a number from 1 to %d.\n", max); err != nil {
+			return 0, err
+		}
 	}
 }
 
 func (p *setupPrompter) secret(label, existing string) (string, error) {
 	if existing != "" {
-		fmt.Fprintf(p.out, "%s [press Enter to keep the saved key]: ", label)
-	} else {
-		fmt.Fprintf(p.out, "%s (input hidden): ", label)
+		if err := p.printf("%s [press Enter to keep the saved key]: ", label); err != nil {
+			return "", err
+		}
+	} else if err := p.printf("%s (input hidden): ", label); err != nil {
+		return "", err
 	}
 
 	var value string
 	if file, ok := p.in.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
-		secret, err := term.ReadPassword(int(file.Fd()))
-		fmt.Fprintln(p.out)
-		if err != nil {
+		secret, readErr := term.ReadPassword(int(file.Fd()))
+		if err := p.println(); err != nil {
 			return "", err
+		}
+		if readErr != nil {
+			return "", readErr
 		}
 		value = strings.TrimSpace(string(secret))
 	} else {
@@ -255,7 +289,9 @@ func (p *setupPrompter) yesNo(label string, defaultYes bool) (bool, error) {
 		hint = "y/N"
 	}
 	for {
-		fmt.Fprintf(p.out, "%s [%s]: ", label, hint)
+		if err := p.printf("%s [%s]: ", label, hint); err != nil {
+			return false, err
+		}
 		line, err := p.buf.ReadString('\n')
 		if err != nil && err != io.EOF {
 			return false, err
@@ -273,7 +309,9 @@ func (p *setupPrompter) yesNo(label string, defaultYes bool) (bool, error) {
 		case "n", "no":
 			return false, nil
 		default:
-			fmt.Fprintln(p.out, "  Enter y or n.")
+			if err := p.println("  Enter y or n."); err != nil {
+				return false, err
+			}
 		}
 	}
 }

@@ -147,7 +147,9 @@ func writePrivateFileAtomically(path string, data []byte) error {
 		return fmt.Errorf("create temporary env file: %w", err)
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer func() {
+		_ = os.Remove(tmpPath)
+	}()
 
 	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()
