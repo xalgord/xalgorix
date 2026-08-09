@@ -100,6 +100,21 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Setup runs before the normal startup path. runSetup also synchronizes the
+	// singleton config because a transitive package initializer may have loaded
+	// it before main entered.
+	if args.setup {
+		launchWeb, err := runSetup(os.Stdin, os.Stdout)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Setup failed: %v\n", err)
+			os.Exit(1)
+		}
+		if !launchWeb {
+			return
+		}
+		args.webUI = true
+	}
+
 	// Auto-update check on every start (skip if --update flag is used since that handles it)
 	if !args.update {
 		autoUpdate()
@@ -275,8 +290,8 @@ func main() {
 
 	if err := cfg.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "Configuration error: %s\n\n", err)
-		fmt.Fprintf(os.Stderr, "Set your model:     export XALGORIX_LLM='minimax/MiniMax-M3'\n")
-		fmt.Fprintf(os.Stderr, "Set your API key:    export XALGORIX_API_KEY='sk-...'\n")
+		fmt.Fprintln(os.Stderr, "Run the interactive setup wizard:")
+		fmt.Fprintln(os.Stderr, "  xalgorix --setup")
 		os.Exit(1)
 	}
 
@@ -294,6 +309,7 @@ type cliArgs struct {
 	bind        string
 	version     bool
 	update      bool
+	setup       bool
 	webUI       bool
 	port        int
 	start       bool
@@ -358,6 +374,8 @@ func parseArgs() cliArgs {
 			}
 		case "--update", "-up":
 			args.update = true
+		case "--setup":
+			args.setup = true
 		case "--version", "-v":
 			args.version = true
 		case "--start":
@@ -404,10 +422,12 @@ func printUsage() {
 	fmt.Println("  Autonomous AI Pentesting Engine")
 	fmt.Println()
 	fmt.Println("Usage:")
+	fmt.Println("  xalgorix --setup                Interactive first-time setup")
 	fmt.Printf("  xalgorix --web                  Start the Web UI (default port %d)\n", defaultWebPort)
 	fmt.Println("  xalgorix --target <url> [flags]  Run a scan in CLI mode")
 	fmt.Println()
 	fmt.Println("Modes:")
+	fmt.Println("      --setup               Configure provider, model, and API key interactively")
 	fmt.Println("  -w, --web                 Launch the Web UI dashboard")
 	fmt.Printf("  -p, --port <port>         Web UI port (default: %d)\n", defaultWebPort)
 	fmt.Println("      --bind <addr>         Bind address (default: 127.0.0.1).")
@@ -442,6 +462,7 @@ func printUsage() {
 	fmt.Println("  XALGORIX_PROXY_ROTATION=roundrobin  Rotation: roundrobin or random")
 	fmt.Println()
 	fmt.Println("Examples:")
+	fmt.Println("  xalgorix --setup")
 	fmt.Println("  xalgorix --web")
 	fmt.Println("  xalgorix --web --port 8080")
 	fmt.Println("  xalgorix --target https://example.com")

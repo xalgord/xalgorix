@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/xalgord/xalgorix/v4/internal/auth"
+	"github.com/xalgord/xalgorix/v4/internal/config"
 )
 
 type envSettingDefinition struct {
@@ -964,96 +964,11 @@ func (s *Server) envSettingValue(key string) string {
 }
 
 func updateXalgorixEnvFile(path string, updates map[string]string) error {
-	existing, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read env file: %w", err)
-	}
-	lines := []string{}
-	if len(existing) > 0 {
-		lines = strings.Split(strings.TrimRight(string(existing), "\n"), "\n")
-	}
-
-	seen := make(map[string]bool, len(updates))
-	newLines := make([]string, 0, len(lines)+len(updates)+1)
-	for _, line := range lines {
-		key, ok := envLineKey(line)
-		if !ok {
-			newLines = append(newLines, line)
-			continue
-		}
-		value, shouldUpdate := updates[key]
-		if !shouldUpdate {
-			newLines = append(newLines, line)
-			continue
-		}
-		seen[key] = true
-		if value == "" {
-			continue
-		}
-		newLines = append(newLines, formatEnvLine(key, value))
-	}
-
-	missing := make([]string, 0, len(updates))
-	for key, value := range updates {
-		if seen[key] || value == "" {
-			continue
-		}
-		missing = append(missing, key)
-	}
-	sort.Strings(missing)
-	if len(missing) > 0 && len(newLines) > 0 {
-		last := strings.TrimSpace(newLines[len(newLines)-1])
-		if last != "" {
-			newLines = append(newLines, "")
-		}
-	}
-	for _, key := range missing {
-		newLines = append(newLines, formatEnvLine(key, updates[key]))
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create env dir: %w", err)
-	}
-	out := strings.TrimRight(strings.Join(newLines, "\n"), "\n")
-	if out != "" {
-		out += "\n"
-	}
-	if err := os.WriteFile(path, []byte(out), 0o600); err != nil {
-		return fmt.Errorf("write env file: %w", err)
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		return fmt.Errorf("chmod env file: %w", err)
-	}
-	return nil
-}
-
-func envLineKey(line string) (string, bool) {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-		return "", false
-	}
-	trimmed = strings.TrimPrefix(trimmed, "export ")
-	parts := strings.SplitN(trimmed, "=", 2)
-	if len(parts) != 2 {
-		return "", false
-	}
-	key := strings.TrimSpace(parts[0])
-	if !envSettingKeyRe.MatchString(key) {
-		return "", false
-	}
-	return key, true
-}
-
-func formatEnvLine(key, value string) string {
-	return key + "=" + value
+	return config.UpdateEnvFile(path, updates)
 }
 
 func xalgorixEnvFilePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		home = "/root"
-	}
-	return filepath.Join(home, ".xalgorix.env")
+	return config.EnvFilePath()
 }
 
 func maskSecretValue(value string) string {

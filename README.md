@@ -43,18 +43,15 @@
 curl -sSL https://www.xalgorix.com/install | bash
 ```
 
-This downloads the prebuilt binary for your platform (Linux amd64/arm64) from the latest release. Then point it at your LLM provider in `~/.xalgorix.env`:
+This downloads the prebuilt binary for your platform (Linux amd64/arm64) from the latest release. Then run the interactive setup wizard:
 
 ```bash
-XALGORIX_LLM=minimax/MiniMax-M3
-XALGORIX_API_KEY=your_provider_api_key
+xalgorix --setup
 ```
 
-Launch the dashboard and open `http://127.0.0.1:9137`:
+Choose your provider, confirm a model, and enter the API key when prompted. Xalgorix stores it privately in `~/.xalgorix.env` (mode `0600`) and can launch the dashboard for you. Local Ollama needs no API key.
 
-```bash
-xalgorix --web
-```
+If you choose not to launch immediately, start later with `xalgorix --web` and open `http://127.0.0.1:9137`. You can change providers or advanced options at any time under **Settings → LLM**, or rerun `xalgorix --setup`.
 
 **Or run with Docker — batteries included, no toolchain needed:**
 
@@ -213,6 +210,14 @@ curl -sSL https://www.xalgorix.com/install | bash
 ```
 
 Downloads the latest release binary for your platform (Linux `amd64`/`arm64`) and installs it to `/usr/local/bin` (or `~/.local/bin` without sudo). Override with `XALGORIX_INSTALL_DIR` or pin a version with `XALGORIX_VERSION=vX.Y.Z`.
+
+Complete first-time configuration interactively—no manual environment-file editing required:
+
+```bash
+xalgorix --setup
+```
+
+The wizard preserves existing settings when rerun, hides API-key input in a terminal, and optionally launches the Web UI when finished.
 
 ### Docker
 

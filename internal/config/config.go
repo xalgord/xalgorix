@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/xalgord/xalgorix/v4/internal/providers"
 	"github.com/xalgord/xalgorix/v4/internal/scanheaders"
 )
 
@@ -495,60 +496,56 @@ func (c *Config) Validate() error {
 	if c.LLM == "" {
 		return fmt.Errorf("XALGORIX_LLM is required. Set it to a provider-native model ID such as 'gpt-5.4' or 'claude-sonnet-4-20250514'")
 	}
-	if c.APIKey == "" {
-		return fmt.Errorf("XALGORIX_API_KEY is required. Set it in ~/.xalgorix.env")
+	if c.APIKey == "" && c.LLMProfile == "" && !c.providerAllowsNoAuth() {
+		return fmt.Errorf("XALGORIX_API_KEY is required for the selected provider. Run 'xalgorix --setup' to configure it")
 	}
 	return nil
 }
 
-// CheckEnvFile checks if .xalgorix.env exists and has valid content.
+func (c *Config) providerAllowsNoAuth() bool {
+	providerID := strings.ToLower(strings.TrimSpace(c.LLMProvider))
+	if providerID == "" {
+		if slash := strings.IndexByte(c.LLM, '/'); slash > 0 {
+			providerID = strings.ToLower(strings.TrimSpace(c.LLM[:slash]))
+		}
+	}
+	entry, ok := providers.LookupBuiltin(providerID)
+	if !ok {
+		return false
+	}
+	for _, method := range entry.AuthMethods {
+		if method == "none" {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckEnvFile checks whether the per-user configuration is ready for a scan.
+// It uses the same rules as Config.Validate, including profile-based and
+// credential-free local providers.
 func CheckEnvFile() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("cannot find home directory: %w", err)
-	}
-
-	envPath := filepath.Join(home, ".xalgorix.env")
-
+	envPath := EnvFilePath()
 	if _, err := os.Stat(envPath); os.IsNotExist(err) {
-		return fmt.Errorf("configuration file not found: %s\n\nPlease create it with:\n  XALGORIX_LLM=minimax/MiniMax-M3\n  XALGORIX_API_KEY=your_api_key\n\nOr run: xalgorix --setup", envPath)
+		return fmt.Errorf("configuration file not found: %s\n\nRun: xalgorix --setup", envPath)
+	} else if err != nil {
+		return fmt.Errorf("inspect configuration file: %w", err)
 	}
 
-	llm := ""
-	apiKey := ""
-
-	f, err := os.Open(envPath)
+	values, err := ReadEnvFile(envPath)
 	if err != nil {
-		return fmt.Errorf("cannot read config file: %w", err)
+		return err
 	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = strings.TrimPrefix(line, "export ")
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-
-		switch key {
-		case "XALGORIX_LLM":
-			llm = value
-		case "XALGORIX_API_KEY":
-			apiKey = value
-		}
+	candidate := &Config{
+		DataDir:     "configured",
+		LLM:         values["XALGORIX_LLM"],
+		LLMProvider: values["XALGORIX_LLM_PROVIDER"],
+		APIKey:      values["XALGORIX_API_KEY"],
+		LLMProfile:  values["XALGORIX_LLM_PROFILE"],
 	}
-
-	if llm == "" || apiKey == "" {
-		return fmt.Errorf("configuration file is invalid or missing required variables\n\nPlease add to %s:\n  XALGORIX_LLM=minimax/MiniMax-M3\n  XALGORIX_API_KEY=your_api_key", envPath)
+	if err := candidate.Validate(); err != nil {
+		return fmt.Errorf("configuration file %s is incomplete: %w\n\nRun: xalgorix --setup", envPath, err)
 	}
-
 	return nil
 }
 
