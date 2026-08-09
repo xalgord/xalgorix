@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -34,7 +33,6 @@ func Register(r *tools.Registry) {
 			{Name: "url", Description: "Target URL (include protocol, e.g. https://example.com/api/users)", Required: true},
 			{Name: "method", Description: "HTTP method: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS (default: GET)", Required: false},
 			{Name: "headers", Description: `JSON object of request headers. Values may be strings, numbers, or arrays of strings for multi-value headers. e.g. {"Authorization":"Bearer eyJ...","Content-Type":"application/json","X-Ids":[1,2,3]}`, Required: false},
-			{Name: "auth_profile", Description: "Targeted retests only: select server-held primary (default), secondary, or none credentials without exposing their values", Required: false},
 			{Name: "body", Description: "Request body (for POST/PUT/PATCH). Pass the raw string to send.", Required: false},
 			{Name: "follow_redirects", Description: "Follow HTTP redirects (default: true). Set to false to inspect 3xx responses directly — useful for open redirect and SSRF testing.", Required: false},
 			{Name: "timeout", Description: "Request timeout in seconds (default: 30, max: 60)", Required: false},
@@ -85,10 +83,9 @@ func executeWithContext(contextID string, args map[string]string) (tools.Result,
 		}
 	}
 
-	effectiveBody := strings.TrimSpace(args["body"])
 	var bodyReader io.Reader
-	if effectiveBody != "" {
-		bodyReader = strings.NewReader(effectiveBody)
+	if body := strings.TrimSpace(args["body"]); body != "" {
+		bodyReader = strings.NewReader(body)
 	}
 
 	parsedURL, err := url.Parse(targetURL)
@@ -97,36 +94,6 @@ func executeWithContext(contextID string, args map[string]string) (tools.Result,
 	}
 	if parsedURL.Scheme == "" {
 		parsedURL.Scheme = "https"
-	}
-
-	// Resolve targeted authentication and reject model-supplied authentication
-	// before policy accounting. Invalid calls must not consume the request budget.
-	policy, targeted := requestPolicy(contextID)
-	profile := ""
-	sessionHeaders := getSessionAuth(contextID)
-	protectedHeaders := map[string]struct{}(nil)
-	if targeted {
-		profile = normalizeAuthProfile(args["auth_profile"])
-		args["auth_profile"] = profile
-		sessionHeaders, err = getSessionAuthProfile(contextID, profile)
-		if err != nil {
-			return tools.Result{}, err
-		}
-		protectedHeaders = protectedAuthHeaderNames(contextID)
-		if err := validateTargetedHeaders(args["headers"], protectedHeaders); err != nil {
-			return tools.Result{}, err
-		}
-	} else if strings.TrimSpace(args["auth_profile"]) != "" {
-		return tools.Result{}, fmt.Errorf("auth_profile is available only during targeted retests")
-	}
-	if err := applyRequestPolicy(contextID, parsedURL, method, args); err != nil {
-		return tools.Result{}, err
-	}
-	if targeted {
-		followRedirects = false
-		if policy.MaxTimeout > 0 {
-			timeout = policy.MaxTimeout
-		}
 	}
 
 	req, err := http.NewRequest(method, parsedURL.String(), bodyReader)
@@ -144,9 +111,11 @@ func executeWithContext(contextID string, args map[string]string) (tools.Result,
 			return tools.Result{}, err
 		}
 		// Record which headers the caller set explicitly, so authenticated-
-		// session credentials never clobber a deliberate override during an
-		// ordinary scan. Targeted calls reject protected headers before budget
-		// accounting and apply the selected server-held profile authoritatively.
+		// session credentials never clobber a deliberate override. A header
+		// set to an EMPTY value is a deliberate "send this request WITHOUT
+		// that credential" override (used to prove IDOR / broken access
+		// control) — track those separately so we can OMIT the header
+		// entirely rather than sending a malformed blank one.
 		var rawHdrs map[string]any
 		if json.Unmarshal([]byte(headersStr), &rawHdrs) == nil {
 			for k, v := range rawHdrs {
@@ -159,20 +128,12 @@ func executeWithContext(contextID string, args map[string]string) (tools.Result,
 		}
 	}
 
-	if targeted {
-		// Clear the full protected union first, then apply only the selected
-		// profile. This makes primary/secondary authoritative and guarantees
-		// that "none" sends no protected authentication headers.
-		for name := range protectedHeaders {
-			req.Header.Del(name)
-		}
-		for name, val := range sessionHeaders {
-			req.Header.Set(name, val)
-		}
-	} else if contextID != "" {
-		// Preserve ordinary scan behavior: model-supplied headers, including
-		// blank credential overrides, take precedence over session auth.
-		for name, val := range sessionHeaders {
+	// Apply authenticated-session credentials for this scan, but never
+	// override a header the caller set explicitly — so the agent can still
+	// send the SAME request unauthenticated (e.g. to prove an IDOR / auth
+	// bypass) by passing an empty/blank value for that header.
+	if contextID != "" {
+		for name, val := range getSessionAuth(contextID) {
 			if _, explicit := hdrsProvided[strings.ToLower(name)]; explicit {
 				continue
 			}
@@ -182,12 +143,10 @@ func executeWithContext(contextID string, args map[string]string) (tools.Result,
 		}
 	}
 
-	// Apply operator-configured scan/attribution headers only for ordinary scans.
-	// A targeted re-test must use solely the per-job auth supplied by its caller;
-	// attaching unrelated global headers could leak credentials across jobs.
-	if _, targeted := requestPolicy(contextID); !targeted {
-		scanheaders.Apply(req.Header, config.Get().ScanHeaders)
-	}
+	// Apply operator-configured scan/attribution headers (XALGORIX_SCAN_HEADERS
+	// / -H). Like session auth, they identify authorized scan traffic and are
+	// never allowed to override a header the caller set explicitly.
+	scanheaders.Apply(req.Header, config.Get().ScanHeaders)
 
 	// Blank overrides: DELETE the header so the request is sent with no such
 	// credential at all. Middleware/apps can treat an empty Authorization or
@@ -202,14 +161,13 @@ func executeWithContext(contextID string, args map[string]string) (tools.Result,
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	}
 
-	client := buildClientForContext(contextID, timeout, followRedirects, config.Get().TLSSkipVerify)
+	client := buildClient(timeout, followRedirects, config.Get().TLSSkipVerify)
 
 	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
 		return tools.Result{}, fmt.Errorf("request failed: %w", err)
 	}
-	markRequestPolicyExecuted(contextID, req, profile, effectiveBody)
 	defer resp.Body.Close()
 
 	elapsed := time.Since(start)
@@ -267,33 +225,7 @@ func executeWithContext(contextID string, args map[string]string) (tools.Result,
 		}
 	}
 
-	output := out.String()
-	if policy, targeted := requestPolicy(contextID); targeted && policy.MaxBytes > 0 && len(output) > policy.MaxBytes {
-		marker := "\n[Response truncated by targeted re-test policy]"
-		if policy.MaxBytes <= len(marker) {
-			output = marker[:policy.MaxBytes]
-		} else {
-			output = output[:policy.MaxBytes-len(marker)] + marker
-		}
-	}
-	return tools.Result{Output: output}, nil
-}
-
-func validateTargetedHeaders(rawJSON string, protected map[string]struct{}) error {
-	rawJSON = strings.TrimSpace(rawJSON)
-	if rawJSON == "" {
-		return nil
-	}
-	var headers map[string]any
-	if err := json.Unmarshal([]byte(rawJSON), &headers); err != nil {
-		return fmt.Errorf("invalid headers JSON: %w", err)
-	}
-	for name := range headers {
-		if _, conflict := protected[strings.ToLower(strings.TrimSpace(name))]; conflict {
-			return fmt.Errorf("targeted re-test headers may not set protected authentication header %q", name)
-		}
-	}
-	return nil
+	return tools.Result{Output: out.String()}, nil
 }
 
 // applyHeaders parses a JSON object and applies each entry as an HTTP header.
@@ -358,10 +290,7 @@ func isBinaryContentType(ct string) bool {
 // skipped. Set only from tests to avoid mutating the shared global config.
 var testTLSInsecure bool
 
-// buildClientForContext builds the HTTP client for a request. A targeted
-// re-test context pins dialing to the policy's validated public addresses;
-// an empty contextID keeps ordinary scan behavior.
-func buildClientForContext(contextID string, timeoutSec int, followRedirects bool, tlsSkipVerify bool) *http.Client {
+func buildClient(timeoutSec int, followRedirects bool, tlsSkipVerify bool) *http.Client {
 	tr, ok := http.DefaultTransport.(*http.Transport)
 	if ok {
 		tr = tr.Clone()
@@ -377,15 +306,8 @@ func buildClientForContext(contextID string, timeoutSec int, followRedirects boo
 		tr.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec
 	}
 
-	if _, targeted := requestPolicy(contextID); targeted {
-		// A configured proxy could resolve the hostname independently and bypass
-		// the public-address pinning below, so targeted re-tests always connect
-		// directly through the checked addresses.
-		tr.Proxy = nil
-		tr.MaxResponseHeaderBytes = 64 * 1024
-		dialer := (&net.Dialer{}).DialContext
-		tr.DialContext = dialContextForPolicy(contextID, dialer)
-	} else if proxy.Enabled() {
+	// Apply proxy when enabled.
+	if proxy.Enabled() {
 		if p := proxy.GetProxy(); p != nil {
 			if proxyURL, err := p.URL(); err == nil {
 				tr.Proxy = http.ProxyURL(proxyURL)

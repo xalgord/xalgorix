@@ -578,8 +578,8 @@ func TestRegister(t *testing.T) {
 	if tool.Name != "http_request" {
 		t.Fatalf("tool name = %q", tool.Name)
 	}
-	if len(tool.Parameters) != 8 {
-		t.Fatalf("expected 8 parameters, got %d", len(tool.Parameters))
+	if len(tool.Parameters) != 7 {
+		t.Fatalf("expected 7 parameters, got %d", len(tool.Parameters))
 	}
 
 	required := map[string]bool{}
@@ -589,7 +589,7 @@ func TestRegister(t *testing.T) {
 	if !required["url"] {
 		t.Fatal("url should be required")
 	}
-	for _, name := range []string{"method", "headers", "auth_profile", "body", "follow_redirects", "timeout"} {
+	for _, name := range []string{"method", "headers", "body", "follow_redirects", "timeout"} {
 		if required[name] {
 			t.Fatalf("%s should not be required", name)
 		}
@@ -760,7 +760,7 @@ func TestSchemaXMLContainsTool(t *testing.T) {
 	if !strings.Contains(schema, `name="http_request"`) {
 		t.Fatalf("SchemaXML missing http_request:\n%s", schema)
 	}
-	for _, param := range []string{"url", "method", "headers", "auth_profile", "body", "follow_redirects", "timeout"} {
+	for _, param := range []string{"url", "method", "headers", "body", "follow_redirects", "timeout"} {
 		if !strings.Contains(schema, `name="`+param+`"`) {
 			t.Errorf("SchemaXML missing parameter %q", param)
 		}

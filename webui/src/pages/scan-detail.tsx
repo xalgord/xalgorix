@@ -1,8 +1,6 @@
 import {
-  useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -44,7 +42,7 @@ import {
   useDeleteScan,
   useDeleteVuln,
 } from "@/api/queries";
-import { api, HttpError } from "@/api/client";
+import { api } from "@/api/client";
 import {
   filterEventsForInstance,
   mergeFeedEvents,
@@ -81,11 +79,7 @@ import {
 } from "lucide-react";
 import { LiveFeed, type FeedFilter } from "@/components/live-feed";
 import { Pagination, DEFAULT_PAGE_SIZE } from "@/components/Pagination";
-import type {
-  FindingRetestJob,
-  SubScanSummary,
-  VulnSummary,
-} from "@/types/api";
+import type { SubScanSummary, VulnSummary } from "@/types/api";
 
 export default function ScanDetailPage() {
   const navigate = useNavigate();
@@ -634,22 +628,6 @@ function Td({
   );
 }
 
-type FindingRetestEntry = {
-  job: FindingRetestJob | null;
-  starting: boolean;
-  error: string | null;
-};
-
-const EMPTY_FINDING_RETEST_ENTRY: FindingRetestEntry = {
-  job: null,
-  starting: false,
-  error: null,
-};
-
-function isFindingRetestActive(job: FindingRetestJob | null): boolean {
-  return job?.status === "queued" || job?.status === "running";
-}
-
 function findingKey(scanId: string, finding: VulnSummary): string {
   // source_scan_id disambiguates IDs reused by wildcard child scans. The
   // displayed scan is the safe fallback for responses from older records.
@@ -658,182 +636,6 @@ function findingKey(scanId: string, finding: VulnSummary): string {
 
 function findingSourceScanId(scanId: string, finding: VulnSummary): string {
   return finding.source_scan_id || scanId;
-}
-
-const RETEST_SESSION_KEY_PREFIX = "xalgorix:retest-jobs:v2:";
-
-function loadFindingRetestEntries(scanId: string): Record<string, FindingRetestEntry> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.sessionStorage.getItem(RETEST_SESSION_KEY_PREFIX + scanId);
-    if (!raw) return {};
-    const saved = JSON.parse(raw) as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.entries(saved)
-        .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0)
-        .map(([findingId, jobId]) => [
-          findingId,
-          {
-            job: { id: jobId, status: "queued" as const },
-            starting: false,
-            error: null,
-          },
-        ]),
-    );
-  } catch {
-    return {};
-  }
-}
-
-function persistFindingRetestEntries(
-  scanId: string,
-  entries: Record<string, FindingRetestEntry>,
-) {
-  if (typeof window === "undefined") return;
-  try {
-    const jobs = Object.fromEntries(
-      Object.entries(entries)
-        .filter((entry): entry is [string, FindingRetestEntry] => Boolean(entry[1].job?.id))
-        .map(([findingId, entry]) => [findingId, entry.job!.id]),
-    );
-    const key = RETEST_SESSION_KEY_PREFIX + scanId;
-    if (Object.keys(jobs).length === 0) window.sessionStorage.removeItem(key);
-    else window.sessionStorage.setItem(key, JSON.stringify(jobs));
-  } catch {
-    // Browser storage can be disabled; in-memory persistence still works.
-  }
-}
-
-function useFindingRetestRegistry(scanId: string) {
-  const [entries, setEntries] = useState<Record<string, FindingRetestEntry>>(
-    () => loadFindingRetestEntries(scanId),
-  );
-  const entriesRef = useRef(entries);
-  const scanIdRef = useRef(scanId);
-
-  const updateEntry = useCallback(
-    (
-      findingId: string,
-      update: (current: FindingRetestEntry) => FindingRetestEntry,
-    ) => {
-      const current =
-        entriesRef.current[findingId] ?? EMPTY_FINDING_RETEST_ENTRY;
-      const nextEntry = update(current);
-      if (nextEntry === current) return;
-      const nextEntries = {
-        ...entriesRef.current,
-        [findingId]: nextEntry,
-      };
-      entriesRef.current = nextEntries;
-      persistFindingRetestEntries(scanIdRef.current, nextEntries);
-      setEntries(nextEntries);
-    },
-    [],
-  );
-
-  useEffect(() => {
-    scanIdRef.current = scanId;
-    const restored = loadFindingRetestEntries(scanId);
-    entriesRef.current = restored;
-    setEntries(restored);
-  }, [scanId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const polling = new Set<string>();
-
-    const pollActiveJobs = () => {
-      for (const [findingId, entry] of Object.entries(entriesRef.current)) {
-        const job = entry.job;
-        if (!job || !isFindingRetestActive(job) || polling.has(job.id)) {
-          continue;
-        }
-        polling.add(job.id);
-        void api
-          .getFindingRetest(job.id)
-          .then((next) => {
-            if (cancelled || scanIdRef.current !== scanId) return;
-            updateEntry(findingId, (current) =>
-              current.job?.id === job.id
-                ? { ...current, job: next, error: null }
-                : current,
-            );
-          })
-          .catch((pollError: unknown) => {
-            if (cancelled || scanIdRef.current !== scanId) return;
-            updateEntry(findingId, (current) =>
-              current.job?.id === job.id
-                ? {
-                    ...current,
-                    error: findingRetestErrorMessage(pollError),
-                  }
-                : current,
-            );
-          })
-          .finally(() => {
-            polling.delete(job.id);
-          });
-      }
-    };
-
-    pollActiveJobs();
-    const timer = window.setInterval(pollActiveJobs, 1_500);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [scanId, updateEntry]);
-
-  const startRetest = useCallback(
-    async (finding: VulnSummary) => {
-      const key = findingKey(scanId, finding);
-      const current =
-        entriesRef.current[key] ?? EMPTY_FINDING_RETEST_ENTRY;
-      if (current.starting || isFindingRetestActive(current.job)) return;
-
-      updateEntry(key, (entry) => ({
-        ...entry,
-        starting: true,
-        error: null,
-      }));
-      try {
-        const started = await api.startLocalFindingRetest(
-          scanId,
-          findingSourceScanId(scanId, finding),
-          finding.id,
-        );
-        if (scanIdRef.current !== scanId) return;
-        updateEntry(key, (entry) => ({
-          ...entry,
-          job: started,
-          starting: false,
-          error: null,
-        }));
-      } catch (startError) {
-        if (scanIdRef.current !== scanId) return;
-        updateEntry(key, (entry) => ({
-          ...entry,
-          starting: false,
-          error: findingRetestErrorMessage(startError),
-        }));
-      }
-    },
-    [scanId, updateEntry],
-  );
-
-  const dismissRetest = useCallback((key: string) => {
-    const current = entriesRef.current[key];
-    if (!current || current.starting || isFindingRetestActive(current.job)) {
-      return;
-    }
-    const nextEntries = { ...entriesRef.current };
-    delete nextEntries[key];
-    entriesRef.current = nextEntries;
-    persistFindingRetestEntries(scanIdRef.current, nextEntries);
-    setEntries(nextEntries);
-  }, []);
-
-  return { entries, startRetest, dismissRetest };
 }
 
 function FindingsTab({
@@ -845,8 +647,6 @@ function FindingsTab({
 }) {
   const del = useDeleteVuln();
   const [selected, setSelected] = useState<VulnSummary | null>(null);
-  const { entries: retestEntries, startRetest, dismissRetest } =
-    useFindingRetestRegistry(scanId);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
   const sorted = useMemo(
     () =>
@@ -1032,18 +832,6 @@ function FindingsTab({
       </div>
       <FindingDetailsDialog
         finding={selected}
-        retestEntry={
-          selected
-            ? (retestEntries[findingKey(scanId, selected)] ??
-              EMPTY_FINDING_RETEST_ENTRY)
-            : EMPTY_FINDING_RETEST_ENTRY
-        }
-        onStartRetest={() => {
-          if (selected) void startRetest(selected);
-        }}
-        onDismissRetest={() => {
-          if (selected) dismissRetest(findingKey(scanId, selected));
-        }}
         onOpenChange={(open) => !open && setSelected(null)}
       />
     </>
@@ -1143,15 +931,9 @@ function FindingRowMenu({
 
 function FindingDetailsDialog({
   finding,
-  retestEntry,
-  onStartRetest,
-  onDismissRetest,
   onOpenChange,
 }: {
   finding: VulnSummary | null;
-  retestEntry: FindingRetestEntry;
-  onStartRetest: () => void;
-  onDismissRetest: () => void;
   onOpenChange: (open: boolean) => void;
 }) {
   return (
@@ -1212,12 +994,6 @@ function FindingDetailsDialog({
               />
             </div>
 
-            <FindingRetestPanel
-              entry={retestEntry}
-              onStart={onStartRetest}
-              onDismiss={onDismissRetest}
-            />
-
             <Separator />
 
             <div className="min-w-0 max-w-full space-y-4">
@@ -1254,147 +1030,6 @@ function FindingDetailsDialog({
         )}
       </DialogContent>
     </Dialog>
-  );
-}
-
-function findingRetestErrorMessage(error: unknown): string {
-  if (error instanceof HttpError) {
-    const data =
-      error.data && typeof error.data === "object"
-        ? (error.data as { error?: unknown; error_code?: unknown })
-        : null;
-    const code = typeof data?.error_code === "string" ? data.error_code : "";
-    if (error.status === 429 || code === "capacity_exhausted") {
-      return "The scanner is already running the maximum number of targeted retests. Try again shortly.";
-    }
-    if (error.status === 404 || code === "not_found") {
-      return "This stored scan or finding is no longer available.";
-    }
-    if (error.status === 409 || code === "ambiguous_finding") {
-      return "This finding cannot be retested safely from its stored record.";
-    }
-    if (typeof data?.error === "string" && data.error) return data.error;
-  }
-  return error instanceof Error ? error.message : "The targeted retest could not be started.";
-}
-
-function FindingRetestPanel({
-  entry,
-  onStart,
-  onDismiss,
-}: {
-  entry: FindingRetestEntry;
-  onStart: () => void;
-  onDismiss: () => void;
-}) {
-  const { job, starting, error } = entry;
-  const active = isFindingRetestActive(job);
-  const verdict = job?.result?.verdict;
-  const statusClass =
-    verdict === "still_vulnerable"
-      ? "border-red-500/30 bg-red-500/5 text-red-300"
-      : verdict === "fixed"
-        ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-300"
-        : "border-amber-500/30 bg-amber-500/5 text-amber-200";
-
-  return (
-    <section className="min-w-0 max-w-full rounded-md border border-border bg-muted/20 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Active retest
-          </h4>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Rechecks only this stored finding under the bounded retest policy. It does not run a full scan.
-          </p>
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          onClick={onStart}
-          disabled={starting || active}
-          className="shrink-0"
-        >
-          {starting || active ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <ShieldAlert className="h-4 w-4" />
-          )}
-          {starting
-            ? "Starting…"
-            : job?.status === "queued"
-              ? "Queued…"
-              : job?.status === "running"
-                ? "Retesting…"
-                : "Retest finding"}
-        </Button>
-      </div>
-
-      {error && (
-        <div className="mt-3 flex min-w-0 items-start justify-between gap-2">
-          <p
-            className="min-w-0 flex-1 text-xs text-red-300 [overflow-wrap:anywhere]"
-            role="alert"
-          >
-            {error}
-          </p>
-          {!starting && !active && !job && (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="h-7 shrink-0 px-2 text-xs"
-              onClick={onDismiss}
-            >
-              <X className="h-3.5 w-3.5" />
-              Close
-            </Button>
-          )}
-        </div>
-      )}
-
-      {job && !active && (
-        <div
-          className={cn(
-            "mt-3 min-w-0 max-w-full rounded-md border p-3 text-xs",
-            statusClass,
-          )}
-          aria-live="polite"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="font-medium capitalize">
-              {verdict ? verdict.replaceAll("_", " ") : job.status}
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="h-7 shrink-0 px-2 text-xs"
-              onClick={onDismiss}
-              disabled={starting}
-            >
-              <X className="h-3.5 w-3.5" />
-              Close result
-            </Button>
-          </div>
-          {(job.result?.reason || job.error) && (
-            <p className="mt-1 whitespace-pre-wrap [overflow-wrap:anywhere]">
-              {job.result?.reason || job.error}
-            </p>
-          )}
-          {job.result?.evidence && (
-            <pre className="mt-2 min-w-0 max-w-full whitespace-pre-wrap rounded border border-current/20 bg-black/20 p-2 text-[11px] [overflow-wrap:anywhere]">
-              {job.result.evidence}
-            </pre>
-          )}
-          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] opacity-80">
-            <span>{job.request_count ?? 0} requests</span>
-            <span>{job.affected_request_count ?? 0} affected-endpoint</span>
-            <span>{job.affected_variant_count ?? 0} variants</span>
-          </div>
-        </div>
-      )}
-    </section>
   );
 }
 

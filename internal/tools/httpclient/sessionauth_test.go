@@ -112,33 +112,3 @@ func TestSetSessionAuthClears(t *testing.T) {
 		t.Fatal("passing empty map must clear the context's auth")
 	}
 }
-
-func TestSessionAuthProfilesAreIsolatedAndOpaque(t *testing.T) {
-	const ctx = "targeted-profiles"
-	SetSessionAuth(ctx, map[string]string{"Cookie": "primary=1"})
-	SetSessionAuthSecondary(ctx, map[string]string{"Cookie": "secondary=2"})
-	t.Cleanup(func() {
-		SetSessionAuth(ctx, nil)
-		SetSessionAuthSecondary(ctx, nil)
-	})
-
-	primary, err := getSessionAuthProfile(ctx, "primary")
-	if err != nil || primary["Cookie"] != "primary=1" {
-		t.Fatalf("primary profile = %v, %v", primary, err)
-	}
-	secondary, err := getSessionAuthProfile(ctx, "secondary")
-	if err != nil || secondary["Cookie"] != "secondary=2" {
-		t.Fatalf("secondary profile = %v, %v", secondary, err)
-	}
-	none, err := getSessionAuthProfile(ctx, "none")
-	if err != nil || none != nil {
-		t.Fatalf("none profile = %v, %v", none, err)
-	}
-	if _, err := getSessionAuthProfile(ctx, "attacker-selected"); err == nil {
-		t.Fatal("unknown profile should be rejected")
-	}
-	SetSessionAuthSecondary(ctx, nil)
-	if _, err := getSessionAuthProfile(ctx, "secondary"); err == nil {
-		t.Fatal("missing secondary profile should be rejected")
-	}
-}

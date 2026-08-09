@@ -30,39 +30,6 @@ export interface VulnSummary {
   tags?: string[];
 }
 
-export type FindingRetestStatus =
-  | "queued"
-  | "running"
-  | "completed"
-  | "unsupported"
-  | "failed";
-
-export interface FindingRetestJob {
-  id: string;
-  status: FindingRetestStatus;
-  created_at?: string;
-  started_at?: string;
-  finished_at?: string;
-  result?: {
-    verdict?: "still_vulnerable" | "fixed" | "inconclusive";
-    reason?: string;
-    evidence?: string;
-  };
-  error_code?: string;
-  error?: string;
-  meaningful_attempt?: boolean;
-  request_count?: number;
-  affected_request_count?: number;
-  affected_variant_count?: number;
-}
-
-export interface FindingRetestStart {
-  id: string;
-  status: "queued";
-  created_at: string;
-  poll_url: string;
-}
-
 export interface WSEvent {
   type: string;
   content?: string;

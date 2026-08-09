@@ -227,8 +227,7 @@ func isDashboardReadPath(method, path string) bool {
 		return true
 	default:
 		return strings.HasPrefix(path, "/api/scans/") ||
-			strings.HasPrefix(path, "/api/instances/") ||
-			strings.HasPrefix(path, "/api/findings/retest/")
+			strings.HasPrefix(path, "/api/instances/")
 	}
 }
 
@@ -553,9 +552,6 @@ var dashboardRoutes = []string{
 	"/api/status",
 	"/api/findings/summary",
 	"/api/findings",
-	"/api/findings/retest",
-	"/api/findings/retest/local",
-	"/api/findings/retest/",
 	"/api/legacy-import/status",
 	"/api/scans",
 	"/api/scans/",
@@ -706,14 +702,6 @@ type Server struct {
 	// catalog + llmKeyStore. Backs /api/settings/llm/test-route. nil
 	// when llmKeyStore is nil.
 	llmRouter *llm.Router
-
-	// Targeted finding re-tests are isolated from scan instances. The map holds
-	// only sanitized status/results; request credentials remain in the worker
-	// closure and are never retained in a pollable object.
-	retestMu     sync.RWMutex
-	retestJobs   map[string]retestJob
-	retestSlots  chan struct{}
-	retestRunner func(retestStartRequest) retestOutcome
 }
 
 // NewServer creates a new web server.
@@ -751,8 +739,6 @@ func NewServer(cfg *config.Config, port int) *Server {
 		// fields flip from nil to non-nil during construction.
 		schedules:    make(map[string]*ScanSchedule),
 		shutdownChan: make(chan struct{}),
-		retestJobs:   make(map[string]retestJob),
-		retestSlots:  make(chan struct{}, maxConcurrentRetests),
 		// Buffered to length 1 so a non-blocking send from a terminating
 		// scan never blocks; the buffered slot guarantees a wake signal
 		// is delivered to whichever waiter is currently parked in the
@@ -973,9 +959,6 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/findings/summary", s.handleFindingsSummary)
 	mux.HandleFunc("/api/findings", s.handleFindingsList)
-	mux.HandleFunc("/api/findings/retest", s.handleStartFindingRetest)
-	mux.HandleFunc("/api/findings/retest/local", s.handleStartLocalFindingRetest)
-	mux.HandleFunc("/api/findings/retest/", s.handleGetFindingRetest)
 	mux.HandleFunc("/api/legacy-import/status", s.handleLegacyImportStatus)
 	mux.HandleFunc("/api/scans", s.handleListScans)
 	mux.HandleFunc("/api/scans/", func(w http.ResponseWriter, r *http.Request) {

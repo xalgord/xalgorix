@@ -20,7 +20,6 @@
 package agent
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -42,53 +41,28 @@ const (
 	// budget could consume most of a provider window for one report.
 	verifierMaxTurns = 8
 	verifierDeadline = 3 * time.Minute
-
-	// RetestTurnBudgetExhaustedReason is the exact internal outcome used when a
-	// verifier never executes or submits a decision before its bounded turns end.
-	RetestTurnBudgetExhaustedReason = "verifier did not reach a verdict within the turn budget"
 )
 
 // verifyFinding is the FindingVerifier installed into the reporting package.
-func (a *Agent) verifyFinding(req reporting.VerificationRequest) reporting.VerificationVerdict {
-	return a.verifyFindingMode(req, false)
-}
-
-// RetestFinding runs the same evidence-based verifier in strict targeted mode.
-// Only the structured HTTP and OOB tools are available; no shell, browser,
-// search, reporting, file, or agent-spawning tools can be invoked.
-func (a *Agent) RetestFinding(req reporting.VerificationRequest) reporting.VerificationVerdict {
-	return a.verifyFindingMode(req, true)
-}
-
-// verifyFindingMode builds a restricted registry and runs a bounded adversarial
+// It builds a restricted, read-only registry and runs a bounded adversarial
 // loop that ends when the model calls submit_verdict (or budget is exhausted).
-func (a *Agent) verifyFindingMode(req reporting.VerificationRequest, targeted bool) reporting.VerificationVerdict {
+func (a *Agent) verifyFinding(req reporting.VerificationRequest) reporting.VerificationVerdict {
 	if a.client == nil {
 		return reporting.VerificationVerdict{Inconclusive: true, Reason: "no LLM client available for verification"}
 	}
 	if a.stopped.Load() {
 		return reporting.VerificationVerdict{Inconclusive: true, Reason: "scan stopped before verification"}
 	}
-	if targeted {
-		// The temporary retest client must not outlive the verifier wall clock,
-		// including while blocked inside a provider call.
-		ctx, cancel := context.WithTimeout(a.ctx, verifierDeadline)
-		defer cancel()
-		a.client.SetContext(ctx)
-	}
 
-	// Targeted re-tests expose only bounded network tools. The normal candidate
-	// verifier retains its existing read-only toolkit for initial scan findings.
+	// Restricted, read-only tool registry — no reporting, no agent spawning.
 	vreg := tools.NewRegistry()
 	vreg.SetScanContextID(a.scanCtx.ID)
+	terminal.Register(vreg)
 	httpclient.Register(vreg)
-	oobtool.Register(vreg)
-	if !targeted {
-		terminal.Register(vreg)
-		browser.Register(vreg)
-		notes.Register(vreg)
-		websearch.Register(vreg)
-	}
+	browser.Register(vreg)
+	notes.Register(vreg)
+	websearch.Register(vreg)
+	oobtool.Register(vreg) // lets the verifier confirm blind classes out-of-band
 
 	var verdict *reporting.VerificationVerdict
 	vreg.Register(&tools.Tool{
@@ -122,12 +96,8 @@ func (a *Agent) verifyFindingMode(req reporting.VerificationRequest, targeted bo
 		},
 	})
 
-	prompt := buildVerifierPrompt(req, vreg.SchemaXML())
-	if targeted {
-		prompt = buildTargetedRetestPrompt(req, vreg.SchemaXML(), len(httpclient.ParseAuthHeaders(a.targetAuthB)) > 0)
-	}
 	msgs := []llm.Message{
-		{Role: "system", Content: prompt},
+		{Role: "system", Content: buildVerifierPrompt(req, vreg.SchemaXML())},
 		{Role: "user", Content: "Independently re-test the candidate finding NOW using the tools. Do NOT trust the original proof — reproduce it yourself, include a negative/baseline control where applicable, then call submit_verdict with your decision."},
 	}
 
@@ -180,10 +150,6 @@ func (a *Agent) verifyFindingMode(req reporting.VerificationRequest, targeted bo
 			// applies, so the verifier cannot probe out-of-scope/local hosts and
 			// a hung re-test cannot outlive the report_vulnerability call.
 			res := a.execVerifierToolGuarded(vreg, tc.Name, tc.Args, deadline)
-			if targeted {
-				res.Output = a.redactSecrets(res.Output)
-				res.Error = a.redactSecrets(res.Error)
-			}
 			out := res.Output
 			if res.Error != "" {
 				out = "error: " + res.Error
@@ -236,7 +202,7 @@ func (a *Agent) verifyFindingMode(req reporting.VerificationRequest, targeted bo
 	}
 
 	if verdict == nil {
-		return reporting.VerificationVerdict{Inconclusive: true, Reason: RetestTurnBudgetExhaustedReason}
+		return reporting.VerificationVerdict{Inconclusive: true, Reason: "verifier did not reach a verdict within the turn budget"}
 	}
 
 	if verdict.Confirmed {

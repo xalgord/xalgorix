@@ -1,7 +1,6 @@
 package httpclient
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 )
@@ -14,14 +13,17 @@ import (
 // it to override (e.g. to test the SAME request unauthenticated for IDOR).
 
 var (
-	sessionAuthMu        sync.RWMutex
-	sessionAuth          = map[string]map[string]string{} // contextID -> canonical header -> value
-	sessionAuthSecondary = map[string]map[string]string{} // targeted retests only; never auto-applied
+	sessionAuthMu sync.RWMutex
+	sessionAuth   = map[string]map[string]string{} // contextID -> canonical header -> value
 )
 
-func setSessionAuthLocked(store map[string]map[string]string, contextID string, headers map[string]string) {
+// SetSessionAuth registers authenticated-session headers for a scan context.
+// Passing an empty map clears any existing auth for that context.
+func SetSessionAuth(contextID string, headers map[string]string) {
+	sessionAuthMu.Lock()
+	defer sessionAuthMu.Unlock()
 	if len(headers) == 0 {
-		delete(store, contextID)
+		delete(sessionAuth, contextID)
 		return
 	}
 	cp := make(map[string]string, len(headers))
@@ -32,31 +34,14 @@ func setSessionAuthLocked(store map[string]map[string]string, contextID string, 
 		}
 		cp[k] = v
 	}
-	if len(cp) == 0 {
-		delete(store, contextID)
-		return
-	}
-	store[contextID] = cp
+	sessionAuth[contextID] = cp
 }
 
-// SetSessionAuth registers authenticated-session headers for a scan context.
-// Passing an empty map clears any existing auth for that context.
-func SetSessionAuth(contextID string, headers map[string]string) {
-	sessionAuthMu.Lock()
-	defer sessionAuthMu.Unlock()
-	setSessionAuthLocked(sessionAuth, contextID, headers)
-}
-
-// SetSessionAuthSecondary stores a second account for a targeted retest. It is
-// selected only by the opaque auth_profile tool argument; credential values
-// are never put into prompts, tool schemas, or pollable job state.
-func SetSessionAuthSecondary(contextID string, headers map[string]string) {
-	sessionAuthMu.Lock()
-	defer sessionAuthMu.Unlock()
-	setSessionAuthLocked(sessionAuthSecondary, contextID, headers)
-}
-
-func copySessionAuth(src map[string]string) map[string]string {
+// getSessionAuth returns a copy of the auth headers for a context (or nil).
+func getSessionAuth(contextID string) map[string]string {
+	sessionAuthMu.RLock()
+	defer sessionAuthMu.RUnlock()
+	src := sessionAuth[contextID]
 	if len(src) == 0 {
 		return nil
 	}
@@ -65,65 +50,6 @@ func copySessionAuth(src map[string]string) map[string]string {
 		cp[k] = v
 	}
 	return cp
-}
-
-// getSessionAuth returns a copy of the auth headers for a context (or nil).
-func getSessionAuth(contextID string) map[string]string {
-	sessionAuthMu.RLock()
-	defer sessionAuthMu.RUnlock()
-	return copySessionAuth(sessionAuth[contextID])
-}
-
-func getSessionAuthSecondary(contextID string) map[string]string {
-	sessionAuthMu.RLock()
-	defer sessionAuthMu.RUnlock()
-	return copySessionAuth(sessionAuthSecondary[contextID])
-}
-
-func normalizeAuthProfile(profile string) string {
-	profile = strings.ToLower(strings.TrimSpace(profile))
-	if profile == "" {
-		return "primary"
-	}
-	return profile
-}
-
-func getSessionAuthProfile(contextID, profile string) (map[string]string, error) {
-	switch normalizeAuthProfile(profile) {
-	case "primary":
-		return getSessionAuth(contextID), nil
-	case "secondary":
-		headers := getSessionAuthSecondary(contextID)
-		if len(headers) == 0 {
-			return nil, fmt.Errorf("secondary authentication profile is unavailable")
-		}
-		return headers, nil
-	case "none":
-		return nil, nil
-	default:
-		return nil, fmt.Errorf("auth_profile must be primary, secondary, or none")
-	}
-}
-
-func protectedAuthHeaderNames(contextID string) map[string]struct{} {
-	protected := map[string]struct{}{
-		"authorization":       {},
-		"proxy-authorization": {},
-		"cookie":              {},
-		"x-api-key":           {},
-		"x-auth-token":        {},
-	}
-	sessionAuthMu.RLock()
-	defer sessionAuthMu.RUnlock()
-	for _, headers := range []map[string]string{sessionAuth[contextID], sessionAuthSecondary[contextID]} {
-		for name := range headers {
-			name = strings.ToLower(strings.TrimSpace(name))
-			if name != "" {
-				protected[name] = struct{}{}
-			}
-		}
-	}
-	return protected
 }
 
 // ParseAuthHeaders parses an operator auth string into HTTP headers. Accepts
