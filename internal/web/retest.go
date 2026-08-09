@@ -169,16 +169,18 @@ func (s *Server) handleStartLocalFindingRetest(w http.ResponseWriter, r *http.Re
 	if target == "" {
 		target = strings.TrimSpace(record.Target)
 	}
+	target = normalizeLocalRetestTarget(target, record.Target)
 	method := strings.ToUpper(strings.TrimSpace(finding.Method))
 	if method == "" {
 		method = http.MethodGet
 	}
+	endpoint := normalizeLocalRetestEndpoint(finding.Endpoint, method)
 	primaryAuth, secondaryAuth := s.snapshotRetestAuth(record, input.ScanID)
 	req := retestStartRequest{
 		Finding: retestFindingInput{
 			Title: finding.Title, Severity: finding.Severity, CWE: finding.CWE,
 			VerificationMethod: finding.VerificationMethod, CVSSVector: finding.CVSSVector,
-			Target: target, Endpoint: finding.Endpoint, Method: method,
+			Target: target, Endpoint: endpoint, Method: method,
 			Description: finding.Description, Proof: finding.ExploitationProof,
 		},
 		TargetAuth: primaryAuth, TargetAuthB: secondaryAuth,
@@ -188,6 +190,45 @@ func (s *Server) handleStartLocalFindingRetest(w http.ResponseWriter, r *http.Re
 
 func validLocalRetestID(value string) bool {
 	return value != "" && len(value) <= 512 && value != "." && value != ".." && !strings.ContainsAny(value, `/\\`)
+}
+
+// normalizeLocalRetestTarget makes historical host-only finding targets usable
+// by the dashboard without relaxing the strict server-to-server API contract.
+// Only a bare authority is upgraded; malformed URLs, credentials, paths, and
+// alternate schemes remain unchanged so validateRetestRequest rejects them.
+func normalizeLocalRetestTarget(target, recordTarget string) string {
+	target = strings.TrimSpace(target)
+	if _, err := parseRetestURL(target); err == nil {
+		return target
+	}
+	if target == "" || strings.Contains(target, "://") || strings.ContainsAny(target, `/\\?#@%`) ||
+		strings.IndexFunc(target, func(r rune) bool { return r <= ' ' }) >= 0 {
+		return target
+	}
+
+	authority, err := url.Parse("//" + target)
+	if err != nil || authority.Host == "" || authority.Hostname() == "" || authority.User != nil ||
+		authority.Path != "" || authority.RawQuery != "" || authority.Fragment != "" {
+		return target
+	}
+
+	if recorded, err := parseRetestURL(strings.TrimSpace(recordTarget)); err == nil &&
+		strings.EqualFold(recorded.Host, authority.Host) {
+		return recorded.Scheme + "://" + authority.Host
+	}
+	return "https://" + authority.Host
+}
+
+// normalizeLocalRetestEndpoint removes a duplicated method token from legacy
+// records such as "POST /v1/register" when the method is already stored in its
+// dedicated field. The resulting URL is still checked by the strict validator.
+func normalizeLocalRetestEndpoint(endpoint, method string) string {
+	endpoint = strings.TrimSpace(endpoint)
+	fields := strings.Fields(endpoint)
+	if len(fields) >= 2 && strings.EqualFold(fields[0], method) {
+		return strings.TrimSpace(endpoint[len(fields[0]):])
+	}
+	return endpoint
 }
 
 func (s *Server) snapshotRetestAuth(record *ScanRecord, requestedScanID string) (string, string) {
