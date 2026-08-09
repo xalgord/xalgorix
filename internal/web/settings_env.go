@@ -120,7 +120,7 @@ func allEnvSettingDefinitions() []envSettingDefinition {
 		autoInstallDefault = "true"
 	}
 	return []envSettingDefinition{
-		{Key: "XALGORIX_LLM", Label: "LLM model", Category: "LLM", Description: "Provider-native model ID used by scans and post-scan chat.", Placeholder: "MiniMax-M3", InputType: "text"},
+		{Key: "XALGORIX_LLM", Label: "LLM model", Category: "LLM", Description: "Provider-native model ID used by scans and post-scan chat. For best results, choose a current frontier model with strong reasoning and tool calling.", Placeholder: "gpt-5.6", InputType: "text"},
 		{Key: "XALGORIX_LLM_PROVIDER", Label: "LLM provider", Category: "LLM", Description: "Explicit provider ID used to route the selected model without adding a provider prefix to its model name.", Placeholder: "ollama", InputType: "text"},
 		{Key: "XALGORIX_API_KEY", Label: "LLM API key", Category: "LLM", Description: "Provider API key for the configured model.", Placeholder: "sk-...", InputType: "secret", Sensitive: true},
 		{Key: "XALGORIX_API_BASE", Label: "API base URL", Category: "LLM", Description: "Optional custom provider endpoint. Leave blank to use provider defaults.", Placeholder: "https://api.openai.com/v1", InputType: "url"},

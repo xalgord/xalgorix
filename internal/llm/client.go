@@ -404,7 +404,7 @@ func (c *Client) resolveEndpoint() (string, string) {
 	apiBase := c.cfg.APIBase
 	model := c.apiModel
 
-	// Extract provider prefix if present (e.g., "openai/gpt-5.4" -> provider="openai", model="gpt-5.4")
+	// Extract provider prefix if present (e.g., "openai/gpt-5.6" -> provider="openai", model="gpt-5.6")
 	provider := ""
 	if idx := strings.Index(model, "/"); idx >= 0 {
 		provider = strings.ToLower(model[:idx])

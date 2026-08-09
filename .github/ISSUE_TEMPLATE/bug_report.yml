@@ -60,7 +60,7 @@ body:
     attributes:
       label: Environment
       description: OS / arch, and LLM provider if relevant.
-      placeholder: Ubuntu 24.04 amd64, MiniMax-M3
+      placeholder: Ubuntu 24.04 amd64, OpenAI GPT-5.6
   - type: checkboxes
     id: checks
     attributes:

@@ -49,7 +49,7 @@ This downloads the prebuilt binary for your platform (Linux amd64/arm64) from th
 xalgorix --setup
 ```
 
-Choose your provider, confirm a model, and enter the API key when prompted. Xalgorix stores it privately in `~/.xalgorix.env` (mode `0600`) and can launch the dashboard for you. Local Ollama needs no API key.
+Choose your provider, confirm a model, and enter the API key when prompted. For best results, use a current frontier model with strong reasoning, long-context performance, and reliable tool calling—such as the latest capable GPT, Claude, or Gemini model available to you. Smaller or local models remain supported, but may require more supervision during long autonomous scans. Xalgorix stores the key privately in `~/.xalgorix.env` (mode `0600`) and can launch the dashboard for you. Local Ollama needs no API key.
 
 If you choose not to launch immediately, start later with `xalgorix --web` and open `http://127.0.0.1:9137`. You can change providers or advanced options at any time under **Settings → LLM**, or rerun `xalgorix --setup`.
 
@@ -224,8 +224,8 @@ The wizard preserves existing settings when rerun, hides API-key input in a term
 ```bash
 docker run --rm -p 9137:9137 \
   --privileged \
-  -e XALGORIX_LLM=minimax/MiniMax-M3 \
-  -e XALGORIX_API_KEY=your_provider_api_key \
+  -e XALGORIX_LLM=openai/gpt-5.6 \
+  -e XALGORIX_API_KEY=your_openai_api_key \
   -v xalgorix-data:/data \
   ghcr.io/xalgord/xalgorix:latest
 ```
@@ -289,9 +289,11 @@ nano ~/.xalgorix.env
 
 ### Minimal Config
 
+For the strongest autonomous scanning results, select a current frontier model. The model ID below is a concrete example; newer compatible model IDs can be entered without waiting for a Xalgorix release.
+
 ```bash
-XALGORIX_LLM=minimax/MiniMax-M3
-XALGORIX_API_KEY=your_provider_api_key
+XALGORIX_LLM=openai/gpt-5.6
+XALGORIX_API_KEY=your_openai_api_key
 ```
 
 ### Provider Examples
@@ -299,7 +301,7 @@ XALGORIX_API_KEY=your_provider_api_key
 OpenAI:
 
 ```bash
-XALGORIX_LLM=openai/gpt-5.4
+XALGORIX_LLM=openai/gpt-5.6
 XALGORIX_API_KEY=sk-...
 ```
 
@@ -322,9 +324,9 @@ Run LiteLLM (example `config.yaml`):
 
 ```yaml
 model_list:
-  - model_name: claude-opus-4-8
+  - model_name: claude-opus-5
     litellm_params:
-      model: github_copilot/claude-opus-4.8   # or openrouter/…, azure/…, ollama/…
+      model: github_copilot/claude-opus-5   # or openrouter/…, azure/…, ollama/…
 general_settings:
   master_key: sk-local-litellm-key
 ```
@@ -333,7 +335,7 @@ Point Xalgorix at it — use the `custom/` prefix so the model name is sent verb
 OpenAI chat-completions protocol is used:
 
 ```bash
-XALGORIX_LLM=custom/claude-opus-4-8            # the LiteLLM model_name
+XALGORIX_LLM=custom/claude-opus-5            # the LiteLLM model_name
 XALGORIX_API_BASE=http://localhost:4000/v1     # your LiteLLM proxy
 XALGORIX_API_KEY=sk-local-litellm-key          # LiteLLM master_key / virtual key
 ```

@@ -224,7 +224,6 @@ var builtinList = []Entry{
 		ID:          "minimax",
 		DisplayName: "MiniMax",
 		BaseURL:     "https://api.minimax.io/v1",
-		// Default recommended model.
 		HeaderStyle: "openai",
 		AuthMethods: []string{"api_key"},
 	},

@@ -476,7 +476,7 @@ func printUsage() {
 	fmt.Println("  xalgorix --uninstall  Remove xalgorix from system")
 	fmt.Println()
 	fmt.Println("Environment:")
-	fmt.Println("  XALGORIX_LLM              Model name (e.g. minimax/MiniMax-M3)")
+	fmt.Println("  XALGORIX_LLM              Frontier model ID (e.g. openai/gpt-5.6)")
 	fmt.Println("  XALGORIX_API_KEY           API key")
 	fmt.Println("  XALGORIX_API_BASE          API base URL")
 	fmt.Println("  XALGORIX_MAX_ITERATIONS    Max iterations (0 = unlimited)")

@@ -21,10 +21,10 @@ type setupProvider struct {
 }
 
 var setupProviders = []setupProvider{
-	{id: "minimax", name: "MiniMax (recommended)", defaultModel: "MiniMax-M3", needsAPIKey: true},
-	{id: "openai", name: "OpenAI", defaultModel: "gpt-5.4", needsAPIKey: true},
-	{id: "anthropic", name: "Anthropic (Claude)", defaultModel: "claude-sonnet-4-20250514", needsAPIKey: true},
-	{id: "google", name: "Google Gemini", defaultModel: "gemini-3.1-pro-preview", needsAPIKey: true},
+	{id: "openai", name: "OpenAI", defaultModel: "gpt-5.6", needsAPIKey: true},
+	{id: "anthropic", name: "Anthropic (Claude)", defaultModel: "claude-fable-5", needsAPIKey: true},
+	{id: "google", name: "Google Gemini", defaultModel: "gemini-3.5-flash", needsAPIKey: true},
+	{id: "minimax", name: "MiniMax", defaultModel: "MiniMax-M3", needsAPIKey: true},
 	{id: "ollama", name: "Ollama (local, no API key)", defaultModel: "llama3.3"},
 	{id: "custom", name: "Custom OpenAI-compatible endpoint", needsAPIKey: true},
 }
@@ -57,6 +57,9 @@ func runSetup(in io.Reader, out io.Writer) (bool, error) {
 		return false, err
 	}
 	if err := p.println("Configure an LLM in a few steps. You can change advanced options later in Settings."); err != nil {
+		return false, err
+	}
+	if err := p.println("For best results, choose a current frontier model with strong reasoning and reliable tool calling."); err != nil {
 		return false, err
 	}
 	if err := p.printf("Configuration: %s (saved with mode 0600)\n\n", path); err != nil {

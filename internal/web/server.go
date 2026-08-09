@@ -269,7 +269,7 @@ type ScanRequest struct {
 	Targets        []string `json:"targets"`
 	Instruction    string   `json:"instruction"`
 	ScanMode       string   `json:"scan_mode"`       // "single" or "wildcard"
-	Model          string   `json:"model"`           // e.g. "minimax/MiniMax-M3"
+	Model          string   `json:"model"`           // e.g. "openai/gpt-5.6"
 	APIKey         string   `json:"api_key"`         // provider API key
 	APIBase        string   `json:"api_base"`        // provider API base URL
 	DiscordWebhook string   `json:"discord_webhook"` // Discord webhook URL

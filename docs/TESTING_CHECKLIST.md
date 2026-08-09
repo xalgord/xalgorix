@@ -51,7 +51,7 @@ This checklist tracks the automated and manual gates for the CLI, web UI, LLM pr
 
 - [ ] Dashboard loads in authenticated and unauthenticated modes.
 - [ ] Model fields allow custom IDs while showing current suggestions.
-- [ ] Gemini suggestions include current text models such as `gemini-3.1-pro-preview` and do not force deprecated models.
+- [ ] Gemini suggestions include current text models such as `gemini-3.5-flash` and do not force deprecated models.
 - [ ] DeepSeek suggestions include `deepseek-v4-pro` and `deepseek-v4-flash`.
 - [ ] Start, stop, queue, resume, chat, report download, and instance detail flows work from the UI.
 - [ ] Empty states, long target names, long logs, upload errors, WebSocket reconnect, and mobile layout render cleanly.

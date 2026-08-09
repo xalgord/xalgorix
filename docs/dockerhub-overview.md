@@ -18,13 +18,15 @@ This image is **batteries-included**: it's built on Kali Linux with hundreds of 
 
 ```bash
 docker run --rm -p 9137:9137 \
-  -e XALGORIX_LLM=minimax/MiniMax-M3 \
-  -e XALGORIX_API_KEY=your_provider_api_key \
+  -e XALGORIX_LLM=openai/gpt-5.6 \
+  -e XALGORIX_API_KEY=your_openai_api_key \
   -v xalgorix-data:/data \
   xalgord/xalgorix:latest
 ```
 
 Then open **http://127.0.0.1:9137**.
+
+For best autonomous scanning results, choose a current frontier model with strong reasoning and reliable tool calling. The example model can be replaced with any newer compatible provider model ID.
 
 > Use Xalgorix only against systems you own or are explicitly authorized to test.
 
@@ -44,7 +46,7 @@ An extensive toolset ships preinstalled — `nmap`, `nuclei`, `httpx`, `subfinde
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `XALGORIX_LLM` | ✅ | Model, usually with a provider prefix, e.g. `minimax/MiniMax-M3`, `openai/gpt-5.4`. |
+| `XALGORIX_LLM` | ✅ | Model ID, usually with a provider prefix, e.g. `openai/gpt-5.6`. For best results use a current frontier model; MiniMax and local models remain supported. |
 | `XALGORIX_API_KEY` | ✅ | API key for the configured LLM provider. |
 | `XALGORIX_API_BASE` | — | Custom OpenAI-compatible base URL. |
 | `XALGORIX_USERNAME` / `XALGORIX_PASSWORD` | — | Dashboard auth. **Required** before exposing the dashboard beyond localhost. |

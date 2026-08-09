@@ -20,7 +20,7 @@ import (
 // Config holds all Xalgorix configuration.
 type Config struct {
 	// LLM settings
-	LLM              string   // XALGORIX_LLM — provider-native model ID (for example, "gpt-5.4" or "zai-org/glm-4.5")
+	LLM              string   // XALGORIX_LLM — provider-native model ID (for example, "gpt-5.6" or "zai-org/glm-4.5")
 	LLMProvider      string   // XALGORIX_LLM_PROVIDER — explicit provider ID; keeps provider routing separate from the model name
 	APIBase          string   // XALGORIX_API_BASE — API endpoint
 	APIKey           string   // XALGORIX_API_KEY — API key
@@ -36,9 +36,8 @@ type Config struct {
 	MemCompTimeout      int // XALGORIX_MEMORY_COMPRESSOR_TIMEOUT
 	// MaxOutputTokens caps the model's completion length per call (the
 	// OpenAI-compatible `max_tokens` / Anthropic `max_tokens`). Reasoning
-	// models (e.g. MiniMax-M3) spend part of this budget on hidden thinking
-	// BEFORE emitting a tool call, so a small provider default truncates large
-	// calls like report_vulnerability mid-stream. Set an explicit, generous
+	// models spend part of this budget on hidden thinking BEFORE emitting a
+	// tool call, so a small provider default truncates large calls like report_vulnerability mid-stream. Set an explicit, generous
 	// budget so the full call fits. XALGORIX_MAX_OUTPUT_TOKENS, default 8192.
 	MaxOutputTokens int
 
@@ -494,7 +493,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("DataDir is empty — Data_Dir resolution failed; check XALGORIX_DATA_DIR or HOME and verify the binary can create ~/.xalgorix/data with mode 0o700")
 	}
 	if c.LLM == "" {
-		return fmt.Errorf("XALGORIX_LLM is required. Set it to a provider-native model ID such as 'gpt-5.4' or 'claude-sonnet-4-20250514'")
+		return fmt.Errorf("XALGORIX_LLM is required. Set it to a provider-native model ID such as 'gpt-5.6' or 'claude-fable-5'")
 	}
 	if c.APIKey == "" && c.LLMProfile == "" && !c.providerAllowsNoAuth() {
 		return fmt.Errorf("XALGORIX_API_KEY is required for the selected provider. Run 'xalgorix --setup' to configure it")

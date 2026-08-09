@@ -154,9 +154,9 @@ export default function ProviderKeysManager({ className }: ProviderKeysManagerPr
         </CardTitle>
         <CardDescription>
           Configure API keys for multiple providers — xalgorix automatically routes
-          models like <code className="text-xs">gpt-4o</code>,{" "}
-          <code className="text-xs">claude-sonnet-4-20250514</code>, or{" "}
-          <code className="text-xs">gemini-2.5-pro</code> to the correct provider.
+          models like <code className="text-xs">gpt-5.6</code>,{" "}
+          <code className="text-xs">claude-fable-5</code>, or{" "}
+          <code className="text-xs">gemini-3.5-flash</code> to the correct provider.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -276,7 +276,7 @@ export default function ProviderKeysManager({ className }: ProviderKeysManagerPr
           <div className="flex gap-2">
             <Input
               className="max-w-sm font-mono text-sm"
-              placeholder="e.g., gpt-4o, claude-sonnet-4-20250514, gemini-2.5-pro"
+              placeholder="e.g., gpt-5.6, claude-fable-5, gemini-3.5-flash"
               value={testModel}
               onChange={(e) => setTestModel(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && testRoute()}

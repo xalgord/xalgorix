@@ -43,7 +43,7 @@ services:
     # environment:
     #   XALGORIX_USERNAME: admin
     #   XALGORIX_PASSWORD: change-me-please
-    #   XALGORIX_LLM: minimax/MiniMax-M3
+    #   XALGORIX_LLM: openai/gpt-5.6
     #   XALGORIX_API_KEY: your_provider_api_key
     volumes:
       - xalgorix-data:/data

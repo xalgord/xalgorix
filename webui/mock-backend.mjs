@@ -130,8 +130,8 @@ let state = {
 };
 
 const providerCatalog = [
-  { id: "openai", displayName: "OpenAI", baseURL: "https://api.openai.com/v1", headerStyle: "openai", authMethods: ["api_key"], models: ["gpt-5", "gpt-5-mini"] },
-  { id: "google", displayName: "Google Gemini", baseURL: "https://generativelanguage.googleapis.com/v1beta", headerStyle: "gemini", authMethods: ["api_key"], models: ["gemini-2.5-pro", "gemini-2.5-flash"] },
+  { id: "openai", displayName: "OpenAI", baseURL: "https://api.openai.com/v1", headerStyle: "openai", authMethods: ["api_key"], models: ["gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna"] },
+  { id: "google", displayName: "Google Gemini", baseURL: "https://generativelanguage.googleapis.com/v1beta", headerStyle: "gemini", authMethods: ["api_key"], models: ["gemini-3.5-flash", "gemini-3.6-flash"] },
 ];
 
 const llmSettings = {
