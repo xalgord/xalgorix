@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
@@ -627,6 +634,144 @@ function Td({
   );
 }
 
+type FindingRetestEntry = {
+  job: FindingRetestJob | null;
+  starting: boolean;
+  error: string | null;
+};
+
+const EMPTY_FINDING_RETEST_ENTRY: FindingRetestEntry = {
+  job: null,
+  starting: false,
+  error: null,
+};
+
+function isFindingRetestActive(job: FindingRetestJob | null): boolean {
+  return job?.status === "queued" || job?.status === "running";
+}
+
+function useFindingRetestRegistry(scanId: string) {
+  const [entries, setEntries] = useState<Record<string, FindingRetestEntry>>({});
+  const entriesRef = useRef(entries);
+  const scanIdRef = useRef(scanId);
+
+  const updateEntry = useCallback(
+    (
+      findingId: string,
+      update: (current: FindingRetestEntry) => FindingRetestEntry,
+    ) => {
+      const current =
+        entriesRef.current[findingId] ?? EMPTY_FINDING_RETEST_ENTRY;
+      const nextEntry = update(current);
+      if (nextEntry === current) return;
+      const nextEntries = {
+        ...entriesRef.current,
+        [findingId]: nextEntry,
+      };
+      entriesRef.current = nextEntries;
+      setEntries(nextEntries);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    scanIdRef.current = scanId;
+    entriesRef.current = {};
+    setEntries({});
+  }, [scanId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const polling = new Set<string>();
+
+    const pollActiveJobs = () => {
+      for (const [findingId, entry] of Object.entries(entriesRef.current)) {
+        const job = entry.job;
+        if (!job || !isFindingRetestActive(job) || polling.has(job.id)) {
+          continue;
+        }
+        polling.add(job.id);
+        void api
+          .getFindingRetest(job.id)
+          .then((next) => {
+            if (cancelled || scanIdRef.current !== scanId) return;
+            updateEntry(findingId, (current) =>
+              current.job?.id === job.id
+                ? { ...current, job: next, error: null }
+                : current,
+            );
+          })
+          .catch((pollError: unknown) => {
+            if (cancelled || scanIdRef.current !== scanId) return;
+            updateEntry(findingId, (current) =>
+              current.job?.id === job.id
+                ? {
+                    ...current,
+                    error: findingRetestErrorMessage(pollError),
+                  }
+                : current,
+            );
+          })
+          .finally(() => {
+            polling.delete(job.id);
+          });
+      }
+    };
+
+    pollActiveJobs();
+    const timer = window.setInterval(pollActiveJobs, 1_500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [scanId, updateEntry]);
+
+  const startRetest = useCallback(
+    async (findingId: string) => {
+      const current =
+        entriesRef.current[findingId] ?? EMPTY_FINDING_RETEST_ENTRY;
+      if (current.starting || isFindingRetestActive(current.job)) return;
+
+      updateEntry(findingId, (entry) => ({
+        ...entry,
+        starting: true,
+        error: null,
+      }));
+      try {
+        const started = await api.startLocalFindingRetest(scanId, findingId);
+        if (scanIdRef.current !== scanId) return;
+        updateEntry(findingId, (entry) => ({
+          ...entry,
+          job: started,
+          starting: false,
+          error: null,
+        }));
+      } catch (startError) {
+        if (scanIdRef.current !== scanId) return;
+        updateEntry(findingId, (entry) => ({
+          ...entry,
+          starting: false,
+          error: findingRetestErrorMessage(startError),
+        }));
+      }
+    },
+    [scanId, updateEntry],
+  );
+
+  const dismissRetest = useCallback((findingId: string) => {
+    const current = entriesRef.current[findingId];
+    if (!current || current.starting || isFindingRetestActive(current.job)) {
+      return;
+    }
+    const nextEntries = { ...entriesRef.current };
+    delete nextEntries[findingId];
+    entriesRef.current = nextEntries;
+    setEntries(nextEntries);
+  }, []);
+
+  return { entries, startRetest, dismissRetest };
+}
+
 function FindingsTab({
   vulns,
   scanId,
@@ -636,6 +781,8 @@ function FindingsTab({
 }) {
   const del = useDeleteVuln();
   const [selected, setSelected] = useState<VulnSummary | null>(null);
+  const { entries: retestEntries, startRetest, dismissRetest } =
+    useFindingRetestRegistry(scanId);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const sorted = useMemo(
     () =>
@@ -803,8 +950,18 @@ function FindingsTab({
         ))}
       </div>
       <FindingDetailsDialog
-        scanId={scanId}
         finding={selected}
+        retestEntry={
+          selected
+            ? (retestEntries[selected.id] ?? EMPTY_FINDING_RETEST_ENTRY)
+            : EMPTY_FINDING_RETEST_ENTRY
+        }
+        onStartRetest={() => {
+          if (selected) void startRetest(selected.id);
+        }}
+        onDismissRetest={() => {
+          if (selected) dismissRetest(selected.id);
+        }}
         onOpenChange={(open) => !open && setSelected(null)}
       />
     </>
@@ -903,12 +1060,16 @@ function FindingRowMenu({
 }
 
 function FindingDetailsDialog({
-  scanId,
   finding,
+  retestEntry,
+  onStartRetest,
+  onDismissRetest,
   onOpenChange,
 }: {
-  scanId: string;
   finding: VulnSummary | null;
+  retestEntry: FindingRetestEntry;
+  onStartRetest: () => void;
+  onDismissRetest: () => void;
   onOpenChange: (open: boolean) => void;
 }) {
   return (
@@ -970,9 +1131,9 @@ function FindingDetailsDialog({
             </div>
 
             <FindingRetestPanel
-              key={`${scanId}:${finding.id}`}
-              scanId={scanId}
-              finding={finding}
+              entry={retestEntry}
+              onStart={onStartRetest}
+              onDismiss={onDismissRetest}
             />
 
             <Separator />
@@ -1036,59 +1197,16 @@ function findingRetestErrorMessage(error: unknown): string {
 }
 
 function FindingRetestPanel({
-  scanId,
-  finding,
+  entry,
+  onStart,
+  onDismiss,
 }: {
-  scanId: string;
-  finding: VulnSummary;
+  entry: FindingRetestEntry;
+  onStart: () => void;
+  onDismiss: () => void;
 }) {
-  const [job, setJob] = useState<FindingRetestJob | null>(null);
-  const [starting, setStarting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const active = job?.status === "queued" || job?.status === "running";
-
-  useEffect(() => {
-    if (!active || !job?.id) return;
-    let cancelled = false;
-    let polling = false;
-    const timer = window.setInterval(() => {
-      if (polling) return;
-      polling = true;
-      void api
-        .getFindingRetest(job.id)
-        .then((next) => {
-          if (!cancelled) {
-            setJob(next);
-            setError(null);
-          }
-        })
-        .catch((pollError: unknown) => {
-          if (!cancelled) setError(findingRetestErrorMessage(pollError));
-        })
-        .finally(() => {
-          polling = false;
-        });
-    }, 1_500);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [active, job?.id]);
-
-  async function startRetest() {
-    if (starting || active) return;
-    setStarting(true);
-    setError(null);
-    try {
-      const started = await api.startLocalFindingRetest(scanId, finding.id);
-      setJob(started);
-    } catch (startError) {
-      setError(findingRetestErrorMessage(startError));
-    } finally {
-      setStarting(false);
-    }
-  }
-
+  const { job, starting, error } = entry;
+  const active = isFindingRetestActive(job);
   const verdict = job?.result?.verdict;
   const statusClass =
     verdict === "still_vulnerable"
@@ -1111,25 +1229,71 @@ function FindingRetestPanel({
         <Button
           type="button"
           size="sm"
-          onClick={() => void startRetest()}
+          onClick={onStart}
           disabled={starting || active}
           className="shrink-0"
         >
-          {starting || active ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldAlert className="h-4 w-4" />}
-          {starting ? "Starting…" : job?.status === "queued" ? "Queued…" : job?.status === "running" ? "Retesting…" : "Retest finding"}
+          {starting || active ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <ShieldAlert className="h-4 w-4" />
+          )}
+          {starting
+            ? "Starting…"
+            : job?.status === "queued"
+              ? "Queued…"
+              : job?.status === "running"
+                ? "Retesting…"
+                : "Retest finding"}
         </Button>
       </div>
 
       {error && (
-        <p className="mt-3 min-w-0 text-xs text-red-300 [overflow-wrap:anywhere]" role="alert">
-          {error}
-        </p>
+        <div className="mt-3 flex min-w-0 items-start justify-between gap-2">
+          <p
+            className="min-w-0 flex-1 text-xs text-red-300 [overflow-wrap:anywhere]"
+            role="alert"
+          >
+            {error}
+          </p>
+          {!starting && !active && !job && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 shrink-0 px-2 text-xs"
+              onClick={onDismiss}
+            >
+              <X className="h-3.5 w-3.5" />
+              Close
+            </Button>
+          )}
+        </div>
       )}
 
       {job && !active && (
-        <div className={cn("mt-3 min-w-0 max-w-full rounded-md border p-3 text-xs", statusClass)} aria-live="polite">
-          <div className="font-medium capitalize">
-            {verdict ? verdict.replaceAll("_", " ") : job.status}
+        <div
+          className={cn(
+            "mt-3 min-w-0 max-w-full rounded-md border p-3 text-xs",
+            statusClass,
+          )}
+          aria-live="polite"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="font-medium capitalize">
+              {verdict ? verdict.replaceAll("_", " ") : job.status}
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 shrink-0 px-2 text-xs"
+              onClick={onDismiss}
+              disabled={starting}
+            >
+              <X className="h-3.5 w-3.5" />
+              Close result
+            </Button>
           </div>
           {(job.result?.reason || job.error) && (
             <p className="mt-1 whitespace-pre-wrap [overflow-wrap:anywhere]">
