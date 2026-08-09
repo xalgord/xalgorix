@@ -6,7 +6,7 @@
 
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache_2.0-10b981?style=for-the-badge)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Linux-111111?style=for-the-badge&logo=linux&logoColor=white)](#installation)
+[![Platform](https://img.shields.io/badge/Platform-Linux-111111?style=for-the-badge&logo=linux&logoColor=white)](#-installation)
 [![Hosted](https://img.shields.io/badge/Hosted-www.xalgorix.com-6d28d9?style=for-the-badge&logo=icloud&logoColor=white)](https://www.xalgorix.com/)
 [![GitHub stars](https://img.shields.io/github/stars/xalgord/xalgorix?style=for-the-badge&logo=github&color=yellow)](https://github.com/xalgord/xalgorix/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/xalgord/xalgorix?style=for-the-badge&logo=github&color=blue)](https://github.com/xalgord/xalgorix/network/members)
@@ -25,17 +25,17 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a> ·
-  <a href="#why-xalgorix">Why Xalgorix</a> ·
-  <a href="#features">Features</a> ·
-  <a href="#use-cases">Use Cases</a> ·
-  <a href="https://www.xalgorix.com/">Hosted Cloud</a> ·
-  <a href="https://docs.xalgorix.com">Docs</a>
+  <a href="#-quick-start">🚀 Quick Start</a> ·
+  <a href="#-why-xalgorix">💡 Why Xalgorix</a> ·
+  <a href="#-features">✨ Features</a> ·
+  <a href="#-use-cases">🎯 Use Cases</a> ·
+  <a href="https://www.xalgorix.com/">☁️ Hosted Cloud</a> ·
+  <a href="https://docs.xalgorix.com">📖 Docs</a>
 </p>
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
 **Install (one line):**
 
@@ -88,7 +88,7 @@ sudo install -m 755 build/xalgorix /usr/local/bin/xalgorix
 > [!TIP]
 > Prefer zero setup? A fully managed version runs at [www.xalgorix.com](https://www.xalgorix.com/) — click-to-scan, no install or API keys required.
 
-### Review pull requests automatically — free GitHub App
+### 🤖 Review pull requests automatically — free GitHub App
 
 Want a security review on every pull request with zero setup? Install the **[Xalgorix GitHub App](https://github.com/apps/xalgorix)**. It reads each PR's diff and comments a security review — injection, broken auth/IDOR, SSRF, secrets, unsafe patterns — right on the pull request. Updates in place on new commits, and you can comment **`@xalgorix review`** to re-run on demand. No workflow file, no API key, no account — and it's free.
 
@@ -106,35 +106,21 @@ For merge gating and full exploit-verified pentests in CI, use the [hosted scann
 > [!TIP]
 > Prefer not to self-host? A fully managed version is available at [www.xalgorix.com](https://www.xalgorix.com/) — click-to-scan, no install or API keys required.
 
-## Contents
+## 📚 Contents
 
-- [Quick Start](#quick-start)
-- [Overview](#overview)
-- [Why Xalgorix](#why-xalgorix)
-- [Use Cases](#use-cases)
-- [Screenshots](#screenshots)
-- [Features](#features)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Upgrading from previous versions](#upgrading-from-previous-versions)
-- [Running](#running)
-- [Service Mode](#service-mode)
-- [Web UI Workflow](#web-ui-workflow)
-- [Scan Modes](#scan-modes)
-- [Methodology](#methodology)
-- [Reports](#reports)
-- [Settings](#settings)
-- [Environment Variables](#environment-variables)
-- [Provider Prefixes](#provider-prefixes)
-- [CLI Reference](#cli-reference)
-- [API Summary](#api-summary)
-- [Data Storage](#data-storage)
-- [Development](#development)
-- [Safety Notes](#safety-notes)
-- [License](#license)
-- [Links](#links)
+| | | |
+| --- | --- | --- |
+| 🚀 [Quick Start](#-quick-start) | 🔩 [Configuration](#-configuration) | 🧾 [Environment Variables](#-environment-variables) |
+| 🔎 [Overview](#-overview) | 🆙 [Upgrading](#-upgrading-from-previous-versions) | 🔤 [Provider Prefixes](#-provider-prefixes) |
+| 💡 [Why Xalgorix](#-why-xalgorix) | 🏃 [Running](#-running) | 💻 [CLI Reference](#-cli-reference) |
+| 🎯 [Use Cases](#-use-cases) | 🧰 [Service Mode](#-service-mode) | 📡 [API Summary](#-api-summary) |
+| 📸 [Screenshots](#-screenshots) | 🔁 [Web UI Workflow](#-web-ui-workflow) | 💾 [Data Storage](#-data-storage) |
+| ✨ [Features](#-features) | 🔀 [Scan Modes](#-scan-modes) | 🧪 [Development](#-development) |
+| 📥 [Installation](#-installation) | 📂 [Scan Your Code](#-scan-your-code-no-target-needed) | 🚨 [Safety Notes](#-safety-notes) |
+| 🧭 [Methodology](#-methodology) | 📄 [Reports](#-reports) | 📜 [License](#-license) |
+| 🔧 [Settings](#-settings) | 🔗 [Links](#-links) | |
 
-## Overview
+## 🔎 Overview
 
 Xalgorix is a self-hosted AI penetration testing platform for authorized security testing, vulnerability assessment, and bug bounty workflows. It combines an LLM-driven autonomous agent, browser automation, terminal tooling, a comprehensive 22-phase testing methodology, live WebSocket telemetry, finding management with CVSS scoring, branded PDF report generation, and integrations for AgentMail, Discord, and Telegram.
 
@@ -142,17 +128,17 @@ Unlike cloud-only DAST scanners, Xalgorix runs entirely on your machine. You bri
 
 The default experience is the Web UI. From one local dashboard you can start scans, monitor active runs, inspect findings, configure model/provider settings, manage environment variables, generate branded PDF reports, and delete or resume historical scans.
 
-## Why Xalgorix
+## 💡 Why Xalgorix
 
 Most scanners **detect**. Xalgorix **proves**. An autonomous agent works through a 22-phase methodology, then an independent verifier re-tests every candidate finding before it is reported — so you get exploit-verified results with evidence, not a wall of "maybes" to triage.
 
 - 🧠 **An AI agent, not a template engine** — reasons about auth flows, business logic, IDOR/BOLA, and chained exploits that signature scanners miss.
 - ✅ **Exploit-verified findings** — a separate verifier independently reproduces each finding; inconclusive ones are flagged for review, never dressed up as confirmed.
 - 🔒 **Self-hosted and private** — runs on your machine with your own LLM key; no target data, keys, or findings leave your infrastructure.
-- 🧩 **Bring your own LLM** — OpenAI, Anthropic, DeepSeek, Gemini, Groq, Ollama, or MiniMax — or any OpenAI-compatible gateway like [LiteLLM](#litellm--openai-compatible-gateways-github-copilot-claude-opus-codex-openrouter-azure-local-models) (GitHub Copilot, Codex, OpenRouter, Azure). You control model, reasoning effort, and cost.
+- 🧩 **Bring your own LLM** — OpenAI, Anthropic, DeepSeek, Gemini, Groq, Ollama, or MiniMax — or any OpenAI-compatible gateway like [LiteLLM](#-litellm--openai-compatible-gateways-github-copilot-claude-opus-codex-openrouter-azure-local-models) (GitHub Copilot, Codex, OpenRouter, Azure). You control model, reasoning effort, and cost.
 - 📄 **Audit-ready reports** — branded PDFs with CVSS scores, proof-of-concept, and remediation.
 
-### How it compares
+### 📊 How it compares
 
 |                                              | **Xalgorix**             | Template scanners (e.g. Nuclei) | Crawling scanners (e.g. OWASP ZAP) | Commercial DAST        |
 | -------------------------------------------- | ------------------------ | ------------------------------- | ---------------------------------- | ---------------------- |
@@ -169,7 +155,7 @@ Most scanners **detect**. Xalgorix **proves**. An autonomous agent works through
 
 If Xalgorix saves you a triage cycle, please **[⭐ star the repo](https://github.com/xalgord/xalgorix)** — it genuinely helps others find it.
 
-## Use Cases
+## 🎯 Use Cases
 
 | Use Case | How Xalgorix helps |
 | -------- | ------------------ |
@@ -180,30 +166,30 @@ If Xalgorix saves you a triage cycle, please **[⭐ star the repo](https://githu
 | **Continuous security testing** | Run as a system service with `xalgorix --start`. Scan on a schedule, stream findings to Discord or Telegram, and generate branded PDF reports for stakeholders. |
 | **DAST automation** | Browser-driven testing for web applications — auth flows, forms, JavaScript-rendered content, and runtime behavior. Integrates with Caido for proxy traffic inspection. |
 
-## Screenshots
+## 📸 Screenshots
 
 | Overview dashboard                                      | Scan detail                                      | Findings                                      |
 | ------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------- |
 | ![Xalgorix overview dashboard](assets/screenshot-1.png) | ![Xalgorix scan detail](assets/screenshot-2.png) | ![Xalgorix findings](assets/screenshot-3.png) |
 
-## Features
+## ✨ Features
 
 | Area           | Capabilities                                                                                                                |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Dashboard      | Local Web UI on `127.0.0.1:9137` by default, scan management, live status, bulk scan actions, and historical scan recovery. |
-| Scanning       | Single target, DAST, wildcard, and multi-target flows with selectable methodology phases.                                   |
-| Live telemetry | Tool calls, agent messages, findings, errors, HTTP activity, and LLM activity over WebSockets.                              |
-| Findings       | Scan detail pages, severity filters, CVSS details, finding index, and verified finding workflows.                           |
-| Reporting      | Branded PDF reports with target/company name, uploaded logo, report list, open/download/delete actions.                     |
-| Integrations   | AgentMail test inboxes, verification emails, OTP flows, email triage events, Discord and Telegram notifications.            |
-| Configuration  | Dashboard settings for LLM, AgentMail, Discord, Telegram, proxy, runtime, browser, auth, rate limits, and resources.       |
-| Runtime safety | Resource-aware instance limits and loopback-only binding unless external access is explicitly configured with auth.         |
+| 📊 Dashboard      | Local Web UI on `127.0.0.1:9137` by default, scan management, live status, bulk scan actions, and historical scan recovery. |
+| 🔍 Scanning       | Single target, DAST, wildcard, and multi-target flows with selectable methodology phases.                                   |
+| 📡 Live telemetry | Tool calls, agent messages, findings, errors, HTTP activity, and LLM activity over WebSockets.                              |
+| 🐞 Findings       | Scan detail pages, severity filters, CVSS details, finding index, and verified finding workflows.                           |
+| 📄 Reporting      | Branded PDF reports with target/company name, uploaded logo, report list, open/download/delete actions.                     |
+| 🔔 Integrations   | AgentMail test inboxes, verification emails, OTP flows, email triage events, Discord and Telegram notifications.            |
+| ⚙️ Configuration  | Dashboard settings for LLM, AgentMail, Discord, Telegram, proxy, runtime, browser, auth, rate limits, and resources.       |
+| 🛡️ Runtime safety | Resource-aware instance limits and loopback-only binding unless external access is explicitly configured with auth.         |
 
-## Installation
+## 📥 Installation
 
 The fastest paths need no toolchain at all.
 
-### One-line install (prebuilt binary)
+### ⚡ One-line install (prebuilt binary)
 
 ```bash
 curl -sSL https://www.xalgorix.com/install | bash
@@ -219,7 +205,7 @@ xalgorix --setup
 
 The wizard preserves existing settings when rerun, hides API-key input in a terminal, and optionally launches the Web UI when finished.
 
-### Docker
+### 🐳 Docker
 
 ```bash
 docker run --rm -p 9137:9137 \
@@ -238,7 +224,7 @@ The container runs as root by design (the engine only enables runtime auto-insta
 
 On first run, if you don't set dashboard auth the container **generates a random admin password and prints it to the logs** (the image binds `0.0.0.0`, which the engine won't do without auth). Set `XALGORIX_USERNAME` + `XALGORIX_PASSWORD` (or `XALGORIX_PASSWORD_HASH`) to use your own. The binary never self-updates inside the container (`XALGORIX_NO_AUTO_UPDATE=1`) — pull a new image tag to upgrade.
 
-### Requirements (build from source)
+### 📋 Requirements (build from source)
 
 | Requirement    | Notes                                                        |
 | -------------- | ------------------------------------------------------------ |
@@ -253,7 +239,7 @@ Check your Go version:
 go version
 ```
 
-### Build From Source
+### 🔨 Build From Source
 
 ```bash
 git clone https://github.com/xalgord/xalgorix.git
@@ -264,13 +250,13 @@ sudo install -m 755 build/xalgorix /usr/local/bin/xalgorix
 
 `make build` builds the React Web UI into `internal/web/static`, then builds the Go binary.
 
-### Install With Go
+### 📦 Install With Go
 
 ```bash
 GOPROXY=direct GOSUMDB=off go install github.com/xalgord/xalgorix/v4/cmd/xalgorix@latest
 ```
 
-## Configuration
+## 🔩 Configuration
 
 Xalgorix loads configuration in this order. Later sources override earlier ones.
 
@@ -287,7 +273,7 @@ Create the local environment file:
 nano ~/.xalgorix.env
 ```
 
-### Minimal Config
+### 🧩 Minimal Config
 
 For the strongest autonomous scanning results, select a current frontier model. The model ID below is a concrete example; newer compatible model IDs can be entered without waiting for a Xalgorix release.
 
@@ -296,7 +282,7 @@ XALGORIX_LLM=openai/gpt-5.6
 XALGORIX_API_KEY=your_openai_api_key
 ```
 
-### Provider Examples
+### 🔌 Provider Examples
 
 OpenAI:
 
@@ -313,7 +299,7 @@ XALGORIX_API_BASE=https://your-provider.example/v1
 XALGORIX_API_KEY=your_provider_api_key
 ```
 
-#### LiteLLM / OpenAI-compatible gateways (GitHub Copilot, Claude Opus, Codex, OpenRouter, Azure, local models)
+#### 🌉 LiteLLM / OpenAI-compatible gateways (GitHub Copilot, Claude Opus, Codex, OpenRouter, Azure, local models)
 
 Because `XALGORIX_API_BASE` accepts any OpenAI-compatible `/v1/chat/completions` endpoint,
 Xalgorix works with a [LiteLLM](https://docs.litellm.ai/) proxy out of the box — no
@@ -345,7 +331,7 @@ OpenRouter, Azure OpenAI, and local Ollama models — anything LiteLLM can route
 `custom/` (or `openai/`) prefix and a non-Anthropic/Gemini `XALGORIX_API_BASE` so Xalgorix
 uses the standard OpenAI request shape that LiteLLM expects.
 
-### Optional Integrations
+### 🔔 Optional Integrations
 
 ```bash
 GEMINI_API_KEY=AIza...
@@ -355,7 +341,7 @@ XALGORIX_DISCORD_WEBHOOK=https://discord.com/api/webhooks/...
 XALGORIX_DISCORD_MIN_SEVERITY=high
 ```
 
-### Dashboard Authentication
+### 🔐 Dashboard Authentication
 
 ```bash
 XALGORIX_USERNAME=admin
@@ -365,11 +351,11 @@ XALGORIX_PASSWORD=change-this-password
 > [!TIP]
 > Prefer `XALGORIX_PASSWORD_HASH` for production deployments.
 
-## Upgrading from previous versions
+## 🆙 Upgrading from previous versions
 
 This release ships a stability and workspace-isolation pass with one breaking change and a few new knobs worth knowing about.
 
-### Breaking change: default workspace moved to `~/.xalgorix/data/`
+### 💥 Breaking change: default workspace moved to `~/.xalgorix/data/`
 
 Scan output, notes, schedules, and other generated artefacts now live under `~/.xalgorix/data/` instead of `$CWD` (the directory the binary was launched from).
 
@@ -381,13 +367,13 @@ export XALGORIX_DATA_DIR=$(pwd)
 
 A `[MIGRATION]` warning is emitted at startup when legacy markers (`notes.json`, `_schedules/`, `vulnerabilities.json`, or `YYYY-MM-DD/scan-*` directories) are detected in `$CWD` and `XALGORIX_DATA_DIR` is unset. Xalgorix never reads, copies, or deletes those legacy files automatically; the warning is informational and only fires once per process.
 
-### New environment variable
+### 🆕 New environment variable
 
 | Variable                     | Default                       | Description                                                                                              |
 | ---------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `XALGORIX_LLM_MAX_INFLIGHT`  | `4 × EffectiveMaxInstances`   | Caps simultaneous outbound LLM calls across all running scans. Minimum `1`. Cancelled waiters do not consume a slot. |
 
-### New health endpoint counters
+### 🩺 New health endpoint counters
 
 `GET /api/status` now exposes:
 
@@ -401,9 +387,9 @@ A `[MIGRATION]` warning is emitted at startup when legacy markers (`notes.json`,
 | `data_dir`            | Resolved Data_Dir in use.                                                            |
 | `allow_list`          | Filesystem roots accepted by Path_Policy.                                            |
 
-## Running
+## 🏃 Running
 
-### Web UI
+### 🪟 Web UI
 
 ```bash
 xalgorix --web
@@ -421,7 +407,7 @@ Use a different port:
 xalgorix --web --port 8080
 ```
 
-### External Access
+### 🌐 External Access
 
 Bind to another interface only after enabling dashboard authentication:
 
@@ -432,7 +418,7 @@ XALGORIX_USERNAME=admin XALGORIX_PASSWORD=change-this xalgorix --web --bind 0.0.
 > [!WARNING]
 > The server refuses external binding without dashboard authentication.
 
-### CLI Scan
+### 🏹 CLI Scan
 
 ```bash
 xalgorix --target https://example.com
@@ -444,7 +430,7 @@ With custom instructions:
 xalgorix --target https://app.example.com --instruction "Focus on SQL injection, IDOR, and auth bypass. Avoid destructive tests."
 ```
 
-## Service Mode
+## 🧰 Service Mode
 
 Install and start as a system service:
 
@@ -466,7 +452,7 @@ View logs:
 journalctl -u xalgorix -f
 ```
 
-### Remote Service Access
+### 🌍 Remote Service Access
 
 Expose the service to remote browsers only after enabling dashboard auth:
 
@@ -484,7 +470,7 @@ Then open `http://<server-ip>:9137`.
 
 If the process is listening but the page still does not load remotely, allow TCP port `9137` in the server firewall or cloud security group.
 
-#### Scanning local/internal targets
+#### 🏠 Scanning local/internal targets
 
 By default Xalgorix refuses to scan loopback, `localhost`, private-range, or
 its own interface addresses — they're the machine Xalgorix runs on, not a
@@ -504,7 +490,7 @@ The dashboard's own listener is **always** protected, even with this enabled.
 > `XALGORIX_ALLOW_LOCAL_TARGETS` (or pin `XALGORIX_ALLOW_LOCAL_TARGETS=false`),
 > and don't expose the engine's Settings page to untrusted users.
 
-## Web UI Workflow
+## 🔁 Web UI Workflow
 
 1. Open the dashboard at `http://127.0.0.1:9137`.
 2. Go to Settings and confirm the LLM provider, API key, rate limits, and optional integrations.
@@ -516,15 +502,15 @@ The dashboard's own listener is **always** protected, even with this enabled.
 8. Monitor progress from Overview, Scan Detail, or Live Feed.
 9. Open finding details, download reports, or manage historical scans from Scans and Reports.
 
-## Scan Modes
+## 🔀 Scan Modes
 
 | Mode             | Best for                                                                        |
 | ---------------- | ------------------------------------------------------------------------------- |
-| Single target    | Testing one known URL or host.                                                  |
-| Wildcard / multi | Enumerating related targets and scanning the discovered attack surface.         |
-| DAST             | Browser-assisted testing for web apps, auth flows, forms, and runtime behavior. |
+| 🎯 Single target    | Testing one known URL or host.                                                  |
+| 🌐 Wildcard / multi | Enumerating related targets and scanning the discovered attack surface.         |
+| 🧭 DAST             | Browser-assisted testing for web apps, auth flows, forms, and runtime behavior. |
 
-## Scan Your Code (no target needed)
+## 📂 Scan Your Code (no target needed)
 
 Point Xalgorix at a codebase — a Git URL, a local path, or an uploaded zip — and
 it scans the source directly. No deployed URL, no infrastructure to stand up.
@@ -553,7 +539,7 @@ xalgorix --source https://github.com/org/app.git --code-scan provision
 > only pentests the single loopback port it stood the app up on — the dashboard
 > and everything else on the machine stay out of scope.
 
-## Methodology
+## 🧭 Methodology
 
 Xalgorix organizes autonomous testing into 22 phases.
 
@@ -584,40 +570,40 @@ Xalgorix organizes autonomous testing into 22 phases.
 
 Phase selection in the Web UI lets you run every phase or only the subset needed for a specific engagement.
 
-## Reports
+## 📄 Reports
 
 Reports are generated as PDF files and can include:
 
 | Section     | Included content                                                                |
 | ----------- | ------------------------------------------------------------------------------- |
-| Summary     | Executive summary, target metadata, scan metadata, and severity overview.       |
-| Findings    | Verified findings, CVSS details, technical analysis, and exploitation proof.    |
-| Evidence    | Proof of concept commands, scripts, payload notes, and supporting observations. |
-| Remediation | Fix guidance and prioritized next steps.                                        |
-| Branding    | Company/target name and uploaded logo.                                          |
+| 📌 Summary     | Executive summary, target metadata, scan metadata, and severity overview.       |
+| 🐞 Findings    | Verified findings, CVSS details, technical analysis, and exploitation proof.    |
+| 🔬 Evidence    | Proof of concept commands, scripts, payload notes, and supporting observations. |
+| 🩹 Remediation | Fix guidance and prioritized next steps.                                        |
+| 🎨 Branding    | Company/target name and uploaded logo.                                          |
 
 Reports are available from the scan detail page and the Reports page. Report rows support opening, downloading, and deletion.
 
-## Settings
+## 🔧 Settings
 
 Most operational settings can be changed from the Web UI under Settings.
 
 | Area          | Examples                                                            |
 | ------------- | ------------------------------------------------------------------- |
-| Engagement    | Dashboard request rate limits                                       |
-| LLM           | Model, API key, API base, reasoning effort, retries, max iterations |
-| AgentMail     | Pod and API key                                                     |
-| Notifications | Discord webhook and minimum severity, Telegram bot token, chat ID, and minimum severity |
-| Proxy         | Proxy URL, proxy file, rotation, TLS verification                   |
-| Runtime       | Workspace, browser path, auto-install controls                      |
-| Security      | Dashboard username, password, password hash, bind address           |
-| Resources     | CPU/RAM/disk thresholds and scan concurrency budget                 |
+| 🤝 Engagement    | Dashboard request rate limits                                       |
+| 🧠 LLM           | Model, API key, API base, reasoning effort, retries, max iterations |
+| 📬 AgentMail     | Pod and API key                                                     |
+| 🔔 Notifications | Discord webhook and minimum severity, Telegram bot token, chat ID, and minimum severity |
+| 🕵️ Proxy         | Proxy URL, proxy file, rotation, TLS verification                   |
+| 🧱 Runtime       | Workspace, browser path, auto-install controls                      |
+| 🔐 Security      | Dashboard username, password, password hash, bind address           |
+| 📈 Resources     | CPU/RAM/disk thresholds and scan concurrency budget                 |
 
 Some settings require a restart because they affect process startup or server binding. The UI marks those fields.
 
-## Environment Variables
+## 🧾 Environment Variables
 
-### Core
+### 🧱 Core
 
 | Variable                             | Default          | Description                                            |
 | ------------------------------------ | ---------------- | ------------------------------------------------------ |
@@ -632,7 +618,7 @@ Some settings require a restart because they affect process startup or server bi
 | `XALGORIX_MAX_ITERATIONS`            | `0`              | Agent iteration cap. `0` means unlimited.              |
 | `GEMINI_API_KEY`                     | none             | Optional Gemini key for web-search enrichment.         |
 
-### Web and Security
+### 🔒 Web and Security
 
 | Variable                 | Default           | Description                        |
 | ------------------------ | ----------------- | ---------------------------------- |
@@ -643,7 +629,7 @@ Some settings require a restart because they affect process startup or server bi
 | `XALGORIX_PASSWORD_HASH` | none              | Preferred bcrypt password hash.    |
 | `XALGORIX_WORKSPACE`     | current directory | Workspace root for scan execution. |
 
-### Integrations
+### 🤝 Integrations
 
 | Variable                        | Default | Description                              |
 | ------------------------------- | ------- | ---------------------------------------- |
@@ -657,7 +643,7 @@ Some settings require a restart because they affect process startup or server bi
 | `CAIDO_PORT`                    | `0`     | Caido proxy port. `0` means auto-detect. |
 | `CAIDO_API_TOKEN`               | none    | Caido API token.                         |
 
-### Rate Limits, Proxy, and Runtime
+### 🚦 Rate Limits, Proxy, and Runtime
 
 | Variable                       | Default      | Description                                        |
 | ------------------------------ | ------------ | -------------------------------------------------- |
@@ -675,7 +661,7 @@ Some settings require a restart because they affect process startup or server bi
 | `XALGORIX_ALLOW_AUTO_INSTALL`  | root only    | Permit automatic package installation.             |
 | `XALGORIX_AUTO_INSTALL_SUDO`   | `false`      | Permit sudo-prefixed auto-installs.                |
 
-## Provider Prefixes
+## 🔤 Provider Prefixes
 
 When `XALGORIX_API_BASE` is empty, Xalgorix infers provider defaults from the model prefix.
 
@@ -692,7 +678,7 @@ When `XALGORIX_API_BASE` is empty, Xalgorix infers provider defaults from the mo
 
 Model names are not hard-coded to this list. The Settings page accepts typed model IDs so newer provider models can be used without waiting for a UI dropdown update.
 
-## CLI Reference
+## 💻 CLI Reference
 
 | Flag                   | Alias | Description                                |
 | ---------------------- | ----- | ------------------------------------------ |
@@ -710,7 +696,7 @@ Model names are not hard-coded to this list. The Settings page accepts typed mod
 | `--uninstall`          | none  | Remove the system service.                 |
 | `--help`               | `-h`  | Show help.                                 |
 
-## API Summary
+## 📡 API Summary
 
 | Method   | Endpoint                     | Purpose                                       |
 | -------- | ---------------------------- | --------------------------------------------- |
@@ -740,7 +726,7 @@ Model names are not hard-coded to this list. The Settings page accepts typed mod
 | `POST`   | `/api/settings/agentmail`    | Save AgentMail settings.                      |
 | `GET`    | `/ws`                        | WebSocket live event stream.                  |
 
-## Data Storage
+## 💾 Data Storage
 
 Web-mode scan data is stored under:
 
@@ -758,17 +744,17 @@ Web-mode scan data is stored under:
 
 The server keeps historical scan records on disk so the UI can recover after refresh or restart.
 
-## Development
+## 🧪 Development
 
 | Task                        | Command                       |
 | --------------------------- | ----------------------------- |
-| Install Web UI dependencies | `make webui-install`          |
-| Build everything            | `make build`                  |
-| Run tests                   | `go test ./...`               |
-| Run Web UI from source      | `go run ./cmd/xalgorix --web` |
-| Run frontend dev server     | `make webui-dev`              |
+| 📦 Install Web UI dependencies | `make webui-install`          |
+| 🔨 Build everything            | `make build`                  |
+| ✅ Run tests                   | `go test ./...`               |
+| 🖥️ Run Web UI from source      | `go run ./cmd/xalgorix --web` |
+| ⚡ Run frontend dev server     | `make webui-dev`              |
 
-## Safety Notes
+## 🚨 Safety Notes
 
 - Use Xalgorix only against authorized targets.
 - Do not run active testing against third-party systems without permission.
@@ -777,15 +763,15 @@ The server keeps historical scan records on disk so the UI can recover after ref
 - Exposing the dashboard externally requires authentication.
 - Auto-install is disabled by default for non-root users and should be enabled only when you trust the environment.
 
-## License
+## 📜 License
 
 Xalgorix is released under the Apache License 2.0. See [LICENSE](LICENSE).
 
-## Links
+## 🔗 Links
 
 | Resource      | Link                                                                             |
 | ------------- | -------------------------------------------------------------------------------- |
-| Hosted (Cloud) | [www.xalgorix.com](https://www.xalgorix.com/)                                   |
-| Documentation | [docs.xalgorix.com](https://docs.xalgorix.com)                                   |
-| Issues        | [github.com/xalgord/xalgorix/issues](https://github.com/xalgord/xalgorix/issues) |
-| Support       | [buymeacoffee.com/xalgord](https://buymeacoffee.com/xalgord)                     |
+| ☁️ Hosted (Cloud) | [www.xalgorix.com](https://www.xalgorix.com/)                                   |
+| 📖 Documentation | [docs.xalgorix.com](https://docs.xalgorix.com)                                   |
+| 🐛 Issues        | [github.com/xalgord/xalgorix/issues](https://github.com/xalgord/xalgorix/issues) |
+| ☕ Support       | [buymeacoffee.com/xalgord](https://buymeacoffee.com/xalgord)                     |
