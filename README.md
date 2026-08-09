@@ -168,9 +168,15 @@ If Xalgorix saves you a triage cycle, please **[⭐ star the repo](https://githu
 
 ## 📸 Screenshots
 
+**🖥️ Self-hosted dashboard** — runs locally on `127.0.0.1:9137`
+
 | Overview dashboard                                      | Scan detail                                      | Findings                                      |
 | ------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------- |
 | ![Xalgorix overview dashboard](assets/screenshot-1.png) | ![Xalgorix scan detail](assets/screenshot-2.png) | ![Xalgorix findings](assets/screenshot-3.png) |
+
+**☁️ Hosted cloud dashboard** — the fully managed version at [www.xalgorix.com](https://www.xalgorix.com/)
+
+<img src="assets/SaaS-dashboard.png" alt="Xalgorix hosted cloud dashboard showing scan credits, plan status, issue counts, and recent scans" width="860" />
 
 ## ✨ Features
 
