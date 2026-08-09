@@ -366,6 +366,7 @@ type WSEvent struct {
 // VulnSummary is a simplified vulnerability for the UI.
 type VulnSummary struct {
 	ID                 string   `json:"id"`
+	SourceScanID       string   `json:"source_scan_id,omitempty"`
 	Title              string   `json:"title"`
 	Severity           string   `json:"severity"`
 	Target             string   `json:"target,omitempty"`

@@ -61,8 +61,9 @@ type retestStartRequest struct {
 // browser sends identifiers only; finding content, target, authentication, and
 // provider configuration remain server-derived.
 type localRetestStartInput struct {
-	ScanID    string `json:"scan_id"`
-	FindingID string `json:"finding_id"`
+	ScanID       string `json:"scan_id"`
+	SourceScanID string `json:"source_scan_id,omitempty"`
+	FindingID    string `json:"finding_id"`
 }
 
 type retestResult struct {
@@ -138,27 +139,55 @@ func (s *Server) handleStartLocalFindingRetest(w http.ResponseWriter, r *http.Re
 		return
 	}
 	input.ScanID = strings.TrimSpace(input.ScanID)
+	input.SourceScanID = strings.TrimSpace(input.SourceScanID)
 	input.FindingID = strings.TrimSpace(input.FindingID)
-	if !validLocalRetestID(input.ScanID) || !validLocalRetestID(input.FindingID) {
-		writeRetestError(w, http.StatusBadRequest, "validation_failed", "scan_id and finding_id must be valid identifiers")
+	if !validLocalRetestID(input.ScanID) || !validLocalRetestID(input.FindingID) ||
+		(input.SourceScanID != "" && !validLocalRetestID(input.SourceScanID)) {
+		writeRetestError(w, http.StatusBadRequest, "validation_failed", "scan_id, source_scan_id, and finding_id must be valid identifiers")
 		return
 	}
 
-	_, record := s.findScanByID(input.ScanID)
-	if record == nil {
+	_, displayedRecord := s.findScanByID(input.ScanID)
+	if displayedRecord == nil {
 		writeRetestError(w, http.StatusNotFound, "not_found", "scan or finding not found")
 		return
 	}
+
+	sourceRecord := displayedRecord
+	if input.SourceScanID != "" {
+		// Build the same effective view returned by GET /api/scans/{id}. This
+		// includes live findings that may be visible before their child record
+		// has been flushed to disk.
+		effectiveRecord := *displayedRecord
+		effectiveRecord.Vulns = append([]VulnSummary(nil), displayedRecord.Vulns...)
+		effectiveRecord.Events = append([]WSEvent(nil), displayedRecord.Events...)
+		effectiveRecord.SubScans = append([]SubScanSummary(nil), displayedRecord.SubScans...)
+		s.applyInstanceSnapshot(&effectiveRecord, true)
+		s.attachWildcardSubScans(&effectiveRecord)
+		finalizeScanRecordForResponse(&effectiveRecord)
+
+		var status int
+		sourceRecord, status = s.findLocalRetestSource(displayedRecord, &effectiveRecord, input.SourceScanID)
+		if sourceRecord == nil {
+			if status == http.StatusConflict {
+				writeRetestError(w, status, "ambiguous_finding", "source scan identifier is not unique within this scan")
+			} else {
+				writeRetestError(w, http.StatusNotFound, "not_found", "scan or finding not found")
+			}
+			return
+		}
+	}
+
 	var finding *VulnSummary
-	for i := range record.Vulns {
-		if record.Vulns[i].ID != input.FindingID {
+	for i := range sourceRecord.Vulns {
+		if sourceRecord.Vulns[i].ID != input.FindingID {
 			continue
 		}
 		if finding != nil {
-			writeRetestError(w, http.StatusConflict, "ambiguous_finding", "finding identifier is not unique within this scan")
+			writeRetestError(w, http.StatusConflict, "ambiguous_finding", "finding identifier is not unique within its source scan")
 			return
 		}
-		finding = &record.Vulns[i]
+		finding = &sourceRecord.Vulns[i]
 	}
 	if finding == nil {
 		writeRetestError(w, http.StatusNotFound, "not_found", "scan or finding not found")
@@ -167,15 +196,15 @@ func (s *Server) handleStartLocalFindingRetest(w http.ResponseWriter, r *http.Re
 
 	target := strings.TrimSpace(finding.Target)
 	if target == "" {
-		target = strings.TrimSpace(record.Target)
+		target = strings.TrimSpace(sourceRecord.Target)
 	}
-	target = normalizeLocalRetestTarget(target, record.Target)
+	target = normalizeLocalRetestTarget(target, sourceRecord.Target)
 	method := strings.ToUpper(strings.TrimSpace(finding.Method))
 	if method == "" {
 		method = http.MethodGet
 	}
 	endpoint := normalizeLocalRetestEndpoint(finding.Endpoint, method)
-	primaryAuth, secondaryAuth := s.snapshotRetestAuth(record, input.ScanID)
+	primaryAuth, secondaryAuth := s.snapshotRetestAuth(displayedRecord, sourceRecord, input.ScanID)
 	req := retestStartRequest{
 		Finding: retestFindingInput{
 			Title: finding.Title, Severity: finding.Severity, CWE: finding.CWE,
@@ -186,6 +215,78 @@ func (s *Server) handleStartLocalFindingRetest(w http.ResponseWriter, r *http.Re
 		TargetAuth: primaryAuth, TargetAuthB: secondaryAuth,
 	}
 	s.enqueueFindingRetest(w, req)
+}
+
+// findLocalRetestSource resolves an exact physical source record and accepts it
+// only when it is the displayed parent or one of that parent's wildcard
+// children. Instance-ID aliases are intentionally not used here: siblings can
+// share an instance ID, and choosing one by walk order could retest the wrong
+// target. Duplicate exact IDs are rejected rather than selected arbitrarily.
+func (s *Server) findLocalRetestSource(displayed, effective *ScanRecord, sourceScanID string) (*ScanRecord, int) {
+	var matched *ScanRecord
+	matches := 0
+	for _, entry := range s.findAllScans() {
+		candidate := entry.rec
+		if candidate.ID != sourceScanID {
+			continue
+		}
+		if candidate.ID != displayed.ID && !isChildOfScan(displayed, &candidate) {
+			continue
+		}
+		matches++
+		copy := candidate
+		matched = &copy
+	}
+	if matches > 1 {
+		return nil, http.StatusConflict
+	}
+
+	// Merge live promoted copies from the effective response view into the
+	// physical record. This closes the short window where the UI already shows
+	// a finding but the child scan.json has not persisted it yet.
+	if matched != nil {
+		for _, vuln := range effective.Vulns {
+			if vuln.SourceScanID == sourceScanID {
+				appendVulnSummaryUnique(&matched.Vulns, vuln)
+			}
+		}
+		return matched, http.StatusOK
+	}
+
+	// A live wildcard child may not have a physical record yet. Validate its
+	// source ID against the server-built sub-scan view, reject reused child IDs,
+	// and construct an in-memory source record from findings carrying that same
+	// server-assigned provenance.
+	var child *SubScanSummary
+	for i := range effective.SubScans {
+		if effective.SubScans[i].ID != sourceScanID {
+			continue
+		}
+		if child != nil {
+			return nil, http.StatusConflict
+		}
+		copy := effective.SubScans[i]
+		child = &copy
+	}
+	if child == nil {
+		return nil, http.StatusNotFound
+	}
+	live := &ScanRecord{
+		ID:           sourceScanID,
+		InstanceID:   displayed.InstanceID,
+		Target:       child.Target,
+		ParentTarget: displayed.Target,
+		Vulns:        []VulnSummary{},
+	}
+	for _, vuln := range effective.Vulns {
+		if vuln.SourceScanID == sourceScanID {
+			appendVulnSummaryUnique(&live.Vulns, vuln)
+		}
+	}
+	if len(live.Vulns) == 0 {
+		return nil, http.StatusNotFound
+	}
+	return live, http.StatusOK
 }
 
 func validLocalRetestID(value string) bool {
@@ -231,8 +332,14 @@ func normalizeLocalRetestEndpoint(endpoint, method string) string {
 	return endpoint
 }
 
-func (s *Server) snapshotRetestAuth(record *ScanRecord, requestedScanID string) (string, string) {
-	candidates := uniqueStrings(record.InstanceID, record.ID, requestedScanID)
+func (s *Server) snapshotRetestAuth(displayedRecord, sourceRecord *ScanRecord, requestedScanID string) (string, string) {
+	candidates := uniqueStrings(
+		displayedRecord.InstanceID,
+		sourceRecord.InstanceID,
+		displayedRecord.ID,
+		requestedScanID,
+		sourceRecord.ID,
+	)
 	s.instancesMu.RLock()
 	var inst *ScanInstance
 	for _, id := range candidates {

@@ -69,8 +69,15 @@ func findReportedVulnerabilityByID(vulns []reporting.Vulnerability, id string) (
 
 func appendVulnSummaryUnique(vulns *[]VulnSummary, vuln VulnSummary) bool {
 	key := vulnSummaryKey(vuln)
-	for _, existing := range *vulns {
-		if vulnSummaryKey(existing) == key {
+	for i := range *vulns {
+		existing := &(*vulns)[i]
+		if vulnSummaryKey(*existing) == key {
+			// A live parent snapshot can arrive before the persisted wildcard
+			// child. Preserve the row while enriching it with authoritative
+			// physical provenance once the child copy is attached.
+			if existing.SourceScanID == "" && vuln.SourceScanID != "" {
+				existing.SourceScanID = vuln.SourceScanID
+			}
 			return false
 		}
 	}
@@ -593,6 +600,9 @@ func (s *Server) attachWildcardSubScansFrom(rec *ScanRecord, entries []scanEntry
 			continue
 		}
 		for _, vuln := range child.Vulns {
+			// Reconstruct provenance for historical records and override stale
+			// promoted metadata with the physical child that owns the finding.
+			vuln.SourceScanID = child.ID
 			appendVulnSummaryUnique(&rec.Vulns, vuln)
 		}
 		add(child.Target, SubScanSummary{
@@ -719,6 +729,14 @@ func (s *Server) attachWildcardSubScansFrom(rec *ScanRecord, entries []scanEntry
 func finalizeScanRecordForResponse(rec *ScanRecord) {
 	if rec == nil {
 		return
+	}
+	// Native and historical findings may predate provenance metadata. Any
+	// child/live finding with known provenance has already retained it through
+	// aggregation, so only unresolved rows fall back to the displayed record.
+	for i := range rec.Vulns {
+		if rec.Vulns[i].SourceScanID == "" {
+			rec.Vulns[i].SourceScanID = rec.ID
+		}
 	}
 	if isCompletedScanStatus(rec.Status) && phaseAllowed(rec.Phases, 22) {
 		rec.CurrentPhase = 22

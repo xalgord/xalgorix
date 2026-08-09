@@ -1141,7 +1141,9 @@ func (s *Server) runWildcardTarget(_ context.Context, scanCfg *config.Config, re
 						CurrentPhase:             22,
 					}
 					for _, v := range newVulns {
-						subScanRecord.Vulns = append(subScanRecord.Vulns, vulnToSummary(v))
+						summary := vulnToSummary(v)
+						summary.SourceScanID = subScanRecord.ID
+						subScanRecord.Vulns = append(subScanRecord.Vulns, summary)
 					}
 					reportPath, err := s.generateReportAt(&subScanRecord, subScanDir)
 					if err == nil {

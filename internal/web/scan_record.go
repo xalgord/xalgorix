@@ -109,10 +109,15 @@ func mergeReportedVulnerabilitiesIntoRecord(rec *ScanRecord, reported []reportin
 	existing := append([]VulnSummary(nil), rec.Vulns...)
 	rec.Vulns = make([]VulnSummary, 0, len(existing)+len(reported))
 	for _, vuln := range existing {
+		if vuln.SourceScanID == "" {
+			vuln.SourceScanID = rec.ID
+		}
 		appendVulnSummaryUnique(&rec.Vulns, vuln)
 	}
 	for _, vuln := range reported {
-		appendVulnSummaryUnique(&rec.Vulns, vulnToSummary(vuln))
+		summary := vulnToSummary(vuln)
+		summary.SourceScanID = rec.ID
+		appendVulnSummaryUnique(&rec.Vulns, summary)
 	}
 }
 

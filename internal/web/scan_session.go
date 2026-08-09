@@ -369,6 +369,7 @@ func (s *Server) processEvent(evt agent.Event, sess *scanSession) {
 					log.Printf("[VULN] report_vulnerability metadata referenced %s, but it was not found in context %s", vulnID, sess.sctx.ID)
 				} else {
 					vs := vulnToSummary(latest)
+					vs.SourceScanID = sess.id
 					log.Printf("[VULN] Latest vuln: %s %s (CVSS %.1f)", vs.Severity, vs.Title, vs.CVSS)
 
 					// Severity filter is a DISPLAY/BROADCAST gate, NOT a
@@ -502,6 +503,7 @@ func (s *Server) processEvent(evt agent.Event, sess *scanSession) {
 		log.Printf("[VULN] Finished event: total vulns in system: %d, already broadcast: %d", len(vulns), len(seen))
 		for _, v := range vulns {
 			vs := vulnToSummary(v)
+			vs.SourceScanID = sess.id
 			if seen[vulnSummaryKey(vs)] {
 				log.Printf("[VULN] Finished: skipping already-broadcast vuln: %s %s", v.ID, v.Title)
 				continue

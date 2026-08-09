@@ -238,10 +238,18 @@ export const api = {
       `/api/scans/${scanId}/vulns/${vulnId}`,
       { method: "DELETE" },
     ),
-  startLocalFindingRetest: (scanId: string, findingId: string) =>
+  startLocalFindingRetest: (
+    scanId: string,
+    sourceScanId: string,
+    findingId: string,
+  ) =>
     http<FindingRetestStart>("/api/findings/retest/local", {
       method: "POST",
-      json: { scan_id: scanId, finding_id: findingId },
+      json: {
+        scan_id: scanId,
+        source_scan_id: sourceScanId,
+        finding_id: findingId,
+      },
     }),
   getFindingRetest: (jobId: string) =>
     http<FindingRetestJob>(

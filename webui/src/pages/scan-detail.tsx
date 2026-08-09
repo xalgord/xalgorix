@@ -650,7 +650,17 @@ function isFindingRetestActive(job: FindingRetestJob | null): boolean {
   return job?.status === "queued" || job?.status === "running";
 }
 
-const RETEST_SESSION_KEY_PREFIX = "xalgorix:retest-jobs:";
+function findingKey(scanId: string, finding: VulnSummary): string {
+  // source_scan_id disambiguates IDs reused by wildcard child scans. The
+  // displayed scan is the safe fallback for responses from older records.
+  return JSON.stringify([finding.source_scan_id || scanId, finding.id]);
+}
+
+function findingSourceScanId(scanId: string, finding: VulnSummary): string {
+  return finding.source_scan_id || scanId;
+}
+
+const RETEST_SESSION_KEY_PREFIX = "xalgorix:retest-jobs:v2:";
 
 function loadFindingRetestEntries(scanId: string): Record<string, FindingRetestEntry> {
   if (typeof window === "undefined") return {};
@@ -775,20 +785,25 @@ function useFindingRetestRegistry(scanId: string) {
   }, [scanId, updateEntry]);
 
   const startRetest = useCallback(
-    async (findingId: string) => {
+    async (finding: VulnSummary) => {
+      const key = findingKey(scanId, finding);
       const current =
-        entriesRef.current[findingId] ?? EMPTY_FINDING_RETEST_ENTRY;
+        entriesRef.current[key] ?? EMPTY_FINDING_RETEST_ENTRY;
       if (current.starting || isFindingRetestActive(current.job)) return;
 
-      updateEntry(findingId, (entry) => ({
+      updateEntry(key, (entry) => ({
         ...entry,
         starting: true,
         error: null,
       }));
       try {
-        const started = await api.startLocalFindingRetest(scanId, findingId);
+        const started = await api.startLocalFindingRetest(
+          scanId,
+          findingSourceScanId(scanId, finding),
+          finding.id,
+        );
         if (scanIdRef.current !== scanId) return;
-        updateEntry(findingId, (entry) => ({
+        updateEntry(key, (entry) => ({
           ...entry,
           job: started,
           starting: false,
@@ -796,7 +811,7 @@ function useFindingRetestRegistry(scanId: string) {
         }));
       } catch (startError) {
         if (scanIdRef.current !== scanId) return;
-        updateEntry(findingId, (entry) => ({
+        updateEntry(key, (entry) => ({
           ...entry,
           starting: false,
           error: findingRetestErrorMessage(startError),
@@ -806,13 +821,13 @@ function useFindingRetestRegistry(scanId: string) {
     [scanId, updateEntry],
   );
 
-  const dismissRetest = useCallback((findingId: string) => {
-    const current = entriesRef.current[findingId];
+  const dismissRetest = useCallback((key: string) => {
+    const current = entriesRef.current[key];
     if (!current || current.starting || isFindingRetestActive(current.job)) {
       return;
     }
     const nextEntries = { ...entriesRef.current };
-    delete nextEntries[findingId];
+    delete nextEntries[key];
     entriesRef.current = nextEntries;
     persistFindingRetestEntries(scanIdRef.current, nextEntries);
     setEntries(nextEntries);
@@ -832,7 +847,7 @@ function FindingsTab({
   const [selected, setSelected] = useState<VulnSummary | null>(null);
   const { entries: retestEntries, startRetest, dismissRetest } =
     useFindingRetestRegistry(scanId);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
   const sorted = useMemo(
     () =>
       [...vulns].sort(
@@ -840,47 +855,61 @@ function FindingsTab({
       ),
     [vulns],
   );
+  const findingsByKey = useMemo(
+    () => new Map(sorted.map((finding) => [findingKey(scanId, finding), finding])),
+    [scanId, sorted],
+  );
 
-  const allSelected = sorted.length > 0 && selectedIds.size === sorted.length;
+  const allSelected = sorted.length > 0 && selectedKeys.size === sorted.length;
 
   useEffect(() => {
-    const allIds = new Set(sorted.map((v) => v.id));
-    setSelectedIds((current) => {
-      const next = new Set([...current].filter((id) => allIds.has(id)));
+    const allKeys = new Set(sorted.map((finding) => findingKey(scanId, finding)));
+    setSelectedKeys((current) => {
+      const next = new Set([...current].filter((key) => allKeys.has(key)));
       return next.size === current.size ? current : next;
     });
-  }, [sorted]);
+  }, [scanId, sorted]);
 
-  function toggleSelect(id: string, checked: boolean) {
-    setSelectedIds((current) => {
+  function toggleSelect(key: string, checked: boolean) {
+    setSelectedKeys((current) => {
       const next = new Set(current);
-      if (checked) next.add(id);
-      else next.delete(id);
+      if (checked) next.add(key);
+      else next.delete(key);
       return next;
     });
   }
 
   function selectAll() {
-    setSelectedIds(new Set(sorted.map((v) => v.id)));
+    setSelectedKeys(new Set(sorted.map((finding) => findingKey(scanId, finding))));
   }
   function clearSelection() {
-    setSelectedIds(new Set());
+    setSelectedKeys(new Set());
   }
 
-  async function deleteVulns(ids: string[]) {
-    const unique = [...new Set(ids)].filter(Boolean);
-    if (!unique.length) return;
-    const label =
-      unique.length === 1
-        ? "Permanently delete this finding?"
-        : `Permanently delete ${unique.length} selected findings?`;
-    if (!window.confirm(label)) return;
-    for (const vulnId of unique) {
-      await del.mutateAsync({ scanId, vulnId });
+  async function deleteVulns(keys: string[]) {
+    const selectedFindings = keys
+      .map((key) => findingsByKey.get(key))
+      .filter((finding): finding is VulnSummary => Boolean(finding));
+    const unique = new Map<string, { scanId: string; vulnId: string }>();
+    for (const finding of selectedFindings) {
+      const sourceScanId = findingSourceScanId(scanId, finding);
+      unique.set(
+        JSON.stringify([sourceScanId, finding.id]),
+        { scanId: sourceScanId, vulnId: finding.id },
+      );
     }
-    setSelectedIds((current) => {
+    if (!unique.size) return;
+    const label =
+      unique.size === 1
+        ? "Permanently delete this finding?"
+        : `Permanently delete ${unique.size} selected findings?`;
+    if (!window.confirm(label)) return;
+    for (const identity of unique.values()) {
+      await del.mutateAsync(identity);
+    }
+    setSelectedKeys((current) => {
       const next = new Set(current);
-      for (const id of unique) next.delete(id);
+      for (const key of keys) next.delete(key);
       return next;
     });
   }
@@ -905,111 +934,115 @@ function FindingsTab({
           {allSelected ? "Clear selection" : "Select all"}
         </Button>
         <span className="text-xs text-muted-foreground">
-          {selectedIds.size} selected
+          {selectedKeys.size} selected
         </span>
         <BulkActionMenu
-          disabled={selectedIds.size === 0 || del.isPending}
-          selectedCount={selectedIds.size}
-          onDelete={() => void deleteVulns([...selectedIds])}
+          disabled={selectedKeys.size === 0 || del.isPending}
+          selectedCount={selectedKeys.size}
+          onDelete={() => void deleteVulns([...selectedKeys])}
         />
       </div>
       <div className="space-y-2">
-        {sorted.map((f) => (
-          <Card
-            key={f.id}
-            id={`finding-${f.id}`}
-            className={cn(
-              "overflow-hidden",
-              selectedIds.has(f.id) && "ring-1 ring-primary/30",
-            )}
-          >
-            <div className="flex items-start gap-2 p-2 pl-4">
-              <input
-                type="checkbox"
-                checked={selectedIds.has(f.id)}
-                aria-label={`Select ${f.title}`}
-                onChange={(e) => toggleSelect(f.id, e.currentTarget.checked)}
-                className="mt-3 h-4 w-4 shrink-0 rounded border-border bg-input accent-primary"
-              />
-              <button
-                type="button"
-                className="group block w-full flex-1 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
-                onClick={() => setSelected(f)}
-                aria-label={`Open finding details for ${f.title}`}
-              >
-                <CardContent className="flex flex-col gap-3 p-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0 space-y-1 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <SeverityBadge severity={f.severity} />
-                      <h3 className="font-medium text-foreground">{f.title}</h3>
-                      {f.cve && (
+        {sorted.map((f) => {
+          const key = findingKey(scanId, f);
+          return (
+            <Card
+              key={key}
+              id={`finding-${encodeURIComponent(key)}`}
+              className={cn(
+                "overflow-hidden",
+                selectedKeys.has(key) && "ring-1 ring-primary/30",
+              )}
+            >
+              <div className="flex items-start gap-2 p-2 pl-4">
+                <input
+                  type="checkbox"
+                  checked={selectedKeys.has(key)}
+                  aria-label={`Select ${f.title}`}
+                  onChange={(e) => toggleSelect(key, e.currentTarget.checked)}
+                  className="mt-3 h-4 w-4 shrink-0 rounded border-border bg-input accent-primary"
+                />
+                <button
+                  type="button"
+                  className="group block w-full flex-1 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
+                  onClick={() => setSelected(f)}
+                  aria-label={`Open finding details for ${f.title}`}
+                >
+                  <CardContent className="flex flex-col gap-3 p-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 space-y-1 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <SeverityBadge severity={f.severity} />
+                        <h3 className="font-medium text-foreground">{f.title}</h3>
+                        {f.cve && (
+                          <Badge variant="outline" className="mono">
+                            {f.cve}
+                          </Badge>
+                        )}
+                        {f.cwe_id && (
+                          <Badge
+                            variant="outline"
+                            className="mono text-emerald-400 border-emerald-400/30"
+                          >
+                            {f.cwe_id}
+                          </Badge>
+                        )}
+                        {f.owasp && (
+                          <Badge
+                            variant="outline"
+                            className="mono text-amber-400 border-amber-400/30"
+                          >
+                            {f.owasp}
+                          </Badge>
+                        )}
+                        <VerificationBadge verified={f.verified} tags={f.tags} />
+                      </div>
+                      {f.description && (
+                        <p className="text-sm leading-relaxed text-muted-foreground line-clamp-3">
+                          {f.description}
+                        </p>
+                      )}
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                        {f.target && <span className="mono">{f.target}</span>}
+                        {f.endpoint && <span className="mono">{f.endpoint}</span>}
+                        {f.method && <span className="mono">{f.method}</span>}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {f.cvss != null && f.cvss > 0 && (
                         <Badge variant="outline" className="mono">
-                          {f.cve}
+                          CVSS {f.cvss.toFixed(1)}
                         </Badge>
                       )}
-                      {f.cwe_id && (
-                        <Badge
-                          variant="outline"
-                          className="mono text-emerald-400 border-emerald-400/30"
-                        >
-                          {f.cwe_id}
-                        </Badge>
-                      )}
-                      {f.owasp && (
-                        <Badge
-                          variant="outline"
-                          className="mono text-amber-400 border-amber-400/30"
-                        >
-                          {f.owasp}
-                        </Badge>
-                      )}
-                      <VerificationBadge verified={f.verified} tags={f.tags} />
+                      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground group-hover:text-foreground">
+                        Details <ArrowRight className="h-3.5 w-3.5" />
+                      </span>
                     </div>
-                    {f.description && (
-                      <p className="text-sm leading-relaxed text-muted-foreground line-clamp-3">
-                        {f.description}
-                      </p>
-                    )}
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                      {f.target && <span className="mono">{f.target}</span>}
-                      {f.endpoint && <span className="mono">{f.endpoint}</span>}
-                      {f.method && <span className="mono">{f.method}</span>}
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {f.cvss != null && f.cvss > 0 && (
-                      <Badge variant="outline" className="mono">
-                        CVSS {f.cvss.toFixed(1)}
-                      </Badge>
-                    )}
-                    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground group-hover:text-foreground">
-                      Details <ArrowRight className="h-3.5 w-3.5" />
-                    </span>
-                  </div>
-                </CardContent>
-              </button>
-              <FindingRowMenu
-                finding={f}
-                scanId={scanId}
-                deleting={del.isPending}
-                onDelete={() => void deleteVulns([f.id])}
-              />
-            </div>
-          </Card>
-        ))}
+                  </CardContent>
+                </button>
+                <FindingRowMenu
+                  finding={f}
+                  scanId={scanId}
+                  deleting={del.isPending}
+                  onDelete={() => void deleteVulns([key])}
+                />
+              </div>
+            </Card>
+          );
+        })}
       </div>
       <FindingDetailsDialog
         finding={selected}
         retestEntry={
           selected
-            ? (retestEntries[selected.id] ?? EMPTY_FINDING_RETEST_ENTRY)
+            ? (retestEntries[findingKey(scanId, selected)] ??
+              EMPTY_FINDING_RETEST_ENTRY)
             : EMPTY_FINDING_RETEST_ENTRY
         }
         onStartRetest={() => {
-          if (selected) void startRetest(selected.id);
+          if (selected) void startRetest(selected);
         }}
         onDismissRetest={() => {
-          if (selected) dismissRetest(selected.id);
+          if (selected) dismissRetest(findingKey(scanId, selected));
         }}
         onOpenChange={(open) => !open && setSelected(null)}
       />

@@ -3,6 +3,7 @@
 
 export interface VulnSummary {
   id: string;
+  source_scan_id?: string;
   title: string;
   severity: string;
   target?: string;
