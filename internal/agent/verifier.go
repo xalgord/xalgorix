@@ -42,6 +42,10 @@ const (
 	// budget could consume most of a provider window for one report.
 	verifierMaxTurns = 8
 	verifierDeadline = 3 * time.Minute
+
+	// RetestTurnBudgetExhaustedReason is the exact internal outcome used when a
+	// verifier never executes or submits a decision before its bounded turns end.
+	RetestTurnBudgetExhaustedReason = "verifier did not reach a verdict within the turn budget"
 )
 
 // verifyFinding is the FindingVerifier installed into the reporting package.
@@ -232,7 +236,7 @@ func (a *Agent) verifyFindingMode(req reporting.VerificationRequest, targeted bo
 	}
 
 	if verdict == nil {
-		return reporting.VerificationVerdict{Inconclusive: true, Reason: "verifier did not reach a verdict within the turn budget"}
+		return reporting.VerificationVerdict{Inconclusive: true, Reason: RetestTurnBudgetExhaustedReason}
 	}
 
 	if verdict.Confirmed {

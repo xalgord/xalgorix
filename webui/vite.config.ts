@@ -5,9 +5,9 @@ import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
 // Vite produces a static SPA bundle that is served from `internal/web/static`
-// by the Go server. We keep the bundle file names stable (`app.js` /
-// `style.css`) so the existing embed path and CI checks (`node --check
-// internal/web/static/app.js`) keep working.
+// by the Go server. Entry and CSS filenames include content hashes so a binary
+// upgrade cannot keep executing a stale dashboard bundle from browser/proxy
+// cache. The generated index.html is the source of truth for asset URLs.
 
 // Port the auto-spawned mock backend binds to. We deliberately pick a port
 // *other* than 8080 because cloud dev sandboxes (notably the v0 preview)
@@ -90,12 +90,9 @@ export default defineConfig({
     sourcemap: false,
     rollupOptions: {
       output: {
-        entryFileNames: "app.js",
-        chunkFileNames: "chunks/[name]-[hash].js",
-        assetFileNames: (asset) => {
-          if (asset.name && asset.name.endsWith(".css")) return "style.css";
-          return "assets/[name]-[hash][extname]";
-        },
+        entryFileNames: "assets/app-[hash].js",
+        chunkFileNames: "assets/[name]-[hash].js",
+        assetFileNames: "assets/[name]-[hash][extname]",
       },
     },
   },

@@ -233,8 +233,8 @@ func isDashboardReadPath(method, path string) bool {
 }
 
 func setWebUICacheHeaders(w http.ResponseWriter) {
-	// The embedded SPA uses stable asset names (/app.js, /style.css). Disable
-	// browser caching so replacing the local binary takes effect on refresh.
+	// HTML and compatibility asset routes must always revalidate so a binary
+	// upgrade discovers the newly content-hashed dashboard bundle immediately.
 	w.Header().Set("Cache-Control", "no-store, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
@@ -940,9 +940,9 @@ func (s *Server) Start() error {
 			fileServer.ServeHTTP(w, r)
 			return
 		}
-		// Check if it's a real static file. Vite serves assets from the
-		// static root (/app.js, /style.css, /chunks/...), while older builds
-		// may request /static/app.js. staticFS already points at that root.
+		// Check if it's a real static file. Production Vite assets use
+		// content-hashed /assets/* paths; older builds may request stable root
+		// names or /static/app.js. staticFS already points at that root.
 		strippedPath := strings.TrimPrefix(path, "/")
 		strippedPath = strings.TrimPrefix(strippedPath, "static/")
 		if hasRfs {

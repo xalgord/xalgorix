@@ -544,6 +544,23 @@ func (s *Server) executeRetest(req retestStartRequest) retestOutcome {
 	verifier.ConfigureRetestAuth(req.TargetAuth, req.TargetAuthB)
 	verdict := verifier.RetestFinding(req.verification)
 	execution := httpclient.RequestPolicyExecutionStats(contextID)
+	attempts := httpclient.RequestPolicyUsage(contextID)
+	if shouldRetryZeroAttemptBudgetExhaustion(verdict, execution, attempts) {
+		// A model that spent every turn without even attempting an HTTP request
+		// has not retested the finding. Retry once in the same bounded context.
+		// Reusing the policy preserves the original request cap, and requiring
+		// zero attempts prevents replaying a request that may have side effects.
+		verdict = verifier.RetestFinding(req.verification)
+		execution = httpclient.RequestPolicyExecutionStats(contextID)
+		attempts = httpclient.RequestPolicyUsage(contextID)
+	}
+	if shouldRetryZeroAttemptBudgetExhaustion(verdict, execution, attempts) {
+		return retestOutcome{
+			status:    retestFailed,
+			errorCode: "no_attempt",
+			err:       "the verifier could not execute the targeted retest; no vulnerability status was inferred",
+		}
+	}
 	verdict.Reason = verifier.RedactRetestEvidence(verdict.Reason)
 	verdict.Evidence = verifier.RedactRetestEvidence(verdict.Evidence)
 	outcome := retestOutcome{
@@ -562,6 +579,19 @@ func (s *Server) executeRetest(req retestStartRequest) retestOutcome {
 	outcome.status = retestCompleted
 	outcome.result = mapRetestVerdict(verdict, execution)
 	return outcome
+}
+
+func shouldRetryZeroAttemptBudgetExhaustion(
+	verdict reporting.VerificationVerdict,
+	execution httpclient.RequestPolicyExecution,
+	attempts int,
+) bool {
+	return verdict.Inconclusive &&
+		verdict.Reason == agent.RetestTurnBudgetExhaustedReason &&
+		attempts == 0 &&
+		execution.RequestCount == 0 &&
+		execution.AffectedRequestCount == 0 &&
+		execution.AffectedVariantCount == 0
 }
 
 func mapRetestVerdict(verdict reporting.VerificationVerdict, execution httpclient.RequestPolicyExecution) *retestResult {

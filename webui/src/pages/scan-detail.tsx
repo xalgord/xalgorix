@@ -650,8 +650,54 @@ function isFindingRetestActive(job: FindingRetestJob | null): boolean {
   return job?.status === "queued" || job?.status === "running";
 }
 
+const RETEST_SESSION_KEY_PREFIX = "xalgorix:retest-jobs:";
+
+function loadFindingRetestEntries(scanId: string): Record<string, FindingRetestEntry> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.sessionStorage.getItem(RETEST_SESSION_KEY_PREFIX + scanId);
+    if (!raw) return {};
+    const saved = JSON.parse(raw) as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(saved)
+        .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0)
+        .map(([findingId, jobId]) => [
+          findingId,
+          {
+            job: { id: jobId, status: "queued" as const },
+            starting: false,
+            error: null,
+          },
+        ]),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function persistFindingRetestEntries(
+  scanId: string,
+  entries: Record<string, FindingRetestEntry>,
+) {
+  if (typeof window === "undefined") return;
+  try {
+    const jobs = Object.fromEntries(
+      Object.entries(entries)
+        .filter((entry): entry is [string, FindingRetestEntry] => Boolean(entry[1].job?.id))
+        .map(([findingId, entry]) => [findingId, entry.job!.id]),
+    );
+    const key = RETEST_SESSION_KEY_PREFIX + scanId;
+    if (Object.keys(jobs).length === 0) window.sessionStorage.removeItem(key);
+    else window.sessionStorage.setItem(key, JSON.stringify(jobs));
+  } catch {
+    // Browser storage can be disabled; in-memory persistence still works.
+  }
+}
+
 function useFindingRetestRegistry(scanId: string) {
-  const [entries, setEntries] = useState<Record<string, FindingRetestEntry>>({});
+  const [entries, setEntries] = useState<Record<string, FindingRetestEntry>>(
+    () => loadFindingRetestEntries(scanId),
+  );
   const entriesRef = useRef(entries);
   const scanIdRef = useRef(scanId);
 
@@ -669,6 +715,7 @@ function useFindingRetestRegistry(scanId: string) {
         [findingId]: nextEntry,
       };
       entriesRef.current = nextEntries;
+      persistFindingRetestEntries(scanIdRef.current, nextEntries);
       setEntries(nextEntries);
     },
     [],
@@ -676,8 +723,9 @@ function useFindingRetestRegistry(scanId: string) {
 
   useEffect(() => {
     scanIdRef.current = scanId;
-    entriesRef.current = {};
-    setEntries({});
+    const restored = loadFindingRetestEntries(scanId);
+    entriesRef.current = restored;
+    setEntries(restored);
   }, [scanId]);
 
   useEffect(() => {
@@ -766,6 +814,7 @@ function useFindingRetestRegistry(scanId: string) {
     const nextEntries = { ...entriesRef.current };
     delete nextEntries[findingId];
     entriesRef.current = nextEntries;
+    persistFindingRetestEntries(scanIdRef.current, nextEntries);
     setEntries(nextEntries);
   }, []);
 

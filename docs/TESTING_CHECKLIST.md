@@ -8,7 +8,7 @@ This checklist tracks the automated and manual gates for the CLI, web UI, LLM pr
 - [ ] `go test ./... -cover`
 - [ ] `go test ./... -race`
 - [ ] `go vet ./...`
-- [ ] `node --check internal/web/static/app.js`
+- [ ] `node --check internal/web/static/assets/app-*.js`
 - [ ] `go build ./cmd/xalgorix`
 - [ ] `make test-ci`
 
