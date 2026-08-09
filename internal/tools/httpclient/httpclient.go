@@ -358,10 +358,9 @@ func isBinaryContentType(ct string) bool {
 // skipped. Set only from tests to avoid mutating the shared global config.
 var testTLSInsecure bool
 
-func buildClient(timeoutSec int, followRedirects bool, tlsSkipVerify bool) *http.Client {
-	return buildClientForContext("", timeoutSec, followRedirects, tlsSkipVerify)
-}
-
+// buildClientForContext builds the HTTP client for a request. A targeted
+// re-test context pins dialing to the policy's validated public addresses;
+// an empty contextID keeps ordinary scan behavior.
 func buildClientForContext(contextID string, timeoutSec int, followRedirects bool, tlsSkipVerify bool) *http.Client {
 	tr, ok := http.DefaultTransport.(*http.Transport)
 	if ok {
