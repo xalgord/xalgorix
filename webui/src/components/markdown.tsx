@@ -145,13 +145,13 @@ export function Markdown({ source }: { source?: string | null }) {
   if (!source || !source.trim()) return null;
   const segments = parseSegments(source);
   return (
-    <div className="space-y-2 text-sm leading-relaxed text-foreground/90 break-words">
+    <div className="min-w-0 max-w-full space-y-2 text-sm leading-relaxed text-foreground/90 [overflow-wrap:anywhere]">
       {segments.flatMap((seg, i): React.ReactNode[] => {
         if (seg.type === "code") {
           return [
             <pre
               key={`c${i}`}
-              className="max-h-72 overflow-auto rounded-md border border-border bg-black/40 p-3 mono text-[11px] leading-relaxed whitespace-pre-wrap break-words"
+              className="max-h-72 min-w-0 max-w-full overflow-auto whitespace-pre-wrap rounded-md border border-border bg-black/40 p-3 mono text-[11px] leading-relaxed [overflow-wrap:anywhere]"
             >
               <code>{seg.content}</code>
             </pre>,

@@ -37,7 +37,7 @@ import {
   useDeleteScan,
   useDeleteVuln,
 } from "@/api/queries";
-import { api } from "@/api/client";
+import { api, HttpError } from "@/api/client";
 import {
   filterEventsForInstance,
   mergeFeedEvents,
@@ -74,7 +74,11 @@ import {
 } from "lucide-react";
 import { LiveFeed, type FeedFilter } from "@/components/live-feed";
 import { Pagination, DEFAULT_PAGE_SIZE } from "@/components/Pagination";
-import type { SubScanSummary, VulnSummary } from "@/types/api";
+import type {
+  FindingRetestJob,
+  SubScanSummary,
+  VulnSummary,
+} from "@/types/api";
 
 export default function ScanDetailPage() {
   const navigate = useNavigate();
@@ -799,6 +803,7 @@ function FindingsTab({
         ))}
       </div>
       <FindingDetailsDialog
+        scanId={scanId}
         finding={selected}
         onOpenChange={(open) => !open && setSelected(null)}
       />
@@ -898,18 +903,20 @@ function FindingRowMenu({
 }
 
 function FindingDetailsDialog({
+  scanId,
   finding,
   onOpenChange,
 }: {
+  scanId: string;
   finding: VulnSummary | null;
   onOpenChange: (open: boolean) => void;
 }) {
   return (
     <Dialog open={!!finding} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+      <DialogContent className="max-h-[85vh] w-[calc(100vw-2rem)] min-w-0 max-w-3xl overflow-x-hidden overflow-y-auto">
         {finding && (
-          <>
-            <DialogHeader>
+          <div className="min-w-0 max-w-full space-y-4">
+            <DialogHeader className="min-w-0">
               <div className="flex flex-wrap items-center gap-2 pr-8">
                 <SeverityBadge severity={finding.severity} />
                 {finding.cve && (
@@ -940,7 +947,7 @@ function FindingDetailsDialog({
                 )}
                 <VerificationBadge verified={finding.verified} tags={finding.tags} />
               </div>
-              <DialogTitle className="pr-8 text-lg">
+              <DialogTitle className="min-w-0 pr-8 text-lg [overflow-wrap:anywhere]">
                 {finding.title}
               </DialogTitle>
               <DialogDescription>
@@ -948,7 +955,7 @@ function FindingDetailsDialog({
               </DialogDescription>
             </DialogHeader>
 
-            <div className="grid gap-3 rounded-md border border-border bg-muted/20 p-3 text-sm sm:grid-cols-2">
+            <div className="grid min-w-0 max-w-full gap-3 rounded-md border border-border bg-muted/20 p-3 text-sm sm:grid-cols-2">
               <DetailRow label="Target" value={finding.target} mono />
               <DetailRow label="Endpoint" value={finding.endpoint} mono />
               <DetailRow label="Method" value={finding.method} mono />
@@ -962,9 +969,15 @@ function FindingDetailsDialog({
               />
             </div>
 
+            <FindingRetestPanel
+              key={`${scanId}:${finding.id}`}
+              scanId={scanId}
+              finding={finding}
+            />
+
             <Separator />
 
-            <div className="space-y-4">
+            <div className="min-w-0 max-w-full space-y-4">
               <DetailSection title="Description" value={finding.description} />
               <DetailSection title="Impact" value={finding.impact} />
               <DetailSection
@@ -994,10 +1007,148 @@ function FindingDetailsDialog({
                 <DetailSection title="Suggested fix" value={finding.fix} code />
               )}
             </div>
-          </>
+          </div>
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function findingRetestErrorMessage(error: unknown): string {
+  if (error instanceof HttpError) {
+    const data =
+      error.data && typeof error.data === "object"
+        ? (error.data as { error?: unknown; error_code?: unknown })
+        : null;
+    const code = typeof data?.error_code === "string" ? data.error_code : "";
+    if (error.status === 429 || code === "capacity_exhausted") {
+      return "The scanner is already running the maximum number of targeted retests. Try again shortly.";
+    }
+    if (error.status === 404 || code === "not_found") {
+      return "This stored scan or finding is no longer available.";
+    }
+    if (error.status === 409 || code === "ambiguous_finding") {
+      return "This finding cannot be retested safely from its stored record.";
+    }
+    if (typeof data?.error === "string" && data.error) return data.error;
+  }
+  return error instanceof Error ? error.message : "The targeted retest could not be started.";
+}
+
+function FindingRetestPanel({
+  scanId,
+  finding,
+}: {
+  scanId: string;
+  finding: VulnSummary;
+}) {
+  const [job, setJob] = useState<FindingRetestJob | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const active = job?.status === "queued" || job?.status === "running";
+
+  useEffect(() => {
+    if (!active || !job?.id) return;
+    let cancelled = false;
+    let polling = false;
+    const timer = window.setInterval(() => {
+      if (polling) return;
+      polling = true;
+      void api
+        .getFindingRetest(job.id)
+        .then((next) => {
+          if (!cancelled) {
+            setJob(next);
+            setError(null);
+          }
+        })
+        .catch((pollError: unknown) => {
+          if (!cancelled) setError(findingRetestErrorMessage(pollError));
+        })
+        .finally(() => {
+          polling = false;
+        });
+    }, 1_500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [active, job?.id]);
+
+  async function startRetest() {
+    if (starting || active) return;
+    setStarting(true);
+    setError(null);
+    try {
+      const started = await api.startLocalFindingRetest(scanId, finding.id);
+      setJob(started);
+    } catch (startError) {
+      setError(findingRetestErrorMessage(startError));
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  const verdict = job?.result?.verdict;
+  const statusClass =
+    verdict === "still_vulnerable"
+      ? "border-red-500/30 bg-red-500/5 text-red-300"
+      : verdict === "fixed"
+        ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-300"
+        : "border-amber-500/30 bg-amber-500/5 text-amber-200";
+
+  return (
+    <section className="min-w-0 max-w-full rounded-md border border-border bg-muted/20 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Active retest
+          </h4>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Rechecks only this stored finding under the bounded retest policy. It does not run a full scan.
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => void startRetest()}
+          disabled={starting || active}
+          className="shrink-0"
+        >
+          {starting || active ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldAlert className="h-4 w-4" />}
+          {starting ? "Starting…" : job?.status === "queued" ? "Queued…" : job?.status === "running" ? "Retesting…" : "Retest finding"}
+        </Button>
+      </div>
+
+      {error && (
+        <p className="mt-3 min-w-0 text-xs text-red-300 [overflow-wrap:anywhere]" role="alert">
+          {error}
+        </p>
+      )}
+
+      {job && !active && (
+        <div className={cn("mt-3 min-w-0 max-w-full rounded-md border p-3 text-xs", statusClass)} aria-live="polite">
+          <div className="font-medium capitalize">
+            {verdict ? verdict.replaceAll("_", " ") : job.status}
+          </div>
+          {(job.result?.reason || job.error) && (
+            <p className="mt-1 whitespace-pre-wrap [overflow-wrap:anywhere]">
+              {job.result?.reason || job.error}
+            </p>
+          )}
+          {job.result?.evidence && (
+            <pre className="mt-2 min-w-0 max-w-full whitespace-pre-wrap rounded border border-current/20 bg-black/20 p-2 text-[11px] [overflow-wrap:anywhere]">
+              {job.result.evidence}
+            </pre>
+          )}
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] opacity-80">
+            <span>{job.request_count ?? 0} requests</span>
+            <span>{job.affected_request_count ?? 0} affected-endpoint</span>
+            <span>{job.affected_variant_count ?? 0} variants</span>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1017,7 +1168,7 @@ function DetailRow({
       </div>
       <div
         className={cn(
-          "mt-1 break-words text-foreground",
+          "mt-1 min-w-0 max-w-full text-foreground [overflow-wrap:anywhere]",
           mono && "mono text-xs",
         )}
       >
@@ -1038,12 +1189,12 @@ function DetailSection({
 }) {
   if (!value) return null;
   return (
-    <section className="space-y-2">
+    <section className="min-w-0 max-w-full space-y-2">
       <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
         {title}
       </h4>
       {code ? (
-        <pre className="max-h-64 overflow-auto rounded-md border border-border bg-black/40 p-3 text-xs leading-relaxed text-foreground whitespace-pre-wrap break-words">
+        <pre className="max-h-64 min-w-0 max-w-full overflow-auto whitespace-pre-wrap rounded-md border border-border bg-black/40 p-3 text-xs leading-relaxed text-foreground [overflow-wrap:anywhere]">
           <code>{value}</code>
         </pre>
       ) : (

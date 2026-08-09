@@ -57,6 +57,14 @@ type retestStartRequest struct {
 	policy       httpclient.RequestPolicy
 }
 
+// localRetestStartInput is the scanner dashboard's strict wire contract. The
+// browser sends identifiers only; finding content, target, authentication, and
+// provider configuration remain server-derived.
+type localRetestStartInput struct {
+	ScanID    string `json:"scan_id"`
+	FindingID string `json:"finding_id"`
+}
+
 type retestResult struct {
 	Verdict  string `json:"verdict"`
 	Reason   string `json:"reason,omitempty"`
@@ -106,6 +114,102 @@ func (s *Server) handleStartFindingRetest(w http.ResponseWriter, r *http.Request
 		writeRetestError(w, http.StatusBadRequest, "validation_failed", "request body must contain one JSON object")
 		return
 	}
+	s.enqueueFindingRetest(w, req)
+}
+
+// handleStartLocalFindingRetest is the scanner dashboard entry point. Unlike
+// the server-to-server SaaS endpoint above, it accepts identifiers only and
+// resolves every executable value from the scanner's own record/private state.
+func (s *Server) handleStartLocalFindingRetest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeRetestError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+
+	var input localRetestStartInput
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&input); err != nil {
+		writeRetestError(w, http.StatusBadRequest, "validation_failed", "invalid request body")
+		return
+	}
+	if err := ensureJSONEOF(dec); err != nil {
+		writeRetestError(w, http.StatusBadRequest, "validation_failed", "request body must contain one JSON object")
+		return
+	}
+	input.ScanID = strings.TrimSpace(input.ScanID)
+	input.FindingID = strings.TrimSpace(input.FindingID)
+	if !validLocalRetestID(input.ScanID) || !validLocalRetestID(input.FindingID) {
+		writeRetestError(w, http.StatusBadRequest, "validation_failed", "scan_id and finding_id must be valid identifiers")
+		return
+	}
+
+	_, record := s.findScanByID(input.ScanID)
+	if record == nil {
+		writeRetestError(w, http.StatusNotFound, "not_found", "scan or finding not found")
+		return
+	}
+	var finding *VulnSummary
+	for i := range record.Vulns {
+		if record.Vulns[i].ID != input.FindingID {
+			continue
+		}
+		if finding != nil {
+			writeRetestError(w, http.StatusConflict, "ambiguous_finding", "finding identifier is not unique within this scan")
+			return
+		}
+		finding = &record.Vulns[i]
+	}
+	if finding == nil {
+		writeRetestError(w, http.StatusNotFound, "not_found", "scan or finding not found")
+		return
+	}
+
+	target := strings.TrimSpace(finding.Target)
+	if target == "" {
+		target = strings.TrimSpace(record.Target)
+	}
+	method := strings.ToUpper(strings.TrimSpace(finding.Method))
+	if method == "" {
+		method = http.MethodGet
+	}
+	primaryAuth, secondaryAuth := s.snapshotRetestAuth(record, input.ScanID)
+	req := retestStartRequest{
+		Finding: retestFindingInput{
+			Title: finding.Title, Severity: finding.Severity, CWE: finding.CWE,
+			VerificationMethod: finding.VerificationMethod, CVSSVector: finding.CVSSVector,
+			Target: target, Endpoint: finding.Endpoint, Method: method,
+			Description: finding.Description, Proof: finding.ExploitationProof,
+		},
+		TargetAuth: primaryAuth, TargetAuthB: secondaryAuth,
+	}
+	s.enqueueFindingRetest(w, req)
+}
+
+func validLocalRetestID(value string) bool {
+	return value != "" && len(value) <= 512 && value != "." && value != ".." && !strings.ContainsAny(value, `/\\`)
+}
+
+func (s *Server) snapshotRetestAuth(record *ScanRecord, requestedScanID string) (string, string) {
+	candidates := uniqueStrings(record.InstanceID, record.ID, requestedScanID)
+	s.instancesMu.RLock()
+	var inst *ScanInstance
+	for _, id := range candidates {
+		if candidate := s.instances[id]; candidate != nil {
+			inst = candidate
+			break
+		}
+	}
+	s.instancesMu.RUnlock()
+	if inst == nil {
+		return "", ""
+	}
+	inst.mu.RLock()
+	defer inst.mu.RUnlock()
+	return inst.TargetAuth, inst.TargetAuthSecondary
+}
+
+func (s *Server) enqueueFindingRetest(w http.ResponseWriter, req retestStartRequest) {
 	if err := validateRetestRequest(&req); err != nil {
 		writeRetestError(w, http.StatusBadRequest, "validation_failed", err.Error())
 		return

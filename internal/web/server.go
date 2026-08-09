@@ -553,6 +553,7 @@ var dashboardRoutes = []string{
 	"/api/findings/summary",
 	"/api/findings",
 	"/api/findings/retest",
+	"/api/findings/retest/local",
 	"/api/findings/retest/",
 	"/api/legacy-import/status",
 	"/api/scans",
@@ -972,6 +973,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/findings/summary", s.handleFindingsSummary)
 	mux.HandleFunc("/api/findings", s.handleFindingsList)
 	mux.HandleFunc("/api/findings/retest", s.handleStartFindingRetest)
+	mux.HandleFunc("/api/findings/retest/local", s.handleStartLocalFindingRetest)
 	mux.HandleFunc("/api/findings/retest/", s.handleGetFindingRetest)
 	mux.HandleFunc("/api/legacy-import/status", s.handleLegacyImportStatus)
 	mux.HandleFunc("/api/scans", s.handleListScans)

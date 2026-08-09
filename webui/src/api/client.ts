@@ -4,6 +4,8 @@ import type {
   AgentMailSettings,
   CatalogEntry,
   EnvironmentSettings,
+  FindingRetestJob,
+  FindingRetestStart,
   InstancesResponse,
   LLMSettings,
   LLMSettingsRequest,
@@ -235,6 +237,15 @@ export const api = {
     http<{ status: string; removed: number; remaining: number }>(
       `/api/scans/${scanId}/vulns/${vulnId}`,
       { method: "DELETE" },
+    ),
+  startLocalFindingRetest: (scanId: string, findingId: string) =>
+    http<FindingRetestStart>("/api/findings/retest/local", {
+      method: "POST",
+      json: { scan_id: scanId, finding_id: findingId },
+    }),
+  getFindingRetest: (jobId: string) =>
+    http<FindingRetestJob>(
+      `/api/findings/retest/${encodeURIComponent(jobId)}`,
     ),
 
   instances: () => http<InstancesResponse>("/api/instances"),
