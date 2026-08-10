@@ -746,7 +746,8 @@ func finalizeScanRecordForResponse(rec *ScanRecord) {
 // rebuildInstancesFromDisk populates s.instances from all saved scan.json files on disk.
 // This ensures the dashboard shows historical scans immediately after server restart.
 // Skips subdomain scans (those with ParentTarget set) — those are shown under their parent.
-// Running scans from a previous server instance are marked as "stopped" since the agent process is gone.
+// Interrupted running/pending records are resumable only when a valid queue-state entry
+// still owns them; otherwise they are terminalized so they cannot remain pending forever.
 func (s *Server) rebuildInstancesFromDisk() {
 	queueEntries := s.validQueueStateEntries(false)
 	qMap := make(map[string]string)
@@ -758,33 +759,48 @@ func (s *Server) rebuildInstancesFromDisk() {
 			if qe.state.ActiveScanID != "" {
 				qMap[qe.state.ActiveScanID] = qe.state.InstanceID
 			}
+			if qe.state.WildcardActiveScanDir != "" {
+				qMap[filepath.Clean(qe.state.WildcardActiveScanDir)] = qe.state.InstanceID
+			}
+			if qe.state.WildcardActiveScanID != "" {
+				qMap[qe.state.WildcardActiveScanID] = qe.state.InstanceID
+			}
 			if len(qe.state.Targets) > 0 {
 				qMap[normalizeScanTarget(qe.state.Targets[0])] = qe.state.InstanceID
+			}
+			if qe.state.WildcardActiveTarget != "" {
+				qMap[normalizeScanTarget(qe.state.WildcardActiveTarget)] = qe.state.InstanceID
 			}
 		}
 	}
 
 	for _, entry := range s.findAllScans() {
-		// If scan was "running" from a previous server instance, transition it to "pending" / "resuming"
-		// so the startup queue resumer can pick it back up without marking it as stopped or failed.
-		if entry.rec.Status == "running" {
-			entry.rec.Status = "pending"
-			entry.rec.StopReason = "server_restart_resuming"
+		instID := entry.rec.ID
+		resumable := false
+		if mappedID, ok := qMap[filepath.Clean(entry.dir)]; ok {
+			instID, resumable = mappedID, true
+		} else if mappedID, ok := qMap[entry.rec.ID]; ok {
+			instID, resumable = mappedID, true
+		} else if mappedID, ok := qMap[normalizeScanTarget(entry.rec.Target)]; ok {
+			instID, resumable = mappedID, true
+		}
+
+		if entry.rec.Status == "running" || entry.rec.Status == "pending" {
+			if resumable {
+				entry.rec.Status = "pending"
+				entry.rec.StopReason = "server_restart_resuming"
+				entry.rec.FinishedAt = ""
+			} else {
+				entry.rec.Status = "stopped"
+				entry.rec.StopReason = "server_restart_no_resume_state"
+				entry.rec.FinishedAt = time.Now().Format(time.RFC3339)
+			}
 			s.saveScanRecordTo(&entry.rec, entry.dir)
 		}
 
 		// Skip subdomain scans — they belong to their parent wildcard scan
 		if entry.rec.ParentTarget != "" {
 			continue
-		}
-
-		instID := entry.rec.ID
-		if mappedID, ok := qMap[filepath.Clean(entry.dir)]; ok {
-			instID = mappedID
-		} else if mappedID, ok := qMap[entry.rec.ID]; ok {
-			instID = mappedID
-		} else if mappedID, ok := qMap[normalizeScanTarget(entry.rec.Target)]; ok {
-			instID = mappedID
 		}
 
 		inst := &ScanInstance{
