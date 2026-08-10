@@ -72,11 +72,11 @@ When polling, HTTP interactions are labeled as scanner-origin, origin-unassessed
 		for i, h := range hits {
 			protocol := strings.ToLower(strings.TrimSpace(h.Protocol))
 			originLabel := "provenance not applicable to this protocol"
-			switch {
-			case protocol == "dns":
+			switch protocol {
+			case "dns":
 				originLabel = "DNS-ONLY — AMBIGUOUS"
 				dnsOnlyCount++
-			case protocol == "http" || protocol == "https":
+			case "http", "https":
 				switch {
 				case !h.OriginAssessed:
 					originLabel = "ORIGIN UNASSESSED — CALIBRATION PENDING/UNAVAILABLE"

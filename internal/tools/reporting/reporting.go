@@ -750,10 +750,10 @@ func validateSSRFOOBProof(token, proof string) string {
 	dnsOnly := 0
 	for _, hit := range hits {
 		protocol := strings.ToLower(strings.TrimSpace(hit.Protocol))
-		switch {
-		case protocol == "dns":
+		switch protocol {
+		case "dns":
 			dnsOnly++
-		case protocol == "http" || protocol == "https":
+		case "http", "https":
 			switch {
 			case !hit.OriginAssessed:
 				originUnassessedHTTP++
