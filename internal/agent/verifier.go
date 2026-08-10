@@ -287,14 +287,14 @@ Claimed proof (DO NOT TRUST — reproduce it yourself):
 1. Re-run the test yourself with the tools. Reproduce the EXACT observable the claim depends on.
 2. Use a NEGATIVE/BASELINE CONTROL: compare against an un-injected/benign request, an unauthenticated vs authenticated request, baseline vs payload timing, etc. A difference you cannot tie to the control is not proof.
 3. Apply the EVIDENCE STANDARD — the claim is only real if the evidence matches the class:
-   - SSRF (CWE-918): the TARGET'S SERVER made the request (OOB callback or internal-only resource). Browser/client-side URL handling is NOT SSRF.
+   - SSRF (CWE-918): the TARGET'S SERVER made the request. For OOB verification, generate a fresh token, send the injection request with redirects disabled ('curl --max-redirs 0', 'allow_redirects=False', equivalent), and require a non-scanner-origin HTTP interaction. A target 30x pointing to the callback, a scanner-origin hit, or DNS-only activity is NOT SSRF proof. Browser/client-side URL handling is also NOT SSRF.
    - XSS (CWE-79): the script actually EXECUTED (alert(document.domain), OOB callback, screenshot). Reflection alone is NOT XSS.
    - SQLi (CWE-89): extracted data, a DB error, or a DIFFERENTIAL repeated time delay. A single slow response is NOT proof.
    - Access control / IDOR: protected DATA returned or a real STATE CHANGE. A 200 (especially empty body) on POST/PUT/DELETE/OPTIONS is NOT access — usually CORS preflight / no-op.
    - Info disclosure (CWE-200): an actual secret VALUE leaked. Field/parameter NAMES, public OpenAPI/Swagger specs, and by-design data are NOT disclosure.
 4. Sanity-check the narrative: Is this the intended behavior of the technology? Did the "attacker" supply the secret themselves (a token placed in the URL cannot be "stolen" — circular)? Is the CVSS impact (C/I/A) actually demonstrated?
 5. EVIDENCE PROVENANCE — the proof must demonstrate THIS finding's OWN mechanism. If the evidence was actually obtained through a DIFFERENT vulnerability (e.g. "SQLi" proven by dumping the database through an RCE/eval bug instead of through the injection point), it does NOT prove this finding. Re-test the claimed mechanism directly at its own injection point. If only the other vulnerability works, this finding is inconclusive (or rejected if the claimed point is not actually injectable).
-6. BLIND CLASSES (blind XXE / blind SSRF / blind SQLi) — a generic "success"/"OK"/"request made" response is NOT proof. Require an out-of-band callback (interactsh / Burp Collaborator / your own listener) OR actually-retrieved data/file content (e.g. /etc/passwd contents). If you only observe a generic success message with no OOB hit and no returned data, mark inconclusive — do not confirm.
+6. BLIND CLASSES (blind XXE / blind SSRF / blind SQLi) — a generic "success"/"OK"/"request made" response is NOT proof. For SSRF, a DNS-only or scanner-origin OOB hit is also not proof; require a non-scanner-origin HTTP interaction from a fresh token tested with redirects disabled, or actually retrieved internal data. For other blind classes, require class-appropriate OOB provenance or retrieved data/file content. Otherwise mark inconclusive.
 
 ## VERDICT RULES
 - "confirmed" ONLY if YOU independently reproduced real, exploitable impact, ideally with a control.

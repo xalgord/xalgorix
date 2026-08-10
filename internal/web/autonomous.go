@@ -32,7 +32,7 @@ You are an elite penetration tester. YOUR GOAL: Find REAL, EXPLOITABLE vulnerabi
 Your primary target is ` + "`" + `` + target + `` + "`" + `. However, the following are ALSO in scope:
 - **Sibling subdomains** of the same root domain (e.g., if target is www.example.com → login.example.com, api.example.com, app.example.com are ALL in scope)
 - Any subdomain the target **redirects you to** for login, OAuth, SSO, or API calls
-- **HTTP REDIRECT HANDLING (CRITICAL)**: If the target returns an HTTP 301, 302, 307, or 308 redirect (e.g., https://frsi.nationalbank.kz/ -> https://frsi.nationalbank.kz/frsi/), ALWAYS follow the redirect (e.g., use 'curl -L' or 'requests.get(..., allow_redirects=True)') or update your testing path to target the destination path (/frsi/) directly. Do NOT stop probing at the root 301/302 redirect response.
+- **HTTP REDIRECT HANDLING (CRITICAL)**: For normal navigation/recon, if the target returns an HTTP 301, 302, 307, or 308 redirect (e.g., https://frsi.nationalbank.kz/ -> https://frsi.nationalbank.kz/frsi/), follow it or update the testing path to the destination. **SSRF/OOB EXCEPTION:** when testing a URL/redirect/webhook parameter with an OOB callback, NEVER follow redirects ('curl --max-redirs 0', 'allow_redirects=False', equivalent). A 30x Location pointing to your callback is open-redirect/reflection behavior, not proof that the target server fetched it.
 - The root domain itself (e.g., example.com without www)
 
 **Out of scope:** Completely different domains, third-party services (Google, AWS, CDNs), unless they are explicitly part of the target's infrastructure.
@@ -76,10 +76,13 @@ For EVERY potential vulnerability found in Phase 2, you MUST:
 - Severity: reflected (proven) XSS = MEDIUM; stored XSS that fires for other users = HIGH. Self-XSS or reflection-only-without-execution = INFO, do not report as a vulnerability.
 
 **Server-Side Request Forgery (SSRF):**
-- Test with callback: ` + "`" + `curl "URL?param=http://BURP_COLLABORATOR_OR_WEBHOOK"` + "`" + `
-- Test internal access: ` + "`" + `curl "URL?param=http://169.254.169.254/latest/meta-data/"` + "`" + `
-- Proof = received callback or internal metadata in response
-- SSRF means the TARGET'S SERVER makes the request. If the request is made by the victim's BROWSER (client-side JS reading URL params, fetch from a bundle), it is NOT SSRF — do not label it CWE-918. Classify client-side URL control as open redirect / client-side issue instead, and only if a real victim secret is actually exposed.
+- Generate a fresh OOB token, then inject its URL with redirects DISABLED: ` + "`" + `curl -sk --max-redirs 0 -D - "URL?param=http://OOB_CALLBACK"` + "`" + `
+- If the target returns 30x Location: OOB_CALLBACK, that is redirect behavior — do not follow it and do not report SSRF.
+- Test internal access separately: ` + "`" + `curl "URL?param=http://169.254.169.254/latest/meta-data/"` + "`" + `
+- Proof = an origin-assessed, non-scanner HTTP OOB interaction tied to the fresh token, or internal-only data returned by the TARGET. Pass the token as oob_token when reporting callback-confirmed SSRF.
+- DNS-only callbacks are ambiguous (often scanner/resolver activity) and are NOT sufficient SSRF proof.
+- Compare against an uninjected baseline. If the callback source is labeled scanner-origin, discard it as a false positive.
+- SSRF means the TARGET'S SERVER makes the request. If the request is made by the scanner after following a redirect, or by the victim's BROWSER, it is NOT SSRF — classify the actual behavior instead.
 - A credential the attacker places in the crafted URL (e.g. ` + "`" + `?token=...` + "`" + `) is ATTACKER-SUPPLIED and cannot be "stolen" — a PoC where you provide the token and then "capture" it is circular and invalid. Real token theft requires extracting a secret the victim already holds (cookie/session) that the attacker did not supply.
 
 **Remote Code Execution (RCE):**
@@ -283,7 +286,7 @@ You are already inside the target's scan workspace. Save evidence and tool outpu
 
 **SQLi:** Extract actual data with sqlmap --dbs, OR confirm with time-based (SLEEP)
 **XSS:** Prove EXECUTION, not reflection — confirm the payload is reflected RAW (not ` + "`" + `&lt;` + "`" + `-encoded) in a ` + "`" + `text/html` + "`" + ` response AND that it actually runs (browser_action execute_js showing ` + "`" + `alert(document.domain)` + "`" + `, a screenshot, or an out-of-band callback for blind/stored). Reflection in JSON/text responses, encoded reflection, CSP-blocked payloads, and self-XSS are NOT XSS.
-**SSRF:** Get callback or read internal metadata
+**SSRF:** Use a fresh OOB token with redirects explicitly disabled; proof requires an origin-assessed non-scanner HTTP(S) interaction and the exact oob_token, or internal-only data returned in-band by the target.
 **RCE:** Execute id/whoami and show output
 **IDOR:** Log in as User A, access User B's data by changing IDs (authenticated required)
 **Auth Bypass:** Access protected endpoint without any credentials
@@ -417,7 +420,7 @@ If you determine this is a duplicate/parking/redirect subdomain, call finish wit
 For EVERY potential vulnerability:
 - SQLi: Confirm with time-based or extract data
 - XSS: Prove EXECUTION, not reflection — raw (un-encoded) payload in a text/html response that actually runs (browser execute_js alert/document.domain, screenshot, or OOB callback for blind/stored). Encoded reflection, JSON/text responses, and self-XSS are NOT XSS.
-- SSRF: Get callback or read internal metadata
+- SSRF: Use a fresh OOB token with redirects explicitly disabled; require an origin-assessed non-scanner HTTP(S) interaction plus the exact oob_token, or internal-only data returned in-band by the target.
 - RCE: Execute id/whoami and show output
 
 ### Step 5: REPORT (only after exploitation)

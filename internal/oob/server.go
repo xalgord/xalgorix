@@ -1,7 +1,7 @@
-// Package oob provides out-of-band (OAST) callback infrastructure so the
-// agent can CONFIRM blind vulnerabilities — blind SSRF, blind RCE, blind
-// XSS, XXE, blind SQLi via HTTP egress — with concrete evidence: the TARGET'S
-// server (or a victim browser) reaching a unique, agent-controlled URL.
+// Package oob provides out-of-band (OAST) callback infrastructure for blind
+// SSRF, RCE, XSS, XXE, and SQLi verification. A callback is concrete evidence
+// that some system reached the unique URL; target attribution remains
+// fail-closed until protocol and scanner-origin provenance are assessed.
 //
 // This is essential under Xalgorix's "no theoretical findings" policy: a blind
 // class that cannot be reproduced by the verifier is dropped, so the agent
@@ -31,17 +31,31 @@ import (
 
 // Interaction is a single recorded out-of-band callback.
 type Interaction struct {
-	Token      string            `json:"token"`
-	Protocol   string            `json:"protocol"` // "http" / "https"
-	Method     string            `json:"method"`
-	Path       string            `json:"path"`
-	Query      string            `json:"query"`
-	RemoteAddr string            `json:"remote_addr"`
-	UserAgent  string            `json:"user_agent"`
-	Headers    map[string]string `json:"headers"`
-	Body       string            `json:"body"`
-	Time       time.Time         `json:"time"`
+	Token          string            `json:"token"`
+	Protocol       string            `json:"protocol"` // "http" / "https"
+	Method         string            `json:"method"`
+	Path           string            `json:"path"`
+	Query          string            `json:"query"`
+	RemoteAddr     string            `json:"remote_addr"`
+	ScannerOrigin  bool              `json:"scanner_origin,omitempty"`
+	OriginAssessed bool              `json:"origin_assessed,omitempty"`
+	UserAgent      string            `json:"user_agent"`
+	Headers        map[string]string `json:"headers"`
+	Body           string            `json:"body"`
+	Time           time.Time         `json:"time"`
 }
+
+// OriginCalibrationState describes whether remote callback provenance can be
+// assessed. Anything except OriginCalibrationCalibrated must be treated as
+// fail-closed for a remote, apparently non-scanner HTTP interaction.
+type OriginCalibrationState string
+
+const (
+	OriginCalibrationNotStarted  OriginCalibrationState = "not_started"
+	OriginCalibrationPending     OriginCalibrationState = "pending"
+	OriginCalibrationCalibrated  OriginCalibrationState = "calibrated"
+	OriginCalibrationUnavailable OriginCalibrationState = "unavailable"
+)
 
 var (
 	mu           sync.Mutex
@@ -49,12 +63,21 @@ var (
 	tokenOrder   []string                     // FIFO of registered tokens for eviction
 	startErr     error
 	startOnce    sync.Once
+
+	scannerOriginMu         sync.RWMutex
+	scannerOriginIPs        = map[string]struct{}{}
+	scannerOriginState      = OriginCalibrationNotStarted
+	scannerOriginRetryAfter time.Time
 )
 
 const (
-	maxOOBBody      = 8 * 1024
-	maxHitsPerToken = 100  // cap interactions kept per token
-	maxTokens       = 4096 // cap registered tokens; oldest evicted beyond this
+	maxOOBBody                     = 8 * 1024
+	maxHitsPerToken                = 100  // cap interactions kept per token
+	maxTokens                      = 4096 // cap registered tokens; oldest evicted beyond this
+	scannerOriginPollWindow        = 7 * time.Second
+	scannerOriginRetryCooldown     = 30 * time.Second
+	scannerOriginRequestTimeout    = 5 * time.Second
+	scannerOriginPollCheckInterval = 200 * time.Millisecond
 )
 
 // selfHosted reports whether the operator configured a self-hosted callback
@@ -70,9 +93,8 @@ func Enabled() bool {
 	return selfHosted() || interactshEnabled()
 }
 
-// Generate mints a callback URL + polling token using whichever backend is
-// active: the self-hosted listener when configured, otherwise interactsh.
-func Generate() (callbackURL, token string, err error) {
+// rawGenerate mints a callback without triggering scanner-origin calibration.
+func rawGenerate() (callbackURL, token string, err error) {
 	if selfHosted() {
 		return selfHostedGenerate()
 	}
@@ -82,23 +104,210 @@ func Generate() (callbackURL, token string, err error) {
 	return interactshGenerate()
 }
 
+func rawPoll(token string) []Interaction {
+	if selfHosted() {
+		return selfHostedPoll(token)
+	}
+	return interactshPoll(token)
+}
+
+func normalizedRemoteIP(remoteAddr string) string {
+	raw := strings.TrimSpace(remoteAddr)
+	if host, _, err := net.SplitHostPort(raw); err == nil {
+		raw = host
+	}
+	raw = strings.Trim(raw, "[]")
+	if ip := net.ParseIP(raw); ip != nil {
+		return ip.String()
+	}
+	return ""
+}
+
+func isDirectScannerOrigin(remoteAddr string) bool {
+	ip := net.ParseIP(normalizedRemoteIP(remoteAddr))
+	if ip == nil {
+		return false
+	}
+	addrs, _ := net.InterfaceAddrs()
+	for _, addr := range addrs {
+		var local net.IP
+		switch value := addr.(type) {
+		case *net.IPNet:
+			local = value.IP
+		case *net.IPAddr:
+			local = value.IP
+		}
+		if local != nil && local.Equal(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// ScannerOriginCalibrationState exposes whether remote callback origin
+// assessments are currently trustworthy.
+func ScannerOriginCalibrationState() OriginCalibrationState {
+	scannerOriginMu.RLock()
+	defer scannerOriginMu.RUnlock()
+	return scannerOriginState
+}
+
+// ScannerOriginCalibrated reports whether external scanner egress calibration
+// succeeded. Callers must fail closed when this is false.
+func ScannerOriginCalibrated() bool {
+	return ScannerOriginCalibrationState() == OriginCalibrationCalibrated
+}
+
+// IsScannerOrigin reports whether an OOB source address matches this scanner's
+// calibrated public/NAT egress or one of its directly assigned interfaces.
+func IsScannerOrigin(remoteAddr string) bool {
+	if isDirectScannerOrigin(remoteAddr) {
+		return true
+	}
+	ip := normalizedRemoteIP(remoteAddr)
+	scannerOriginMu.RLock()
+	_, known := scannerOriginIPs[ip]
+	scannerOriginMu.RUnlock()
+	return ip != "" && known
+}
+
+func assessScannerOrigin(remoteAddr string) (scannerOrigin, assessed bool) {
+	if isDirectScannerOrigin(remoteAddr) {
+		return true, true
+	}
+	ip := normalizedRemoteIP(remoteAddr)
+	scannerOriginMu.RLock()
+	_, known := scannerOriginIPs[ip]
+	calibrated := scannerOriginState == OriginCalibrationCalibrated
+	scannerOriginMu.RUnlock()
+	if !calibrated {
+		return false, false
+	}
+	return ip != "" && known, true
+}
+
+func calibrationHeaderMatches(headers map[string]string, nonce string) bool {
+	for key, value := range headers {
+		if strings.EqualFold(key, "X-Xalgorix-Origin-Calibration") && strings.TrimSpace(value) == nonce {
+			return true
+		}
+	}
+	return false
+}
+
+func finishScannerOriginCalibration(remoteAddr string) {
+	ip := normalizedRemoteIP(remoteAddr)
+	scannerOriginMu.Lock()
+	defer scannerOriginMu.Unlock()
+	if ip != "" {
+		scannerOriginIPs[ip] = struct{}{}
+		scannerOriginState = OriginCalibrationCalibrated
+		scannerOriginRetryAfter = time.Time{}
+		return
+	}
+	scannerOriginState = OriginCalibrationUnavailable
+	scannerOriginRetryAfter = time.Now().Add(scannerOriginRetryCooldown)
+}
+
+// startScannerOriginCalibration starts a retryable background calibration. It
+// never waits for the calibration request or polling window, so Generate can
+// return the caller's independently minted token without calibration latency.
+func startScannerOriginCalibration() {
+	now := time.Now()
+	scannerOriginMu.Lock()
+	if scannerOriginState == OriginCalibrationCalibrated ||
+		scannerOriginState == OriginCalibrationPending ||
+		now.Before(scannerOriginRetryAfter) {
+		scannerOriginMu.Unlock()
+		return
+	}
+	scannerOriginState = OriginCalibrationPending
+	scannerOriginMu.Unlock()
+	go calibrateScannerOrigin()
+}
+
+// calibrateScannerOrigin makes one no-redirect request to a private OOB token
+// and records the source IP observed by the callback service. A nonce header
+// ensures old/shared-token interactions can never poison the calibration.
+func calibrateScannerOrigin() {
+	callbackURL, token, err := rawGenerate()
+	if err != nil {
+		finishScannerOriginCalibration("")
+		return
+	}
+	nonceBytes := make([]byte, 12)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		finishScannerOriginCalibration("")
+		return
+	}
+	nonce := hex.EncodeToString(nonceBytes)
+	req, err := http.NewRequest(http.MethodGet, callbackURL, nil)
+	if err != nil {
+		finishScannerOriginCalibration("")
+		return
+	}
+	req.Header.Set("X-Xalgorix-Origin-Calibration", nonce)
+	req.Header.Set("User-Agent", "xalgorix-origin-calibration/1")
+	client := &http.Client{
+		Timeout: scannerOriginRequestTimeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	if response, _ := client.Do(req); response != nil {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1024))
+		_ = response.Body.Close()
+	}
+
+	deadline := time.NewTimer(scannerOriginPollWindow)
+	ticker := time.NewTicker(scannerOriginPollCheckInterval)
+	defer deadline.Stop()
+	defer ticker.Stop()
+	for {
+		for _, hit := range rawPoll(token) {
+			protocol := strings.ToLower(strings.TrimSpace(hit.Protocol))
+			if (protocol == "http" || protocol == "https") && calibrationHeaderMatches(hit.Headers, nonce) {
+				finishScannerOriginCalibration(hit.RemoteAddr)
+				return
+			}
+		}
+		select {
+		case <-deadline.C:
+			finishScannerOriginCalibration("")
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// Generate mints a callback URL + polling token using whichever backend is
+// active: the self-hosted listener when configured, otherwise interactsh.
+func Generate() (callbackURL, token string, err error) {
+	startScannerOriginCalibration()
+	return rawGenerate()
+}
+
 // Poll returns interactions for a token from whichever backend is active,
 // filtered to the interaction protocols the operator allows via
-// XALGORIX_OOB_INTERACTIONS (blank = all: dns, http, smtp).
+// XALGORIX_OOB_INTERACTIONS (blank = all: dns, http, smtp). Each returned copy
+// carries a fail-closed origin assessment.
 func Poll(token string) []Interaction {
-	var hits []Interaction
-	if selfHosted() {
-		hits = selfHostedPoll(token)
-	} else {
-		hits = interactshPoll(token)
+	// Polling an existing token is also an opportunity to recover from a
+	// transient calibration failure once the retry cooldown has elapsed.
+	startScannerOriginCalibration()
+	filtered := applyProtocolFilter(rawPoll(token), parseAllowedProtocols(config.Get().OOBInteractions))
+	hits := make([]Interaction, len(filtered))
+	copy(hits, filtered)
+	for index := range hits {
+		hits[index].ScannerOrigin, hits[index].OriginAssessed = assessScannerOrigin(hits[index].RemoteAddr)
 	}
-	return applyProtocolFilter(hits, parseAllowedProtocols(config.Get().OOBInteractions))
+	return hits
 }
 
 // parseAllowedProtocols turns an XALGORIX_OOB_INTERACTIONS value into the set of
 // allowed protocol names. A nil result means "allow everything" (the default),
-// so an unset/blank value preserves the historical behavior of treating any
-// DNS, HTTP or SMTP callback as proof. "https" is folded into "http". A value
+// so an unset/blank value preserves the historical behavior of retaining any
+// DNS, HTTP or SMTP callback. "https" is folded into "http". A value
 // that names no valid protocol also yields nil — an operator typo must never
 // silently drop every callback (use XALGORIX_OOB_DISABLE to turn OOB off).
 func parseAllowedProtocols(raw string) map[string]bool {

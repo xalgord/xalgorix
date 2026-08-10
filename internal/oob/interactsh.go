@@ -189,7 +189,9 @@ func ishToInteraction(token string, i *ishserver.Interaction) Interaction {
 			out.Body = truncateRaw(i.RawRequest)
 		}
 	case "dns":
-		// A DNS callback is proof on its own: the target resolved our host.
+		// DNS source addresses normally identify a recursive resolver, not the
+		// process that initiated the lookup. Preserve the lead, but attribution
+		// and SSRF proof require stronger corroboration at the reporting gate.
 		out.Method = "DNS"
 		out.Path = i.QType
 		out.Body = truncateRaw(i.RawRequest)

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	oobsrv "github.com/xalgord/xalgorix/v4/internal/oob"
 	"github.com/xalgord/xalgorix/v4/internal/scanctx"
 	"github.com/xalgord/xalgorix/v4/internal/tools"
 )
@@ -280,6 +281,7 @@ func Register(r *tools.Registry) {
 			{Name: "description", Description: "Detailed description of the vulnerability", Required: true},
 			{Name: "exploitation_proof", Description: "REQUIRED for medium+. Concrete evidence of exploitation: extracted data, reflected payload text, command output, timing measurement, callback confirmation. Paste actual output here.", Required: false},
 			{Name: "verification_method", Description: "How you verified: exploited, time_based, data_extracted, callback_received, error_based, blind_confirmed, reflected, authenticated, manual_verified", Required: false},
+			{Name: "oob_token", Description: "For callback-confirmed SSRF: the exact token returned by oob_callback generate. Required so the backend can reject scanner-origin and DNS-only interactions.", Required: false},
 			{Name: "impact", Description: "Real-world impact assessment", Required: false},
 			{Name: "target", Description: "Target URL/host", Required: false},
 			{Name: "endpoint", Description: "Affected endpoint", Required: false},
@@ -404,6 +406,16 @@ Required steps:
 If you cannot exploit it, downgrade severity to 'info' and report as informational.`,
 				title, strings.ToUpper(severity), title),
 		}, nil
+	}
+
+	// ── Gate 2.5: SSRF callback provenance ──
+	// Apply this regardless of the declared method whenever the claim uses OOB
+	// evidence. In-band internal data extraction remains valid without OOB.
+	if isSSRFClaim(title, args["description"], args["cwe_id"]) &&
+		usesSSRFOOBEvidence(args["oob_token"], method, proof, args["description"]) {
+		if rejection := validateSSRFOOBProof(args["oob_token"], proof); rejection != "" {
+			return tools.Result{Output: rejection}, nil
+		}
 	}
 
 	// ── Gate 3: Check for common false positive patterns ──
@@ -681,6 +693,91 @@ func findDuplicateVulnerability(existing []Vulnerability, title, description, ta
 	}
 
 	return Vulnerability{}, "", false
+}
+
+func isSSRFClaim(title, description, cwe string) bool {
+	combined := strings.ToLower(title + " " + description + " " + cwe)
+	return strings.Contains(combined, "ssrf") ||
+		strings.Contains(combined, "server-side request forgery") ||
+		strings.Contains(combined, "server side request forgery") ||
+		strings.Contains(combined, "cwe-918")
+}
+
+func usesSSRFOOBEvidence(token, method, proof, description string) bool {
+	if strings.TrimSpace(token) != "" {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(method)) {
+	case "callback_received", "blind_confirmed":
+		return true
+	}
+	combined := strings.ToLower(proof + " " + description)
+	return anyContains(combined,
+		"callback received", "callback was received", "received callback",
+		"callback observed", "observed callback", "http callback",
+		"https callback", "oob interaction", "oast interaction",
+		"out-of-band", "out of band", "interact.sh", "interactsh",
+		"collaborator", "burpcollaborator", "webhook.site", "requestbin",
+		"canarytoken", "pingback", "http request received",
+		"request received at", "xalgorix-oob-ok", "dns interaction",
+		"dns query received")
+}
+
+func hasExplicitNoRedirectControl(proof string) bool {
+	compact := strings.NewReplacer(" ", "", "\t", "", "\r", "", "\n", "").Replace(strings.ToLower(proof))
+	return anyContains(compact,
+		"--max-redirs0", "--max-redirs=0",
+		"allow_redirects=false", "follow_redirects=false",
+		"max_redirects=0")
+}
+
+func isExactOOBToken(token string) bool {
+	return token != "" && token == strings.TrimSpace(token) && !strings.ContainsAny(token, "/.: \t\r\n")
+}
+
+func validateSSRFOOBProof(token, proof string) string {
+	if !isExactOOBToken(token) {
+		return "❌ REJECTED (SSRF callback provenance): callback-based SSRF requires the exact bare oob_token returned by oob_callback generate. A URL, hostname, missing token, or free-form callback text is not accepted. Re-test with a fresh token and redirects disabled."
+	}
+	if !hasExplicitNoRedirectControl(proof) {
+		return "❌ REJECTED (SSRF redirect control missing): exploitation_proof must include an explicit technical no-redirect control such as `curl --max-redirs 0`, `allow_redirects=False`, or `follow_redirects=False`. Vague prose about redirects is not sufficient."
+	}
+
+	hits := oobsrv.Poll(token)
+	nonScannerHTTP := 0
+	scannerOriginHTTP := 0
+	originUnassessedHTTP := 0
+	dnsOnly := 0
+	for _, hit := range hits {
+		protocol := strings.ToLower(strings.TrimSpace(hit.Protocol))
+		switch {
+		case protocol == "dns":
+			dnsOnly++
+		case protocol == "http" || protocol == "https":
+			switch {
+			case !hit.OriginAssessed:
+				originUnassessedHTTP++
+			case hit.ScannerOrigin:
+				scannerOriginHTTP++
+			default:
+				nonScannerHTTP++
+			}
+		}
+	}
+	if nonScannerHTTP > 0 {
+		return ""
+	}
+	if originUnassessedHTTP > 0 {
+		return fmt.Sprintf("❌ REJECTED (SSRF origin calibration %s): %d HTTP callback(s) have unassessed origin, alongside %d scanner-origin HTTP and %d DNS-only interaction(s). Remote callbacks must fail closed until external scanner-origin calibration succeeds; poll and report again after calibration, or use returned internal-resource data.",
+			oobsrv.ScannerOriginCalibrationState(), originUnassessedHTTP, scannerOriginHTTP, dnsOnly)
+	}
+	if scannerOriginHTTP > 0 {
+		return fmt.Sprintf("❌ REJECTED (scanner-origin SSRF false positive): %d HTTP callback(s) came from Xalgorix's scanner origin; %d DNS-only interaction(s) were also observed. Neither proves that the target server performed SSRF.", scannerOriginHTTP, dnsOnly)
+	}
+	if dnsOnly > 0 {
+		return fmt.Sprintf("❌ REJECTED (DNS-only SSRF evidence): %d DNS interaction(s) were observed, but DNS may originate from the scanner or a recursive resolver. Require an origin-assessed, non-scanner HTTP(S) interaction or returned internal-resource data.", dnsOnly)
+	}
+	return "❌ REJECTED (SSRF callback not attested): the exact oob_token has no origin-assessed, non-scanner HTTP(S) interaction. Re-test with a fresh token, explicit no-redirect controls, and an uninjected baseline."
 }
 
 // anyContains reports whether s contains any of the given substrings.

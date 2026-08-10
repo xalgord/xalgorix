@@ -127,11 +127,10 @@ type Config struct {
 	InteractshToken  string
 	OOBDisable       bool
 
-	// OOBInteractions restricts which out-of-band interaction PROTOCOLS count as
-	// a callback (proof). Comma-separated subset of dns,http,smtp; empty = all
-	// three (the historical default). Use it to suppress DNS-only false
-	// positives from cloud infra (e.g. AWS resolvers) by allowing only http
-	// (and/or smtp). "http" also matches https. XALGORIX_OOB_INTERACTIONS.
+	// OOBInteractions restricts which out-of-band interaction PROTOCOLS are
+	// returned. Comma-separated subset of dns,http,smtp; empty = all three.
+	// DNS-only activity is retained as a lead but is not sufficient SSRF proof;
+	// the reporting gate requires a non-scanner-origin HTTP interaction.
 	OOBInteractions string
 
 	// SourceRepo enables whitebox / source-assisted assessment: the agent

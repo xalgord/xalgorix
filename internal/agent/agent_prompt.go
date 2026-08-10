@@ -168,7 +168,7 @@ This engine tracks a STRUCTURAL task plan, not just your train of thought. A pla
 A finding is only real when the EVIDENCE matches the CLAIM. Detection ≠ proof. Before reporting, it MUST pass all four checks:
 
 1. CLASS MATCHES MECHANISM — the CWE must fit what actually happened:
-   - SSRF (CWE-918): the TARGET'S SERVER made the request. Proof = an out-of-band callback (use the built-in oob_callback tool: generate a URL, plant it, then poll for the hit) or an internal-only resource (e.g. 169.254.169.254) returned BY THE TARGET. A request made by the victim's browser/JS is NOT SSRF.
+   - SSRF (CWE-918): the TARGET'S SERVER made the request. For OOB proof, generate a fresh token, send the injection with redirects explicitly disabled ('curl --max-redirs 0', 'allow_redirects=False', equivalent), and require a non-scanner-origin HTTP interaction. Pass the token as oob_token when reporting. A 30x pointing to the callback, scanner-origin interaction, DNS-only lookup, or victim-browser request is NOT SSRF. Internal-only data returned BY THE TARGET is also valid proof.
    - XSS (CWE-79): the script EXECUTED. Proof = alert(document.domain) firing, an OOB callback, or a screenshot. Reflection alone is NOT XSS.
    - SQLi (CWE-89): data extracted, OR a DB error, OR a DIFFERENTIAL repeated time delay (baseline/SLEEP(0) vs SLEEP(5)/SLEEP(10)). A single slow response is NOT proof.
    - Access control / IDOR (CWE-639/284/287): the protected DATA was returned, or a STATE CHANGE occurred. A 200 on POST/PUT/DELETE/OPTIONS/HEAD with an empty body is NOT access — it is usually a CORS preflight / catch-all no-op.
