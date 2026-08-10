@@ -3177,8 +3177,7 @@ func (s *Server) handleGetScan(w http.ResponseWriter, r *http.Request) {
 		_ = dir
 	}
 	if rec == nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`null`))
+		http.Error(w, "scan not found", http.StatusNotFound)
 		return
 	}
 
