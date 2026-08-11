@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	pdfreport "github.com/xalgord/xalgorix/v4/internal/reporting"
 	"github.com/xalgord/xalgorix/v4/internal/tools/reporting"
 )
 
@@ -99,22 +100,87 @@ func normalizeSummaryPart(value string) string {
 	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(value))), " ")
 }
 
+// toReportingScan projects a ScanRecord (plus its VulnSummary/WSEvent
+// children) onto the internal/reporting package's transport types by direct
+// field copy. internal/reporting owns the actual PDF rendering; this is the
+// only conversion the web layer needs to do to use it.
+func toReportingScan(scan *ScanRecord) *pdfreport.Scan {
+	vulns := make([]pdfreport.Vuln, len(scan.Vulns))
+	for i, v := range scan.Vulns {
+		vulns[i] = pdfreport.Vuln{
+			ID:                 v.ID,
+			Title:              v.Title,
+			Severity:           v.Severity,
+			Target:             v.Target,
+			Endpoint:           v.Endpoint,
+			CVSS:               v.CVSS,
+			CVSSVector:         v.CVSSVector,
+			Description:        v.Description,
+			Impact:             v.Impact,
+			Method:             v.Method,
+			CVE:                v.CVE,
+			CWE:                v.CWE,
+			OWASP:              v.OWASP,
+			TechnicalAnalysis:  v.TechnicalAnalysis,
+			PoCDescription:     v.PoCDescription,
+			PoCScript:          v.PoCScript,
+			Remediation:        v.Remediation,
+			Fix:                v.Fix,
+			ExploitationProof:  v.ExploitationProof,
+			VerificationMethod: v.VerificationMethod,
+			Verified:           v.Verified,
+		}
+	}
+	events := make([]pdfreport.Event, len(scan.Events))
+	for i, e := range scan.Events {
+		events[i] = pdfreport.Event{
+			Type:     e.Type,
+			Content:  e.Content,
+			ToolName: e.ToolName,
+			ToolArgs: e.ToolArgs,
+			Output:   e.Output,
+			Error:    e.Error,
+		}
+	}
+	return &pdfreport.Scan{
+		ID:          scan.ID,
+		Name:        scan.Name,
+		Target:      scan.Target,
+		StartedAt:   scan.StartedAt,
+		FinishedAt:  scan.FinishedAt,
+		Status:      scan.Status,
+		CompanyName: scan.CompanyName,
+		LogoPath:    scan.LogoPath,
+		Phases:      scan.Phases,
+		Iterations:  scan.Iterations,
+		ToolCalls:   scan.ToolCalls,
+		TotalTokens: scan.TotalTokens,
+		Vulns:       vulns,
+		Events:      events,
+	}
+}
+
 // generateReportAt generates a PDF report, saving it to a specific directory.
 func (s *Server) generateReportAt(scan *ScanRecord, scanDir string) (string, error) {
-	// Temporarily set currentScanDir for the report generator,
-	// then restore it. The report.go generateReport method reads s.currentScanDir.
+	// resolveReportLogoPath consults s.currentScanDir as one of its
+	// candidate directories, so it still needs the temporary swap even
+	// though the renderer itself now takes scanDir as an explicit param.
 	s.mu.Lock()
 	prevDir := s.currentScanDir
 	s.currentScanDir = scanDir
 	s.mu.Unlock()
 
-	reportPath, err := s.generateReport(scan)
+	logoPath, _ := s.resolveReportLogoPath(scan.LogoPath)
 
 	s.mu.Lock()
 	s.currentScanDir = prevDir
 	s.mu.Unlock()
 
-	return reportPath, err
+	return pdfreport.Generate(toReportingScan(scan), pdfreport.Options{
+		LogoPath:    logoPath,
+		ScanDir:     scanDir,
+		FallbackDir: s.dataDir,
+	})
 }
 
 // scanEntry holds a discovered scan.json path and its parsed record.
