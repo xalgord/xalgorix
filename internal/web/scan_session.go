@@ -281,6 +281,7 @@ func (s *Server) executeScanSession(sess *scanSession) {
 						inst.Status = "failed"
 						inst.StopReason = sess.abortReason
 						inst.FinishedAt = finishedAt
+						normalizeTerminalWildcardInstanceLocked(inst)
 					}
 					inst.mu.Unlock()
 				}

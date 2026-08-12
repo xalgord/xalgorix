@@ -499,15 +499,26 @@ type ScanInstance struct {
 	ScanContext         string        `json:"-"`
 	Vulns               []VulnSummary `json:"vulns,omitempty"`
 	CurrentPhase        int           `json:"current_phase,omitempty"`
-	agent               *agent.Agent
-	cancel              context.CancelFunc
-	scanDir             string
-	sctx                *scanctx.ScanContext // per-instance session state (vulns, notes, terminal, browser)
-	events              []WSEvent            // buffered events for replay
-	chatCfg             *config.Config       // provider settings for post-scan chat (not exposed)
-	chatMessages        []llm.Message        // lightweight post-scan chat history (not exposed)
-	mu                  sync.RWMutex
-	lastSessionTokens   int // tracks token count from current session for delta calculation
+	// Wildcard progress is mirrored from the persisted parent record so the
+	// exact instance endpoint can serve a complete snapshot without a data-dir
+	// walk. SubScans intentionally omits `omitempty`: an empty array is the
+	// capability marker SaaS uses to distinguish upgraded scanners from older
+	// versions that cannot safely finalize wildcard scans from this endpoint.
+	SubScans           []SubScanSummary `json:"sub_scans"`
+	SubScanTotal       int              `json:"sub_scan_total"`
+	SubScanCompleted   int              `json:"sub_scan_completed"`
+	SubScanRunning     int              `json:"sub_scan_running"`
+	SubScanRemaining   int              `json:"sub_scan_remaining"`
+	agent              *agent.Agent
+	cancel             context.CancelFunc
+	scanDir            string
+	sctx               *scanctx.ScanContext // per-instance session state (vulns, notes, terminal, browser)
+	events             []WSEvent            // buffered events for replay
+	chatCfg            *config.Config       // provider settings for post-scan chat (not exposed)
+	chatMessages       []llm.Message        // lightweight post-scan chat history (not exposed)
+	mu                 sync.RWMutex
+	lastSessionTokens  int  // tracks token count from current session for delta calculation
+	snapshotFinalizing bool // terminal status is not externally coherent until the final queue event is buffered
 }
 
 // maxConcurrentInstances removed — replaced by dynamic resource-aware
@@ -1219,6 +1230,7 @@ func (s *Server) Start() error {
 				inst.Status = "stopped"
 				inst.StopReason = "signal_" + sig.String()
 				inst.FinishedAt = time.Now().Format(time.RFC3339)
+				normalizeTerminalWildcardInstanceLocked(inst)
 				if inst.agent != nil {
 					inst.agent.Stop()
 				}
@@ -1652,6 +1664,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 			inst.Status = "stopped"
 			inst.StopReason = "user_stopped"
 			inst.FinishedAt = time.Now().Format(time.RFC3339Nano)
+			normalizeTerminalWildcardInstanceLocked(inst)
 			if inst.cancel != nil {
 				inst.cancel()
 			}
@@ -2063,25 +2076,30 @@ func (s *Server) handleInstances(w http.ResponseWriter, r *http.Request) {
 	for _, inst := range s.instances {
 		inst.mu.RLock()
 		instances = append(instances, &ScanInstance{
-			ID:             inst.ID,
-			Name:           inst.Name,
-			Targets:        inst.Targets,
-			Status:         inst.Status,
-			StartedAt:      inst.StartedAt,
-			FinishedAt:     inst.FinishedAt,
-			Iterations:     inst.Iterations,
-			ToolCalls:      inst.ToolCalls,
-			VulnCount:      inst.VulnCount,
-			TotalTokens:    inst.TotalTokens,
-			ScanMode:       inst.ScanMode,
-			Instruction:    inst.Instruction,
-			SeverityFilter: append([]string(nil), inst.SeverityFilter...),
-			Phases:         inst.Phases,
-			ReconMode:      inst.ReconMode,
-			ScanIntensity:  inst.ScanIntensity,
-			CompanyName:    inst.CompanyName,
-			LogoPath:       inst.LogoPath,
-			CurrentPhase:   inst.CurrentPhase,
+			ID:               inst.ID,
+			Name:             inst.Name,
+			Targets:          inst.Targets,
+			Status:           inst.Status,
+			StartedAt:        inst.StartedAt,
+			FinishedAt:       inst.FinishedAt,
+			Iterations:       inst.Iterations,
+			ToolCalls:        inst.ToolCalls,
+			VulnCount:        inst.VulnCount,
+			TotalTokens:      inst.TotalTokens,
+			ScanMode:         inst.ScanMode,
+			Instruction:      inst.Instruction,
+			SeverityFilter:   append([]string(nil), inst.SeverityFilter...),
+			Phases:           inst.Phases,
+			ReconMode:        inst.ReconMode,
+			ScanIntensity:    inst.ScanIntensity,
+			CompanyName:      inst.CompanyName,
+			LogoPath:         inst.LogoPath,
+			CurrentPhase:     inst.CurrentPhase,
+			SubScans:         cloneSubScanSummaries(inst.SubScans),
+			SubScanTotal:     inst.SubScanTotal,
+			SubScanCompleted: inst.SubScanCompleted,
+			SubScanRunning:   inst.SubScanRunning,
+			SubScanRemaining: inst.SubScanRemaining,
 		})
 		inst.mu.RUnlock()
 	}
@@ -2257,9 +2275,18 @@ func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// GET /api/instances/{id} — return instance details
+	// GET /api/instances/{id} — return instance details. A stop/failure path
+	// can mark the instance terminal before the active session has drained and
+	// persisted its final events/findings. Do not expose that partial terminal
+	// snapshot; callers retry and receive the coherent snapshot after the
+	// runMultiScan defer clears the live session pointers.
 	if r.Method == http.MethodGet && (len(parts) == 1 || parts[1] == "") {
 		inst.mu.RLock()
+		if isTerminalScanStatus(inst.Status) && inst.snapshotFinalizing {
+			inst.mu.RUnlock()
+			http.Error(w, "terminal instance snapshot is still finalizing", http.StatusConflict)
+			return
+		}
 		_ = json.NewEncoder(w).Encode(inst)
 		inst.mu.RUnlock()
 		return
@@ -2273,6 +2300,7 @@ func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request) {
 			inst.Status = "stopped"
 			inst.StopReason = "user_stopped"
 			inst.FinishedAt = time.Now().Format(time.RFC3339Nano)
+			normalizeTerminalWildcardInstanceLocked(inst)
 			if inst.cancel != nil {
 				inst.cancel()
 			}
@@ -2597,6 +2625,10 @@ func (sess *scanSession) cleanup() {
 				log.Printf("[cleanup] Persisted %d in-memory vulns into scan.json for session %s", added, sess.sctx.ID)
 			}
 			sess.server.saveScanRecordTo(sess.record, sess.scanDir)
+			// The exact instance endpoint must carry every persisted finding,
+			// including findings hidden from live broadcasts by severity filters.
+			// This runs before runMultiScan publishes its terminal snapshot.
+			sess.server.mirrorPersistedSessionVulnerabilities(sess.instanceID, sess.record.Vulns)
 		}()
 
 		// Wildcard vuln accumulation: merge this session's vulns into
@@ -3121,6 +3153,7 @@ func (s *Server) handleGetScan(w http.ResponseWriter, r *http.Request) {
 					inst.Status = "stopped"
 					inst.StopReason = "user_deleted"
 					inst.FinishedAt = time.Now().Format(time.RFC3339Nano)
+					normalizeTerminalWildcardInstanceLocked(inst)
 				}
 				if inst.cancel != nil {
 					inst.cancel()

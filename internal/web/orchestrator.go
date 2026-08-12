@@ -94,6 +94,8 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 		TargetAuthSecondary: req.TargetAuthSecondary,
 		SourceRepo:          req.SourceRepo,
 		ScanContext:         req.ScanContext,
+		SubScans:            make([]SubScanSummary, 0),
+		snapshotFinalizing:  true,
 	}
 	s.seedResumeInstanceFromRecord(instance, req)
 	s.instancesMu.Lock()
@@ -151,6 +153,7 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 			}
 		}
 		instance.FinishedAt = time.Now().Format(time.RFC3339)
+		normalizeTerminalWildcardInstanceLocked(instance)
 		instance.agent = nil
 		instance.cancel = nil
 		instance.sctx = nil
@@ -220,6 +223,12 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 			}
 		}
 		s.broadcastToInstance(instanceID, queueDoneEvt)
+		// The event above is the final exact event snapshot entry. Only now may
+		// the compact endpoint expose a terminal status; SaaS persists this
+		// event/final findings before its terminal status CAS.
+		instance.mu.Lock()
+		instance.snapshotFinalizing = false
+		instance.mu.Unlock()
 		s.broadcastDashboard(WSEvent{Type: "instance_updated", Content: instanceID})
 		time.Sleep(500 * time.Millisecond)
 
@@ -925,6 +934,7 @@ func (s *Server) runWildcardTarget(_ context.Context, scanCfg *config.Config, re
 		parentRecord.SubScanRemaining = len(subdomains) - resumeFromSubIndex
 		parentRecord.Status = "running"
 		s.saveScanRecordTo(parentRecord, scanDir)
+		s.mirrorWildcardProgress(req.InstanceID, parentRecord)
 	}
 	s.saveQueueState(idx, req, queueProgress{
 		ActiveTarget:          target,
@@ -994,6 +1004,7 @@ func (s *Server) runWildcardTarget(_ context.Context, scanCfg *config.Config, re
 			parentRecord.SubScanRemaining = len(subdomains) - completed - running
 			parentRecord.Status = "running"
 			s.saveScanRecordTo(parentRecord, scanDir)
+			s.mirrorWildcardProgress(req.InstanceID, parentRecord)
 		}
 		activeSubScanID := ""
 		if activeSubScanDir != "" {
@@ -1199,7 +1210,9 @@ func (s *Server) runWildcardTarget(_ context.Context, scanCfg *config.Config, re
 			parentRecord.Status = "finished"
 		}
 		parentRecord.FinishedAt = time.Now().Format(time.RFC3339)
+		normalizeTerminalWildcardProgress(parentRecord)
 		s.saveScanRecordTo(parentRecord, scanDir)
+		s.mirrorWildcardProgress(req.InstanceID, parentRecord)
 	}
 
 	log.Printf("[INFO] Wildcard scan complete for %s: scanned %d subdomains", target, len(subdomains))

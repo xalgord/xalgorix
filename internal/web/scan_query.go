@@ -333,6 +333,15 @@ func (s *Server) markTelegramConfigured(rec *ScanRecord) {
 	rec.TelegramConfigured = s.telegramConfigured()
 }
 
+func cloneSubScanSummaries(source []SubScanSummary) []SubScanSummary {
+	if source == nil {
+		return nil
+	}
+	cloned := make([]SubScanSummary, len(source))
+	copy(cloned, source)
+	return cloned
+}
+
 func (s *Server) scanRecordFromInstance(inst *ScanInstance) *ScanRecord {
 	if inst == nil {
 		return nil
@@ -346,6 +355,7 @@ func (s *Server) scanRecordFromInstance(inst *ScanInstance) *ScanRecord {
 	copy(vulns, inst.Vulns)
 	phases := append([]int(nil), inst.Phases...)
 	severityFilter := append([]string(nil), inst.SeverityFilter...)
+	subScans := cloneSubScanSummaries(inst.SubScans)
 
 	return &ScanRecord{
 		ID:                       inst.ID,
@@ -374,6 +384,104 @@ func (s *Server) scanRecordFromInstance(inst *ScanInstance) *ScanRecord {
 		LogoPath:                 inst.LogoPath,
 		Phases:                   phases,
 		CurrentPhase:             inst.CurrentPhase,
+		SubScans:                 subScans,
+		SubScanTotal:             inst.SubScanTotal,
+		SubScanCompleted:         inst.SubScanCompleted,
+		SubScanRunning:           inst.SubScanRunning,
+		SubScanRemaining:         inst.SubScanRemaining,
+	}
+}
+
+// mirrorWildcardProgress copies the persisted wildcard parent snapshot into
+// its live instance. The copy keeps /api/instances/{id} lock-only and avoids
+// sharing the mutable parentRecord slice with concurrent HTTP encoders.
+func (s *Server) mirrorWildcardProgress(instanceID string, rec *ScanRecord) {
+	if instanceID == "" || rec == nil {
+		return
+	}
+	children := cloneSubScanSummaries(rec.SubScans)
+
+	s.instancesMu.RLock()
+	inst := s.instances[instanceID]
+	if inst != nil {
+		inst.mu.Lock()
+		inst.SubScans = children
+		inst.SubScanTotal = rec.SubScanTotal
+		inst.SubScanCompleted = rec.SubScanCompleted
+		inst.SubScanRunning = rec.SubScanRunning
+		inst.SubScanRemaining = rec.SubScanRemaining
+		normalizeTerminalWildcardInstanceLocked(inst)
+		inst.mu.Unlock()
+	}
+	s.instancesMu.RUnlock()
+}
+
+// normalizeTerminalSubScans converts unresolved children to a terminal status
+// while preserving whether the scanner ever dispatched them. Never-started
+// pending children remain without lifecycle timestamps; running/started
+// children receive the parent's terminal timestamp.
+func normalizeTerminalSubScans(children []SubScanSummary, parentStatus, finishedAt string) int {
+	fallbackStatus := terminalSubScanStatus(parentStatus)
+	completed := 0
+	for i := range children {
+		status := strings.ToLower(strings.TrimSpace(children[i].Status))
+		started := status == "running" || children[i].StartedAt != "" || children[i].ID != "" ||
+			children[i].VulnCount > 0 || children[i].TotalTokens > 0
+		if isUnresolvedSubScanStatus(status) {
+			children[i].Status = fallbackStatus
+			if started && children[i].FinishedAt == "" {
+				children[i].FinishedAt = finishedAt
+			}
+		}
+		if isFinishedSubScanStatus(children[i].Status) {
+			completed++
+		}
+	}
+	return completed
+}
+
+// normalizeTerminalWildcardProgress prevents a terminal compact snapshot from
+// retaining children as pending/running. This mirrors the historical full
+// response's normalization without its disk walk.
+func normalizeTerminalWildcardProgress(rec *ScanRecord) {
+	if rec == nil || !isTerminalScanStatus(rec.Status) {
+		return
+	}
+	finishedAt := rec.FinishedAt
+	if finishedAt == "" {
+		finishedAt = time.Now().Format(time.RFC3339)
+	}
+	completed := normalizeTerminalSubScans(rec.SubScans, rec.Status, finishedAt)
+	if rec.SubScanTotal < len(rec.SubScans) {
+		rec.SubScanTotal = len(rec.SubScans)
+	}
+	rec.SubScanCompleted = completed
+	rec.SubScanRunning = 0
+	rec.SubScanRemaining = rec.SubScanTotal - completed
+	if rec.SubScanRemaining < 0 {
+		rec.SubScanRemaining = 0
+	}
+}
+
+// normalizeTerminalWildcardInstanceLocked keeps status and wildcard children
+// coherent for exact instance readers. The caller must hold inst.mu.
+func normalizeTerminalWildcardInstanceLocked(inst *ScanInstance) {
+	if inst == nil || inst.ScanMode != "wildcard" || !isTerminalScanStatus(inst.Status) {
+		return
+	}
+	finishedAt := inst.FinishedAt
+	if finishedAt == "" {
+		finishedAt = time.Now().Format(time.RFC3339)
+	}
+	completed := normalizeTerminalSubScans(inst.SubScans, inst.Status, finishedAt)
+	if inst.SubScanTotal < len(inst.SubScans) {
+		inst.SubScanTotal = len(inst.SubScans)
+	}
+	inst.SubScanCompleted = completed
+	inst.SubScanRunning = 0
+	inst.SubScanRemaining = inst.SubScanTotal - completed
+	if inst.SubScanRemaining < 0 {
+		inst.SubScanRemaining = 0
 	}
 }
 
@@ -774,60 +882,90 @@ func (s *Server) rebuildInstancesFromDisk() {
 		}
 	}
 
-	for _, entry := range s.findAllScans() {
+	entries := s.findAllScans()
+	instanceIdentity := func(entry *scanEntry) (string, bool) {
 		instID := entry.rec.ID
-		resumable := false
 		if mappedID, ok := qMap[filepath.Clean(entry.dir)]; ok {
-			instID, resumable = mappedID, true
-		} else if mappedID, ok := qMap[entry.rec.ID]; ok {
-			instID, resumable = mappedID, true
-		} else if mappedID, ok := qMap[normalizeScanTarget(entry.rec.Target)]; ok {
-			instID, resumable = mappedID, true
+			return mappedID, true
 		}
-
-		if entry.rec.Status == "running" || entry.rec.Status == "pending" {
-			if resumable {
-				entry.rec.Status = "pending"
-				entry.rec.StopReason = "server_restart_resuming"
-				entry.rec.FinishedAt = ""
-			} else {
-				entry.rec.Status = "stopped"
-				entry.rec.StopReason = "server_restart_no_resume_state"
-				entry.rec.FinishedAt = time.Now().Format(time.RFC3339)
-			}
-			s.saveScanRecordTo(&entry.rec, entry.dir)
+		if mappedID, ok := qMap[entry.rec.ID]; ok {
+			return mappedID, true
 		}
+		if mappedID, ok := qMap[normalizeScanTarget(entry.rec.Target)]; ok {
+			return mappedID, true
+		}
+		return instID, false
+	}
 
-		// Skip subdomain scans — they belong to their parent wildcard scan
+	// First normalize every interrupted record so wildcard parent aggregation
+	// below observes the recovered child statuses rather than stale running
+	// values captured before the restart.
+	for i := range entries {
+		entry := &entries[i]
+		_, resumable := instanceIdentity(entry)
+		if entry.rec.Status != "running" && entry.rec.Status != "pending" {
+			continue
+		}
+		if resumable {
+			entry.rec.Status = "pending"
+			entry.rec.StopReason = "server_restart_resuming"
+			entry.rec.FinishedAt = ""
+		} else {
+			entry.rec.Status = "stopped"
+			entry.rec.StopReason = "server_restart_no_resume_state"
+			entry.rec.FinishedAt = time.Now().Format(time.RFC3339)
+		}
+		normalizeTerminalWildcardProgress(&entry.rec)
+		s.saveScanRecordTo(&entry.rec, entry.dir)
+	}
+
+	for i := range entries {
+		entry := &entries[i]
+		// Skip subdomain scans — they belong to their parent wildcard scan.
 		if entry.rec.ParentTarget != "" {
 			continue
 		}
 
+		instID, _ := instanceIdentity(entry)
+		if entry.rec.ScanMode == "wildcard" || entry.rec.SubScans != nil || entry.rec.SubScanTotal > 0 {
+			// Rebuild the exact parent snapshot from the now-normalized child
+			// records. This restores findings and physical provenance as well as
+			// authoritative child counters without requiring request-time I/O.
+			s.attachWildcardSubScansFrom(&entry.rec, entries)
+			normalizeTerminalWildcardProgress(&entry.rec)
+			s.saveScanRecordTo(&entry.rec, entry.dir)
+		}
+
 		inst := &ScanInstance{
-			ID:             instID,
-			Name:           entry.rec.Name,
-			Targets:        entry.rec.Target,
-			ParentTarget:   entry.rec.ParentTarget,
-			Status:         entry.rec.Status,
-			StartedAt:      entry.rec.StartedAt,
-			FinishedAt:     entry.rec.FinishedAt,
-			StopReason:     entry.rec.StopReason,
-			Iterations:     entry.rec.Iterations,
-			ToolCalls:      entry.rec.ToolCalls,
-			VulnCount:      len(entry.rec.Vulns),
-			TotalTokens:    entry.rec.TotalTokens,
-			ScanMode:       entry.rec.ScanMode,
-			Instruction:    entry.rec.Instruction,
-			SeverityFilter: entry.rec.SeverityFilter,
-			Phases:         entry.rec.Phases,
-			ReconMode:      entry.rec.ReconMode,
-			ScanIntensity:  entry.rec.ScanIntensity,
-			CompanyName:    entry.rec.CompanyName,
-			LogoPath:       entry.rec.LogoPath,
-			DiscordWebhook: entry.rec.DiscordWebhook,
-			Vulns:          entry.rec.Vulns,
-			CurrentPhase:   entry.rec.CurrentPhase,
-			events:         append([]WSEvent(nil), entry.rec.Events...),
+			ID:               instID,
+			Name:             entry.rec.Name,
+			Targets:          entry.rec.Target,
+			ParentTarget:     entry.rec.ParentTarget,
+			Status:           entry.rec.Status,
+			StartedAt:        entry.rec.StartedAt,
+			FinishedAt:       entry.rec.FinishedAt,
+			StopReason:       entry.rec.StopReason,
+			Iterations:       entry.rec.Iterations,
+			ToolCalls:        entry.rec.ToolCalls,
+			VulnCount:        len(entry.rec.Vulns),
+			TotalTokens:      entry.rec.TotalTokens,
+			ScanMode:         entry.rec.ScanMode,
+			Instruction:      entry.rec.Instruction,
+			SeverityFilter:   entry.rec.SeverityFilter,
+			Phases:           entry.rec.Phases,
+			ReconMode:        entry.rec.ReconMode,
+			ScanIntensity:    entry.rec.ScanIntensity,
+			CompanyName:      entry.rec.CompanyName,
+			LogoPath:         entry.rec.LogoPath,
+			DiscordWebhook:   entry.rec.DiscordWebhook,
+			Vulns:            entry.rec.Vulns,
+			CurrentPhase:     entry.rec.CurrentPhase,
+			SubScans:         cloneSubScanSummaries(entry.rec.SubScans),
+			SubScanTotal:     entry.rec.SubScanTotal,
+			SubScanCompleted: entry.rec.SubScanCompleted,
+			SubScanRunning:   entry.rec.SubScanRunning,
+			SubScanRemaining: entry.rec.SubScanRemaining,
+			events:           append([]WSEvent(nil), entry.rec.Events...),
 		}
 		if inst.CurrentPhase == 0 {
 			inst.CurrentPhase = firstSelectedPhase(inst.Phases)
