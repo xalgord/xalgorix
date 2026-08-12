@@ -2297,11 +2297,22 @@ func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request) {
 		// the SaaS identity guard (which checks both `id` and `instance_id`
 		// against the stored external_instance_id) accepts the response even
 		// when the persisted canonical `id` uses a different slug format.
+		//
+		// IMPORTANT: only use findScanByID (exact canonical-ID match) — never
+		// findRecentScanForShortAlias, which searches persisted records by
+		// 4-byte hex alias and can collide with a completely different scan
+		// that happened to receive the same alias in a previous session. A
+		// colliding record would carry a stale terminal status and cause the
+		// SaaS to incorrectly finalize a scan that is still running.
 		_, rec := s.findScanByID(instanceID)
 		if rec == nil {
-			_, rec = s.findRecentScanForShortAlias(instanceID)
+			http.Error(w, "instance not found", http.StatusNotFound)
+			return
 		}
-		if rec == nil {
+		// Only serve terminal records. If the persisted record is somehow
+		// non-terminal, do not expose it — return 404 so the SaaS treats it
+		// as uncertainty and waits for the live instance to appear.
+		if !isTerminalScanStatus(rec.Status) {
 			http.Error(w, "instance not found", http.StatusNotFound)
 			return
 		}
