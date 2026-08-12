@@ -2270,25 +2270,56 @@ func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request) {
 	instanceID := parts[0]
 
 	inst, ok := s.resolveInstanceForAction(instanceID)
-	if !ok {
-		http.Error(w, "instance not found", http.StatusNotFound)
+
+	// GET /api/instances/{id} — return instance details.
+	if r.Method == http.MethodGet && (len(parts) == 1 || parts[1] == "") {
+		if ok {
+			// A stop/failure path can mark the instance terminal before the
+			// active session has drained and persisted its final
+			// events/findings. Do not expose that partial terminal snapshot;
+			// callers retry and receive the coherent snapshot after the
+			// runMultiScan defer clears the live session pointers.
+			inst.mu.RLock()
+			if isTerminalScanStatus(inst.Status) && inst.snapshotFinalizing {
+				inst.mu.RUnlock()
+				http.Error(w, "terminal instance snapshot is still finalizing", http.StatusConflict)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(inst)
+			inst.mu.RUnlock()
+			return
+		}
+
+		// No live in-memory instance — serve the persisted scan record for
+		// finished/stopped scans so the SaaS coordinator can read terminal
+		// status after a scanner restart without waiting for the five-minute
+		// reaper. Inject `instance_id` equal to the requested alias so that
+		// the SaaS identity guard (which checks both `id` and `instance_id`
+		// against the stored external_instance_id) accepts the response even
+		// when the persisted canonical `id` uses a different slug format.
+		_, rec := s.findScanByID(instanceID)
+		if rec == nil {
+			_, rec = s.findRecentScanForShortAlias(instanceID)
+		}
+		if rec == nil {
+			http.Error(w, "instance not found", http.StatusNotFound)
+			return
+		}
+		s.applyInstanceSnapshot(rec, false)
+		s.attachWildcardSubScans(rec)
+		finalizeScanRecordForResponse(rec)
+		// Mirror the requested alias into instance_id so callers that store
+		// a short-hex external_instance_id can verify identity even when the
+		// on-disk canonical id uses a different format (e.g. target_hash).
+		if rec.InstanceID == "" || rec.InstanceID != instanceID {
+			rec.InstanceID = instanceID
+		}
+		_ = json.NewEncoder(w).Encode(rec)
 		return
 	}
 
-	// GET /api/instances/{id} — return instance details. A stop/failure path
-	// can mark the instance terminal before the active session has drained and
-	// persisted its final events/findings. Do not expose that partial terminal
-	// snapshot; callers retry and receive the coherent snapshot after the
-	// runMultiScan defer clears the live session pointers.
-	if r.Method == http.MethodGet && (len(parts) == 1 || parts[1] == "") {
-		inst.mu.RLock()
-		if isTerminalScanStatus(inst.Status) && inst.snapshotFinalizing {
-			inst.mu.RUnlock()
-			http.Error(w, "terminal instance snapshot is still finalizing", http.StatusConflict)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(inst)
-		inst.mu.RUnlock()
+	if !ok {
+		http.Error(w, "instance not found", http.StatusNotFound)
 		return
 	}
 
