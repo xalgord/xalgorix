@@ -1609,7 +1609,7 @@ func TestFindScanByID_ResolvesParentInstanceAlias(t *testing.T) {
 	}
 }
 
-func TestHandleGetScan_FallsBackFromRecentShortInstanceRoute(t *testing.T) {
+func TestHandleGetScan_RejectsUnknownShortInstanceRoute(t *testing.T) {
 	s := newTestServer(t, nil)
 	writeScanRecord(t, s.dataDir, "target-a/2026-05-01/scan-a", ScanRecord{
 		ID:        "scan-a",
@@ -1620,8 +1620,8 @@ func TestHandleGetScan_FallsBackFromRecentShortInstanceRoute(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	s.handleGetScan(rr, httptest.NewRequest(http.MethodGet, "/api/scans/deadbeef", nil))
-	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"id":"scan-a"`) {
-		t.Fatalf("recent short route did not resolve to latest scan: code=%d body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown short route resolved another scan: code=%d body=%s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -2290,8 +2290,13 @@ func TestInstanceAction_GetAndStopSpecificInstance(t *testing.T) {
 		ID:        "inst-1",
 		Targets:   "https://a.test",
 		Status:    "running",
+		ScanMode:  "wildcard",
 		StartedAt: "2026-05-02T10:00:00Z",
-		cancel:    cancel,
+		SubScans: []SubScanSummary{
+			{ID: "child-1", Target: "a.example.test", Status: "running", StartedAt: "2026-05-02T10:01:00Z"},
+			{Target: "b.example.test", Status: "pending"},
+		},
+		cancel: cancel,
 	}
 
 	rr := httptest.NewRecorder()
@@ -2312,6 +2317,23 @@ func TestInstanceAction_GetAndStopSpecificInstance(t *testing.T) {
 	}
 	if got := s.instances["inst-1"].Status; got != "stopped" {
 		t.Fatalf("instance status = %q, want stopped", got)
+	}
+	var stopped struct {
+		InstanceID string           `json:"instance_id"`
+		Status     string           `json:"status"`
+		SubScans   []SubScanSummary `json:"sub_scans"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &stopped); err != nil {
+		t.Fatalf("decode stop response: %v", err)
+	}
+	if stopped.InstanceID != "inst-1" || stopped.Status != "stopped" {
+		t.Fatalf("stop response identity/status = %#v", stopped)
+	}
+	if len(stopped.SubScans) != 2 || stopped.SubScans[0].Status != "stopped" || stopped.SubScans[0].ID != "child-1" {
+		t.Fatalf("stop response did not freeze exact dispatched children: %#v", stopped.SubScans)
+	}
+	if stopped.SubScans[1].Status != "stopped" || stopped.SubScans[1].ID != "" || stopped.SubScans[1].StartedAt != "" {
+		t.Fatalf("never-dispatched child gained evidence: %#v", stopped.SubScans[1])
 	}
 }
 
@@ -3315,5 +3337,76 @@ func TestHandleRestart_DefaultSchedulesWhenBusy(t *testing.T) {
 	}
 	if got := rr.Body.String(); strings.Contains(got, `"idle":true`) {
 		t.Fatalf("scanner should report busy (idle=false), got: %s", got)
+	}
+}
+
+func TestDispatchIDValidationAndReservation(t *testing.T) {
+	s := newTestServer(t, nil)
+	if validDispatchID("short") || validDispatchID(strings.Repeat("a", 129)) {
+		t.Fatal("invalid dispatch id length was accepted")
+	}
+	if validDispatchID("123456789012345!") || !validDispatchID("550e8400-e29b-41d4-a716-446655440000") {
+		t.Fatal("dispatch id URL-safe validation mismatch")
+	}
+
+	id := "550e8400-e29b-41d4-a716-446655440000"
+	if status, ok := s.reserveDispatchID(id); !ok || status != "" {
+		t.Fatalf("first reservation = (%q, %v), want reserved", status, ok)
+	}
+	if status, ok := s.reserveDispatchID(id); ok || status != "pending" {
+		t.Fatalf("duplicate reservation = (%q, %v), want pending acknowledgement", status, ok)
+	}
+	s.releaseDispatchID(id)
+
+	s.instances[id] = &ScanInstance{ID: id, Status: "running"}
+	if status, ok := s.reserveDispatchID(id); ok || status != "running" {
+		t.Fatalf("live collision = (%q, %v), want running acknowledgement", status, ok)
+	}
+	delete(s.instances, id)
+
+	writeScanRecord(t, s.dataDir, "example/2026-08-12/persisted", ScanRecord{
+		ID: "persisted", InstanceID: id, Target: "https://example.test", Status: "finished",
+	})
+	if status, ok := s.reserveDispatchID(id); ok || status != "finished" {
+		t.Fatalf("persisted collision = (%q, %v), want finished acknowledgement", status, ok)
+	}
+}
+
+func TestRandomSlugHas128BitsAndNoImmediateCollisions(t *testing.T) {
+	seen := make(map[string]bool)
+	for i := 0; i < 256; i++ {
+		id := randomSlug()
+		if len(id) != 32 || !validDispatchID(id) {
+			t.Fatalf("random slug %q is not a 128-bit URL-safe id", id)
+		}
+		if seen[id] {
+			t.Fatalf("random slug collision: %q", id)
+		}
+		seen[id] = true
+	}
+}
+
+func TestBeginWildcardSubScanSerializesWithStop(t *testing.T) {
+	s := newTestServer(t, nil)
+	inst := &ScanInstance{
+		ID: "wildcard-instance", Status: "running", SubScanTotal: 2,
+		SubScans: []SubScanSummary{{Target: "a.example"}, {Target: "b.example"}},
+	}
+	s.instances[inst.ID] = inst
+	if !s.beginWildcardSubScan(inst.ID, 0, "a.example", "child-a") {
+		t.Fatal("running child dispatch was rejected")
+	}
+	if child := inst.SubScans[0]; child.ID != "child-a" || child.StartedAt == "" || child.Status != "running" {
+		t.Fatalf("positive dispatch evidence missing: %#v", child)
+	}
+	inst.mu.Lock()
+	inst.Status = "stopped"
+	normalizeTerminalWildcardInstanceLocked(inst)
+	inst.mu.Unlock()
+	if s.beginWildcardSubScan(inst.ID, 1, "b.example", "child-b") {
+		t.Fatal("child dispatch started after terminal stop")
+	}
+	if child := inst.SubScans[1]; child.ID != "" || child.StartedAt != "" {
+		t.Fatalf("stopped child gained dispatch evidence: %#v", child)
 	}
 }

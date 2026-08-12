@@ -40,6 +40,72 @@ func shouldFailInstanceOnAbort(scanMode, parentTarget string, discoveryMode bool
 	return true
 }
 
+// registerSessionAgent is the single admission transition shared with exact
+// stop. If registration wins, stop sees and stops this agent. If stop wins,
+// status is already terminal and no session can be published or run afterward.
+func (s *Server) registerSessionAgent(sess *scanSession, sctx *scanctx.ScanContext, agnt *agent.Agent) bool {
+	if sess.instanceID != "" {
+		// Exact stop and work admission share dispatchMu. If admission wins, its
+		// positive evidence is durable before any target work starts. If stop
+		// wins, the terminal status is visible before this session can publish.
+		s.dispatchMu.Lock()
+		s.instancesMu.RLock()
+		inst := s.instances[sess.instanceID]
+		if inst == nil {
+			s.instancesMu.RUnlock()
+			s.dispatchMu.Unlock()
+			return false
+		}
+		inst.mu.Lock()
+		canceled := false
+		if sess.parentCtx != nil {
+			select {
+			case <-sess.parentCtx.Done():
+				canceled = true
+			default:
+			}
+		}
+		if inst.Status != "running" || canceled {
+			inst.mu.Unlock()
+			s.instancesMu.RUnlock()
+			s.dispatchMu.Unlock()
+			return false
+		}
+		inst.sctx = sctx
+		inst.agent = agnt
+		inst.scanDir = sess.scanDir
+		inst.lastSessionTokens = 0
+		inst.WorkStarted = true
+		inst.mu.Unlock()
+		s.instancesMu.RUnlock()
+
+		// Positive work admission must survive a process restart before any
+		// source preparation or target activity begins. dispatchMu remains held,
+		// so exact stop cannot be overwritten by this running snapshot.
+		if err := s.persistExactInstanceSnapshotLocked(inst); err != nil {
+			inst.mu.Lock()
+			if inst.Status == "running" {
+				inst.Status = "failed"
+				inst.StopReason = "dispatch_evidence_persist_failed"
+				inst.FinishedAt = time.Now().Format(time.RFC3339Nano)
+				inst.WorkStarted = false
+			}
+			inst.mu.Unlock()
+			s.dispatchMu.Unlock()
+			log.Printf("[scan] refusing session %s: could not persist work admission: %v", sess.id, err)
+			return false
+		}
+		s.dispatchMu.Unlock()
+	}
+
+	s.mu.Lock()
+	s.currentScanDir = sess.scanDir
+	s.currentScanID = sess.id
+	s.currentAgents[sess.id] = agnt
+	s.mu.Unlock()
+	return true
+}
+
 // executeScanSession runs a single scan in complete isolation.
 // It NEVER panics upward — all panics are caught and logged.
 func (s *Server) executeScanSession(sess *scanSession) {
@@ -71,16 +137,8 @@ func (s *Server) executeScanSession(sess *scanSession) {
 		reporting.SetParentContext(sctx.ID, sess.parentReportingCtxID)
 	}
 
-	// Propagate ScanContext to parent instance (if multi-instance mode)
-	if sess.instanceID != "" {
-		s.instancesMu.RLock()
-		if inst, ok := s.instances[sess.instanceID]; ok {
-			inst.mu.Lock()
-			inst.sctx = sctx
-			inst.mu.Unlock()
-		}
-		s.instancesMu.RUnlock()
-	}
+	// Parent instance publication happens atomically with agent admission below;
+	// publishing the context earlier would reopen a stop-before-agent race.
 
 	// 1. Reset per-context state if requested (context-aware)
 	if sess.resetState {
@@ -148,25 +206,12 @@ func (s *Server) executeScanSession(sess *scanSession) {
 		agnt.SetCodeScanMode(sess.codeScanMode)
 	}
 	sess.agent = agnt
-
-	// Store agent ref on server for handleStop/handleChat (under lock)
-	s.mu.Lock()
-	s.currentScanDir = sess.scanDir
-	s.currentScanID = sess.id
-	s.currentAgents[sess.id] = agnt
-	s.mu.Unlock()
-
-	// Register agent with parent instance if applicable
-	if sess.instanceID != "" {
-		s.instancesMu.RLock()
-		if inst, ok := s.instances[sess.instanceID]; ok {
-			inst.mu.Lock()
-			inst.agent = agnt
-			inst.scanDir = sess.scanDir
-			inst.lastSessionTokens = 0 // reset token delta for this new session/phase
-			inst.mu.Unlock()
-		}
-		s.instancesMu.RUnlock()
+	if !s.registerSessionAgent(sess, sctx, agnt) {
+		// Exact stop, deletion, or parent cancellation won before admission.
+		// Stop-before-Run is safe because Agent.Run checks the stopped flag before
+		// preparing source or touching the target.
+		agnt.Stop()
+		return
 	}
 
 	// 4. Initialize scan record. Resume paths preserve previously persisted
@@ -203,7 +248,12 @@ func (s *Server) executeScanSession(sess *scanSession) {
 		instruction = buildSeverityPrefix(sess.severityFilter) + "\n\n" + instruction
 	}
 
-	// 7. Run agent (blocks until finished or stopped)
+	// 7. Run agent (blocks until finished or stopped). Recheck the parent after
+	// record setup; a stop racing this point either makes this check fail or
+	// observes the registered agent and sets its stopped flag before Run works.
+	if status, _ := s.instanceRunStatus(sess.instanceID); sess.instanceID != "" && status != "running" {
+		agnt.Stop()
+	}
 	agnt.Run([]string{sess.target}, instruction)
 
 	// 8. Close events channel and wait for event processor to drain
@@ -314,14 +364,12 @@ func (s *Server) executeScanSession(sess *scanSession) {
 			if vulnCount > 0 {
 				desc := fmt.Sprintf("**Target:** %s\n**Vulnerabilities:** %d found\n**Completed at:** %s",
 					sess.target, vulnCount, time.Now().Format("15:04:05 MST"))
-				s.sendDiscordWithFile(0x3b82f6, "✅ Scan Finished - Report Ready", desc, p)
 				if s.telegramConfigured() {
 					s.sendTelegramWithFile(0x3b82f6, "✅ Scan Finished - Report Ready", desc, p)
 				}
 			} else {
 				desc := fmt.Sprintf("**Target:** %s\n**Result:** No vulnerabilities found (clean scan)\n**Completed at:** %s",
 					sess.target, time.Now().Format("15:04:05 MST"))
-				s.sendDiscordWithFile(0x2dd4bf, "✅ Scan Finished - Clean Report", desc, p)
 				if s.telegramConfigured() {
 					s.sendTelegramWithFile(0x2dd4bf, "✅ Scan Finished - Clean Report", desc, p)
 				}
@@ -446,7 +494,7 @@ func (s *Server) processEvent(evt agent.Event, sess *scanSession) {
 							}
 							// Apply Discord minimum severity filter
 							if severityMeetsThreshold(vs.Severity, s.discordMinSeverity) {
-								s.sendDiscord(sevColor, fmt.Sprintf("🐛 %s Vulnerability Found", strings.ToUpper(vs.Severity)), details.String())
+								s.sendDiscordTo(s.discordWebhookForScan(sess.discordWebhook), sevColor, fmt.Sprintf("🐛 %s Vulnerability Found", strings.ToUpper(vs.Severity)), details.String())
 							} else {
 								log.Printf("[DISCORD] Skipping %s vuln notification (min severity: %s)", vs.Severity, s.discordMinSeverity)
 							}

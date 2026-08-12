@@ -55,6 +55,7 @@ func (s *Server) freshScanRecordForSession(sess *scanSession, startedAt string) 
 		LogoPath:                 sess.logoPath,
 		Phases:                   append([]int(nil), sess.phases...),
 		CurrentPhase:             firstSelectedPhase(sess.phases),
+		WorkStarted:              true,
 	}
 }
 
@@ -82,6 +83,7 @@ func (s *Server) refreshResumedScanRecord(rec *ScanRecord, sess *scanSession, fa
 		rec.StartedAt = fallbackStartedAt
 	}
 	rec.Status = "running"
+	rec.WorkStarted = true
 	rec.FinishedAt = ""
 	rec.StopReason = ""
 	if rec.Events == nil {

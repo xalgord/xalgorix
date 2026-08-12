@@ -2,11 +2,11 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -253,26 +253,35 @@ func (s *Server) findScanByID(scanID string) (string, *ScanRecord) {
 		return "", nil
 	}
 
-	// First: prefer top-level scans. Multiple wildcard child records share the
-	// same instance id; returning a child here makes the UI route land on one
-	// subdomain instead of the parent wildcard scan.
 	entries := s.findAllScans()
-	for _, entry := range entries {
-		if entry.rec.ParentTarget != "" {
-			continue
+	resolveUnique := func(topLevelOnly bool) (string, *ScanRecord, bool) {
+		var matchedDir string
+		var matched *ScanRecord
+		for _, entry := range entries {
+			if topLevelOnly && entry.rec.ParentTarget != "" {
+				continue
+			}
+			if entry.rec.ID != scanID && entry.rec.InstanceID != scanID && filepath.Base(entry.dir) != scanID {
+				continue
+			}
+			if matched != nil {
+				log.Printf("[scan] refusing ambiguous scan id %q: records %q and %q both match", scanID, matched.ID, entry.rec.ID)
+				return "", nil, true
+			}
+			rec := entry.rec
+			matchedDir = entry.dir
+			matched = &rec
 		}
-		if entry.rec.ID == scanID || entry.rec.InstanceID == scanID || filepath.Base(entry.dir) == scanID {
-			return entry.dir, &entry.rec
-		}
+		return matchedDir, matched, matched != nil
 	}
-	// Second: allow direct child lookup when the caller explicitly uses a child
-	// scan id, for report generation and historical compatibility.
-	for _, entry := range entries {
-		if entry.rec.ID == scanID || entry.rec.InstanceID == scanID || filepath.Base(entry.dir) == scanID {
-			return entry.dir, &entry.rec
-		}
+	if dir, rec, found := resolveUnique(true); found {
+		return dir, rec
 	}
-	// Second: try legacy flat path as fallback (dataDir/scanID/scan.json)
+	if dir, rec, found := resolveUnique(false); found {
+		return dir, rec
+	}
+
+	// Legacy flat path fallback (dataDir/scanID/scan.json).
 	direct := filepath.Join(s.dataDir, scanID, "scan.json")
 	if data, err := os.ReadFile(direct); err == nil {
 		var rec ScanRecord
@@ -283,33 +292,65 @@ func (s *Server) findScanByID(scanID string) (string, *ScanRecord) {
 	return "", nil
 }
 
-var shortHexIDPattern = regexp.MustCompile(`^[a-f0-9]{8}$`)
+// persistedInstanceIDClaim reports whether any top-level persisted record
+// claims an external instance ID. Ambiguous duplicate claims are still a hard
+// reservation conflict even though they are intentionally non-authoritative
+// for reads.
+func (s *Server) persistedInstanceIDClaim(instanceID string) (string, bool) {
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
+		return "", false
+	}
+	if rec, err := s.loadExactDispatchSnapshot(instanceID); err == nil {
+		return rec.Status, true
+	} else if !errors.Is(err, errDispatchSnapshotNotFound) {
+		return "conflict", true
+	}
+	status := ""
+	claims := 0
+	for _, entry := range s.findAllScans() {
+		if entry.rec.ParentTarget == "" && entry.rec.InstanceID == instanceID {
+			claims++
+			status = entry.rec.Status
+		}
+	}
+	if claims > 1 {
+		return "conflict", true
+	}
+	return status, claims == 1
+}
 
-func (s *Server) findRecentScanForShortAlias(scanID string) (string, *ScanRecord) {
-	if !shortHexIDPattern.MatchString(scanID) {
+// findScanByInstanceID resolves only the immutable external instance identity
+// persisted on a top-level scan record. It deliberately does not accept record
+// IDs, directory names, target similarity, or short aliases: authoritative
+// status snapshots must either prove the requested run identity or return no
+// news.
+func (s *Server) findScanByInstanceID(instanceID string) (string, *ScanRecord) {
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
 		return "", nil
 	}
-
-	entries := s.findAllScans()
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].rec.StartedAt > entries[j].rec.StartedAt
-	})
-
-	for _, entry := range entries {
-		if entry.rec.ParentTarget != "" {
-			continue
-		}
-		startedAt, err := time.Parse(time.RFC3339Nano, entry.rec.StartedAt)
-		if err != nil {
-			continue
-		}
-		if time.Since(startedAt) > 24*time.Hour {
-			continue
-		}
-		log.Printf("[web] Resolving short scan route %s to recent scan %s", scanID, entry.rec.ID)
-		return entry.dir, &entry.rec
+	if rec, err := s.loadExactDispatchSnapshot(instanceID); err == nil {
+		return filepath.Dir(s.dispatchSnapshotPath(instanceID)), rec
+	} else if !errors.Is(err, errDispatchSnapshotNotFound) {
+		log.Printf("[scan] refusing unreadable exact dispatch snapshot %q: %v", instanceID, err)
+		return "", nil
 	}
-	return "", nil
+	var matchedDir string
+	var matched *ScanRecord
+	for _, entry := range s.findAllScans() {
+		if entry.rec.ParentTarget != "" || entry.rec.InstanceID != instanceID {
+			continue
+		}
+		if matched != nil {
+			log.Printf("[scan] refusing ambiguous external instance id %q: records %q and %q both claim it", instanceID, matched.ID, entry.rec.ID)
+			return "", nil
+		}
+		rec := entry.rec
+		matchedDir = entry.dir
+		matched = &rec
+	}
+	return matchedDir, matched
 }
 
 func (s *Server) markDiscordWebhookConfigured(rec *ScanRecord) {
@@ -389,6 +430,7 @@ func (s *Server) scanRecordFromInstance(inst *ScanInstance) *ScanRecord {
 		SubScanCompleted:         inst.SubScanCompleted,
 		SubScanRunning:           inst.SubScanRunning,
 		SubScanRemaining:         inst.SubScanRemaining,
+		WorkStarted:              inst.WorkStarted,
 	}
 }
 
@@ -618,6 +660,7 @@ func (s *Server) applyInstanceSnapshot(rec *ScanRecord, includeEvents bool) {
 	if snapshot.TotalTokens > rec.TotalTokens {
 		rec.TotalTokens = snapshot.TotalTokens
 	}
+	rec.WorkStarted = rec.WorkStarted || snapshot.WorkStarted
 	for _, vuln := range snapshot.Vulns {
 		appendVulnSummaryUnique(&rec.Vulns, vuln)
 	}
@@ -883,18 +926,45 @@ func (s *Server) rebuildInstancesFromDisk() {
 	}
 
 	entries := s.findAllScans()
+	externalIdentityCounts := make(map[string]int)
+	for i := range entries {
+		entry := &entries[i]
+		if entry.rec.ParentTarget == "" {
+			if persistedID := strings.TrimSpace(entry.rec.InstanceID); persistedID != "" {
+				externalIdentityCounts[persistedID]++
+			}
+		}
+	}
 	instanceIdentity := func(entry *scanEntry) (string, bool) {
-		instID := entry.rec.ID
-		if mappedID, ok := qMap[filepath.Clean(entry.dir)]; ok {
-			return mappedID, true
+		// ScanRecord.InstanceID is immutable run ownership metadata. Once it
+		// exists, queue recovery may prove that same run resumable but must never
+		// replace it with an identity inferred from a target, directory, or
+		// canonical record ID.
+		persistedID := strings.TrimSpace(entry.rec.InstanceID)
+		candidates := []string{
+			qMap[filepath.Clean(entry.dir)],
+			qMap[entry.rec.ID],
+			qMap[normalizeScanTarget(entry.rec.Target)],
 		}
-		if mappedID, ok := qMap[entry.rec.ID]; ok {
-			return mappedID, true
+		if persistedID != "" {
+			for _, mappedID := range candidates {
+				if mappedID == persistedID {
+					return persistedID, true
+				}
+			}
+			return persistedID, false
 		}
-		if mappedID, ok := qMap[normalizeScanTarget(entry.rec.Target)]; ok {
-			return mappedID, true
+
+		// Legacy records without ownership metadata can only inherit an active
+		// instance ID from an exact queue-state relationship. Historical terminal
+		// records are keyed by their canonical record ID; no short-alias guess is
+		// permitted.
+		for _, mappedID := range candidates {
+			if mappedID != "" {
+				return mappedID, true
+			}
 		}
-		return instID, false
+		return entry.rec.ID, false
 	}
 
 	// First normalize every interrupted record so wildcard parent aggregation
@@ -927,6 +997,10 @@ func (s *Server) rebuildInstancesFromDisk() {
 		}
 
 		instID, _ := instanceIdentity(entry)
+		if externalIdentityCounts[instID] > 1 {
+			log.Printf("[scan] refusing to rebuild ambiguous external instance id %q claimed by %d top-level records", instID, externalIdentityCounts[instID])
+			continue
+		}
 		if entry.rec.ScanMode == "wildcard" || entry.rec.SubScans != nil || entry.rec.SubScanTotal > 0 {
 			// Rebuild the exact parent snapshot from the now-normalized child
 			// records. This restores findings and physical provenance as well as
@@ -965,6 +1039,7 @@ func (s *Server) rebuildInstancesFromDisk() {
 			SubScanCompleted: entry.rec.SubScanCompleted,
 			SubScanRunning:   entry.rec.SubScanRunning,
 			SubScanRemaining: entry.rec.SubScanRemaining,
+			WorkStarted:      entry.rec.WorkStarted,
 			events:           append([]WSEvent(nil), entry.rec.Events...),
 		}
 		if inst.CurrentPhase == 0 {

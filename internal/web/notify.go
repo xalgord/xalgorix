@@ -29,20 +29,37 @@ var (
 	tgBoldRe       = regexp.MustCompile(`\*\*([^*]+?)\*\*`)
 )
 
-// sendDiscord sends a rich embed message to the configured Discord webhook.
-func (s *Server) sendDiscord(color int, title, description string) {
-	s.sendDiscordWithFile(color, title, description, "")
+func (s *Server) discordWebhookForScan(webhook string) string {
+	if webhook = strings.TrimSpace(webhook); webhook != "" {
+		return webhook
+	}
+	return s.discordWebhook
 }
 
-// sendDiscordWithFile sends a rich embed message with an optional file attachment to Discord.
+// sendDiscord sends a rich embed message to the configured Discord webhook.
+func (s *Server) sendDiscord(color int, title, description string) {
+	s.sendDiscordTo(s.discordWebhook, color, title, description)
+}
+
+func (s *Server) sendDiscordTo(webhook string, color int, title, description string) {
+	s.sendDiscordWithFileTo(webhook, color, title, description, "")
+}
+
+// sendDiscordWithFile sends to the global endpoint for legacy callers.
 func (s *Server) sendDiscordWithFile(color int, title, description, filePath string) {
-	if s.discordWebhook == "" {
+	s.sendDiscordWithFileTo(s.discordWebhook, color, title, description, filePath)
+}
+
+// sendDiscordWithFileTo captures an immutable per-scan endpoint before the
+// asynchronous send. Concurrent scans can never overwrite each other's URL.
+func (s *Server) sendDiscordWithFileTo(webhook string, color int, title, description, filePath string) {
+	if webhook == "" {
 		return
 	}
 
 	// If no file, send simple embed
 	if filePath == "" {
-		s.sendSimpleEmbed(color, title, description)
+		s.sendSimpleEmbedTo(webhook, color, title, description)
 		return
 	}
 
@@ -51,7 +68,7 @@ func (s *Server) sendDiscordWithFile(color int, title, description, filePath str
 	if err != nil {
 		log.Printf("Failed to read PDF for Discord: %v", err)
 		// Send embed without file
-		s.sendSimpleEmbed(color, title, description+" (PDF generation failed)")
+		s.sendSimpleEmbedTo(webhook, color, title, description+" (PDF generation failed)")
 		return
 	}
 
@@ -103,7 +120,7 @@ func (s *Server) sendDiscordWithFile(color int, title, description, filePath str
 	// Send request
 	go func() {
 		client := &http.Client{Timeout: 30 * time.Second}
-		resp, err := client.Post(s.discordWebhook, contentType, &b)
+		resp, err := client.Post(webhook, contentType, &b)
 		if err != nil {
 			log.Printf("Discord webhook file upload error: %v", err)
 			return
@@ -119,8 +136,10 @@ func (s *Server) sendDiscordWithFile(color int, title, description, filePath str
 	}()
 }
 
-// sendSimpleEmbed sends a simple embed without file attachment
-func (s *Server) sendSimpleEmbed(color int, title, description string) {
+func (s *Server) sendSimpleEmbedTo(webhook string, color int, title, description string) {
+	if webhook == "" {
+		return
+	}
 	payload := map[string]any{
 		"username":   "Xalgorix",
 		"avatar_url": "https://raw.githubusercontent.com/xalgord/xalgord/main/assets/logo.png",
@@ -143,7 +162,9 @@ func (s *Server) sendSimpleEmbed(color int, title, description string) {
 	}
 
 	go func() {
-		resp, err := http.Post(s.discordWebhook, "application/json", bytes.NewReader(body))
+		// #nosec G107 -- webhook is an operator/customer-configured outbound
+		// notification endpoint; the call is intentionally made to that URL.
+		resp, err := http.Post(webhook, "application/json", bytes.NewReader(body))
 		if err != nil {
 			log.Printf("Discord webhook error: %v", err)
 			return
