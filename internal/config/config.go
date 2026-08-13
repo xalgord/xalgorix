@@ -20,19 +20,19 @@ import (
 // Config holds all Xalgorix configuration.
 type Config struct {
 	// LLM settings
-	LLM              string   // XALGORIX_LLM — provider-native model ID (for example, "gpt-5.6" or "zai-org/glm-4.5")
-	LLMProvider      string   // XALGORIX_LLM_PROVIDER — explicit provider ID; keeps provider routing separate from the model name
-	APIBase          string   // XALGORIX_API_BASE — API endpoint
-	APIKey           string   // XALGORIX_API_KEY — API key
-	LLMProfile       string   // XALGORIX_LLM_PROFILE — active credential pointer "<provider>:<profileId>" (v4.4.22+)
-	ReasoningEffort  string   // XALGORIX_REASONING_EFFORT — "none", "low", "medium", "high", or "xhigh"
+	LLM             string // XALGORIX_LLM — provider-native model ID (for example, "gpt-5.6" or "zai-org/glm-4.5")
+	LLMProvider     string // XALGORIX_LLM_PROVIDER — explicit provider ID; keeps provider routing separate from the model name
+	APIBase         string // XALGORIX_API_BASE — API endpoint
+	APIKey          string // XALGORIX_API_KEY — API key
+	LLMProfile      string // XALGORIX_LLM_PROFILE — active credential pointer "<provider>:<profileId>" (v4.4.22+)
+	ReasoningEffort string // XALGORIX_REASONING_EFFORT — "none", "low", "medium", "high", or "xhigh"
 
 	// Language is the output language for human-readable AI content — agent
 	// reasoning, notes, vulnerability findings, and post-scan chat. It does
 	// NOT change tool call structure or technical tokens (payloads, commands,
 	// URLs, CVE/CWE IDs). XALGORIX_LANGUAGE, canonical code (e.g. "en",
 	// "zh-CN"); default "en" (English) so existing scans are unchanged.
-	Language string
+	Language         string
 	OllamaCompatible bool     // XALGORIX_OLLAMA_COMPATIBLE — force Ollama request semantics for a custom endpoint
 	Temperature      *float64 // XALGORIX_TEMPERATURE — LLM temperature (0.0-2.0), default 0.2; pointer to distinguish unset from 0.0
 	LLMMaxRetries    int      // XALGORIX_LLM_MAX_RETRIES

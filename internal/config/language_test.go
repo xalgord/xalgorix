@@ -1,8 +1,9 @@
 package config
 
-import "strings"
-
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizeLanguage(t *testing.T) {
 	cases := map[string]string{
