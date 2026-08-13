@@ -126,6 +126,8 @@ func allEnvSettingDefinitions() []envSettingDefinition {
 		{Key: "XALGORIX_API_BASE", Label: "API base URL", Category: "LLM", Description: "Optional custom provider endpoint. Leave blank to use provider defaults.", Placeholder: "https://api.openai.com/v1", InputType: "url"},
 		{Key: "XALGORIX_LLM_PROFILE", Label: "Active LLM profile", Category: "LLM", Description: "Active credential pointer (\"<provider>:<profileId>\"). Set by the LLM Settings tab; takes precedence over XALGORIX_API_KEY/XALGORIX_LLM when present.", Placeholder: "openai:default", InputType: "text"},
 		{Key: "XALGORIX_REASONING_EFFORT", Label: "Reasoning effort", Category: "LLM", Description: "Reasoning depth for providers that support it.", DefaultValue: "high", InputType: "select", Options: []string{"none", "low", "medium", "high", "xhigh"}},
+		{Key: "XALGORIX_LANGUAGE", Label: "Output language", Category: "LLM", Description: "Language for AI-generated human-readable output: agent reasoning, notes, vulnerability findings, report content, and post-scan chat. Technical tokens (payloads, commands, URLs, CVE/CWE IDs) always stay in their original form. English is the default. Non-Latin languages render in the dashboard and HTML report automatically; for the PDF export, also set a CJK font path below.", DefaultValue: "en", InputType: "select", Options: []string{"en", "zh-CN"}},
+		{Key: "XALGORIX_PDF_CJK_FONT", Label: "PDF CJK font path", Category: "LLM", Description: "Absolute path to a TrueType (.ttf) font with CJK glyphs, used to render non-Latin languages (e.g. Simplified Chinese) in the exported PDF report. Only .ttf is supported (not .ttc/.otf). Leave blank for English. Takes effect on restart.", Placeholder: "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf", InputType: "path", RequiresRestart: true},
 		{Key: "XALGORIX_OLLAMA_COMPATIBLE", Label: "Ollama-compatible endpoint", Category: "LLM", Description: "Force Ollama reasoning semantics for a custom endpoint that does not use port 11434.", DefaultValue: "false", InputType: "boolean"},
 		{Key: "XALGORIX_LLM_MAX_RETRIES", Label: "LLM max retries", Category: "LLM", Description: "Retry count for transient LLM provider failures.", DefaultValue: "5", InputType: "number"},
 		{Key: "XALGORIX_MAX_RATE_LIMIT_WAIT", Label: "Provider rate-limit wait (seconds)", Category: "LLM", Description: "Maximum cumulative wait after a provider 429/usage-window error before stopping the scan. Default 1800 seconds; use a negative value only to disable the safety cap.", DefaultValue: "1800", InputType: "number"},
@@ -746,6 +748,8 @@ func (s *Server) applyEnvironmentToRuntimeConfig(values map[string]string) {
 			s.cfg.LLMProfile = value
 		case "XALGORIX_REASONING_EFFORT":
 			s.cfg.ReasoningEffort = valueOrDefault(value, "high")
+		case "XALGORIX_LANGUAGE":
+			s.cfg.Language = config.NormalizeLanguage(value)
 		case "XALGORIX_OLLAMA_COMPATIBLE":
 			s.cfg.OllamaCompatible = parseBoolSetting(value, false)
 		case "XALGORIX_LLM_MAX_RETRIES":
@@ -870,6 +874,8 @@ func (s *Server) envSettingValue(key string) string {
 		return s.cfg.LLMProfile
 	case "XALGORIX_REASONING_EFFORT":
 		return valueOrDefault(s.cfg.ReasoningEffort, "high")
+	case "XALGORIX_LANGUAGE":
+		return config.NormalizeLanguage(s.cfg.Language)
 	case "XALGORIX_OLLAMA_COMPATIBLE":
 		return strconv.FormatBool(s.cfg.OllamaCompatible)
 	case "XALGORIX_LLM_MAX_RETRIES":

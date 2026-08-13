@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { useMemo, useState, type FormEvent } from "react";
+import { useI18n } from "@/i18n";
 import {
   ChevronLeft,
   FileText,
@@ -70,6 +71,7 @@ const ACTIVITY_OPTIONS: Array<{
 ];
 
 export default function NewScanPage() {
+  const { t } = useI18n();
   const nav = useNavigate();
   const startScan = useStartScan();
   const llmQuery = useLLMSettings();
@@ -242,10 +244,10 @@ export default function NewScanPage() {
           onClick={() => nav(-1)}
           className="text-muted-foreground"
         >
-          <ChevronLeft className="h-3.5 w-3.5" /> Back
+          <ChevronLeft className="h-3.5 w-3.5" /> {t("newScan.back")}
         </Button>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight text-balance">
-          Start a new scan
+          {t("newScan.heading")}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground text-pretty">
           Configure target, scope, and methodology phases. Xalgorix orchestrates
@@ -256,11 +258,11 @@ export default function NewScanPage() {
       <form onSubmit={onSubmit} className="space-y-5">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Targets</CardTitle>
+            <CardTitle className="text-base">{t("newScan.section.targets")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="targets">Targets *</Label>
+              <Label htmlFor="targets">{t("newScan.label.targets")}</Label>
               <Textarea
                 id="targets"
                 required
@@ -288,7 +290,7 @@ export default function NewScanPage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="name">Display name (optional)</Label>
+              <Label htmlFor="name">{t("newScan.label.displayName")}</Label>
               <Input
                 id="name"
                 placeholder="Auto-generated from target if blank"
@@ -301,7 +303,7 @@ export default function NewScanPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Security context (optional)</CardTitle>
+            <CardTitle className="text-base">{t("newScan.section.securityContext")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-[11px] text-muted-foreground text-pretty">
@@ -366,11 +368,11 @@ export default function NewScanPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Authenticated access (optional)</CardTitle>
+            <CardTitle className="text-base">{t("newScan.section.authAccess")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="targetAuth">Authenticated session</Label>
+              <Label htmlFor="targetAuth">{t("newScan.label.authSession")}</Label>
               <Textarea
                 id="targetAuth"
                 placeholder={"Cookie: session=abc123; Authorization: Bearer eyJ…"}
@@ -387,7 +389,7 @@ export default function NewScanPage() {
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="targetAuthB">Second account (for IDOR/BOLA proof)</Label>
+              <Label htmlFor="targetAuthB">{t("newScan.label.secondAccount")}</Label>
               <Textarea
                 id="targetAuthB"
                 placeholder={"Cookie: session=DIFFERENT_USER…"}
@@ -407,7 +409,7 @@ export default function NewScanPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Target access</CardTitle>
+            <CardTitle className="text-base">{t("newScan.section.targetAccess")}</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
@@ -476,11 +478,11 @@ export default function NewScanPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Report branding</CardTitle>
+            <CardTitle className="text-base">{t("newScan.section.reportBranding")}</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-[1fr_220px]">
             <div className="space-y-2">
-              <Label htmlFor="companyName">Target brand name</Label>
+              <Label htmlFor="companyName">{t("newScan.label.brandName")}</Label>
               <Input
                 id="companyName"
                 placeholder="Shown on the PDF cover"
@@ -489,7 +491,7 @@ export default function NewScanPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label>Target brand logo</Label>
+              <Label>{t("newScan.label.brandLogo")}</Label>
               <div className="flex items-center gap-3">
                 <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-muted">
                   {logoPath ? (
@@ -557,7 +559,7 @@ export default function NewScanPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Scan mode</CardTitle>
+            <CardTitle className="text-base">{t("newScan.section.scanMode")}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid gap-3 sm:grid-cols-3">
@@ -649,11 +651,11 @@ export default function NewScanPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Refinement</CardTitle>
+            <CardTitle className="text-base">{t("newScan.section.refinement")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label>Severity filter</Label>
+              <Label>{t("newScan.label.severityFilter")}</Label>
               <div className="flex flex-wrap gap-1.5">
                 {SEVERITIES.map((s) => {
                   const active = severityFilter.includes(s);
@@ -681,7 +683,7 @@ export default function NewScanPage() {
             </div>
             <Separator />
             <div className="space-y-2">
-              <Label htmlFor="instr">Custom instruction</Label>
+              <Label htmlFor="instr">{t("newScan.label.customInstruction")}</Label>
               <Textarea
                 id="instr"
                 placeholder="e.g. Focus on the payment flow at /checkout and skip /static/."
@@ -691,7 +693,7 @@ export default function NewScanPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="model">Model override</Label>
+              <Label htmlFor="model">{t("newScan.label.modelOverride")}</Label>
               <Input
                 id="model"
                 placeholder={llmQuery.data?.model || "model-name"}
@@ -704,7 +706,7 @@ export default function NewScanPage() {
               </p>
             </div>
             <div className="space-y-2">
-              <Label>Provider profile</Label>
+              <Label>{t("newScan.label.providerProfile")}</Label>
               <Select
                 value={providerProfile || "default"}
                 onValueChange={(v) =>
@@ -739,7 +741,7 @@ export default function NewScanPage() {
 
         <div className="flex flex-col-reverse gap-2 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-end">
           <Button type="button" variant="outline" onClick={() => nav(-1)}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button
             type="button"
@@ -752,7 +754,7 @@ export default function NewScanPage() {
             ) : (
               <Save className="h-3.5 w-3.5" />
             )}
-            Save for later
+            {t("newScan.btn.saveForLater")}
           </Button>
           <Button
             type="submit"
@@ -763,7 +765,7 @@ export default function NewScanPage() {
             ) : (
               <Play className="h-3.5 w-3.5" />
             )}
-            Start scan
+            {t("newScan.btn.startScan")}
           </Button>
         </div>
       </form>

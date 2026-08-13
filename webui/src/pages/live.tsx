@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react"
+import { useI18n } from "@/i18n"
 import { useQueries } from "@tanstack/react-query"
 import {
   eventOrderMs,
@@ -12,6 +13,7 @@ import { api } from "@/api/client"
 import { qk, useInstances } from "@/api/queries"
 
 export default function LivePage() {
+  const { t } = useI18n()
   const events = useWSStore((s) => s.events)
   const clearEvents = useWSStore((s) => s.clearEvents)
   const { data: instances } = useInstances()
@@ -52,7 +54,7 @@ export default function LivePage() {
     <div className="space-y-6">
       <header className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="font-sans text-2xl font-semibold tracking-tight">Live feed</h1>
+          <h1 className="font-sans text-2xl font-semibold tracking-tight">{t("live.title")}</h1>
           <p className="text-sm text-muted-foreground">
             Streaming events from every active scan and worker.
           </p>

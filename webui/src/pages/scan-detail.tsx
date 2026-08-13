@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { useI18n } from "@/i18n";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -82,6 +83,7 @@ import { Pagination, DEFAULT_PAGE_SIZE } from "@/components/Pagination";
 import type { SubScanSummary, VulnSummary } from "@/types/api";
 
 export default function ScanDetailPage() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const { scanId } = useParams<{ scanId: string }>();
   const id = scanId ?? "";
@@ -276,7 +278,7 @@ export default function ScanDetailPage() {
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle className="text-sm">Phase progress</CardTitle>
+            <CardTitle className="text-sm">{t("scanDetail.phaseProgress")}</CardTitle>
             <CardDescription>
               Xalgorix runs a {PHASES.length}-phase autonomous methodology.
               Currently:{" "}
@@ -319,7 +321,7 @@ export default function ScanDetailPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Risk overview</CardTitle>
+            <CardTitle className="text-sm">{t("scanDetail.riskOverview")}</CardTitle>
             <CardDescription>
               {(scan.vulns ?? []).length} findings
             </CardDescription>
@@ -332,7 +334,7 @@ export default function ScanDetailPage() {
         {!!scan.sub_scan_total && (
           <Card className="lg:col-span-3">
             <CardHeader>
-              <CardTitle className="text-sm">Wildcard coverage</CardTitle>
+              <CardTitle className="text-sm">{t("scanDetail.wildcardCoverage")}</CardTitle>
               <CardDescription>
                 {scan.sub_scan_completed ?? 0} scanned ·{" "}
                 {scan.sub_scan_running ?? 0} running ·{" "}
@@ -355,21 +357,21 @@ export default function ScanDetailPage() {
         <TabsList>
           <TabsTrigger value="findings">
             <ShieldAlert className="mr-1.5 h-3.5 w-3.5" />
-            Findings
+            {t("scanDetail.tab.findings")}
           </TabsTrigger>
           <TabsTrigger value="events">
             <Terminal className="mr-1.5 h-3.5 w-3.5" />
-            Events
+            {t("scanDetail.tab.events")}
           </TabsTrigger>
           {!!scan.sub_scan_total && (
             <TabsTrigger value="subdomains">
               <ListChecks className="mr-1.5 h-3.5 w-3.5" />
-              Subdomains
+              {t("scanDetail.tab.subdomains")}
             </TabsTrigger>
           )}
           <TabsTrigger value="config">
             <ListChecks className="mr-1.5 h-3.5 w-3.5" />
-            Config
+            {t("scanDetail.tab.config")}
           </TabsTrigger>
         </TabsList>
 
@@ -1125,6 +1127,7 @@ const GUIDANCE_SUGGESTIONS = [
 ];
 
 function ScanGuidanceComposer({ instanceId }: { instanceId: string }) {
+  const { t } = useI18n();
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [feedback, setFeedback] = useState<{
@@ -1158,7 +1161,7 @@ function ScanGuidanceComposer({ instanceId }: { instanceId: string }) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-sm">Guide this scan</CardTitle>
+        <CardTitle className="text-sm">{t("scanDetail.guideScan")}</CardTitle>
         <CardDescription>
           Send a priority or correction to this agent. It will pick it up on
           its next iteration without interrupting the scan.

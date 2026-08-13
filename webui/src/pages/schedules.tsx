@@ -1,4 +1,5 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { useI18n } from "@/i18n";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -115,6 +116,7 @@ function formatScheduleWindow(s: ScanSchedule): string {
 }
 
 export default function SchedulesPage() {
+  const { t } = useI18n();
   const { data, isLoading, error, refetch } = useSchedulesList();
   const createMutation = useCreateSchedule();
   const updateMutation = useUpdateSchedule();
@@ -370,15 +372,15 @@ export default function SchedulesPage() {
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="font-sans text-2xl font-semibold tracking-tight">
-            Schedules
+            {t("schedules.title")}
           </h1>
           <p className="text-sm text-muted-foreground">
-            Manage automated recurring scans running on configured intervals.
+            {t("schedules.subtitle")}
           </p>
         </div>
         <Button onClick={handleNewSchedule} className="self-start sm:self-auto">
           <Plus className="mr-1 h-4 w-4" />
-          New schedule
+          {t("schedules.new")}
         </Button>
       </header>
 
@@ -410,12 +412,12 @@ export default function SchedulesPage() {
         <ScheduleListSkeleton />
       ) : schedules.length === 0 ? (
         <EmptyState
-          title="No scheduled scans"
-          description="Automate recurring testing across your target landscape."
+          title={t("schedules.emptyTitle")}
+          description={t("schedules.emptyDescription")}
           action={
             <Button onClick={handleNewSchedule}>
               <Plus className="mr-1 h-4 w-4" />
-              Create schedule
+              {t("schedules.create")}
             </Button>
           }
         />
@@ -468,12 +470,12 @@ export default function SchedulesPage() {
                       <td className="px-4 py-3 align-middle text-xs text-muted-foreground">
                         {s.last_run
                           ? new Date(s.last_run).toLocaleString()
-                          : "Never"}
+                          : t("schedules.never")}
                       </td>
                       <td className="px-4 py-3 align-middle text-xs font-medium text-foreground">
                         {s.enabled
                           ? new Date(s.next_run).toLocaleString()
-                          : "Paused"}
+                          : t("status.paused")}
                       </td>
                       <td className="px-4 py-3 align-middle">
                         <Switch
@@ -516,7 +518,7 @@ export default function SchedulesPage() {
           <form onSubmit={onSubmit} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="sched-name">Schedule Name *</Label>
+                <Label htmlFor="sched-name">{t("schedules.label.name")}</Label>
                 <Input
                   id="sched-name"
                   required
@@ -526,7 +528,7 @@ export default function SchedulesPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="sched-interval">Frequency Interval *</Label>
+                <Label htmlFor="sched-interval">{t("schedules.label.interval")}</Label>
                 <Select
                   value={interval}
                   onValueChange={(v) => {
@@ -585,7 +587,7 @@ export default function SchedulesPage() {
                   </div>
                 )}
                 <div className="space-y-2">
-                  <Label htmlFor="sched-run-at">Run at</Label>
+                  <Label htmlFor="sched-run-at">{t("schedules.label.runAt")}</Label>
                   <Input
                     id="sched-run-at"
                     type="time"
@@ -594,7 +596,7 @@ export default function SchedulesPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="sched-timezone">Timezone</Label>
+                  <Label htmlFor="sched-timezone">{t("schedules.label.timezone")}</Label>
                   <Select
                     value={timezone}
                     onValueChange={setTimezone}
@@ -629,7 +631,7 @@ export default function SchedulesPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="sched-targets">Targets *</Label>
+              <Label htmlFor="sched-targets">{t("schedules.label.targets")}</Label>
               <Textarea
                 id="sched-targets"
                 required
@@ -647,7 +649,7 @@ export default function SchedulesPage() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>Scan Mode</Label>
+                <Label>{t("schedules.label.scanMode")}</Label>
                 <Select value={scanMode} onValueChange={setScanMode}>
                   <SelectTrigger>
                     <SelectValue />
@@ -660,7 +662,7 @@ export default function SchedulesPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Provider profile</Label>
+                <Label>{t("schedules.label.providerProfile")}</Label>
                 <Select
                   value={providerProfile || "default"}
                   onValueChange={(v) =>
@@ -688,7 +690,7 @@ export default function SchedulesPage() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>Recon Access</Label>
+                <Label>{t("schedules.label.reconAccess")}</Label>
                 <Select
                   value={reconMode}
                   onValueChange={(v) => setReconMode(v as ActivityMode)}
@@ -704,7 +706,7 @@ export default function SchedulesPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Testing Access</Label>
+                <Label>{t("schedules.label.testingAccess")}</Label>
                 <Select
                   value={scanIntensity}
                   onValueChange={(v) => {
@@ -738,7 +740,7 @@ export default function SchedulesPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="sched-model">Model override</Label>
+              <Label htmlFor="sched-model">{t("schedules.label.modelOverride")}</Label>
               <Input
                 id="sched-model"
                 placeholder={llmQuery.data?.model || "model-name"}
@@ -754,7 +756,7 @@ export default function SchedulesPage() {
             <Separator />
 
             <div className="space-y-2">
-              <Label>Severity filter</Label>
+              <Label>{t("schedules.label.severityFilter")}</Label>
               <div className="flex flex-wrap gap-1.5">
                 {SEVERITIES.map((s) => {
                   const active = severityFilter.includes(s);
@@ -785,7 +787,7 @@ export default function SchedulesPage() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="sched-company">Branding Company Name</Label>
+                <Label htmlFor="sched-company">{t("schedules.label.companyName")}</Label>
                 <Input
                   id="sched-company"
                   placeholder="Shown on the PDF cover page"
@@ -807,7 +809,7 @@ export default function SchedulesPage() {
             </div>
 
             <div className="space-y-2">
-              <Label>Target Brand Logo</Label>
+              <Label>{t("schedules.label.brandLogo")}</Label>
               <div className="flex items-center gap-3">
                 <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-muted">
                   {logoPath ? (
@@ -883,7 +885,7 @@ export default function SchedulesPage() {
                 variant="ghost"
                 onClick={() => setDialogOpen(false)}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button
                 type="submit"
@@ -894,8 +896,8 @@ export default function SchedulesPage() {
                 }
               >
                 {createMutation.isPending || updateMutation.isPending
-                  ? "Saving…"
-                  : "Save schedule"}
+                  ? t("schedules.saving")
+                  : t("schedules.saveSchedule")}
               </Button>
             </DialogFooter>
           </form>
@@ -950,6 +952,7 @@ function ScheduleActionMenu({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
@@ -965,11 +968,11 @@ function ScheduleActionMenu({
         <DropdownMenu.Content align="end" className={menuContentClass}>
           <DropdownMenu.Item className={menuItemClass} onSelect={onTrigger}>
             <Play className="h-3.5 w-3.5 text-green-400" />
-            Run now
+            {t("schedules.runNow")}
           </DropdownMenu.Item>
           <DropdownMenu.Item className={menuItemClass} onSelect={onEdit}>
             <Edit2 className="h-3.5 w-3.5" />
-            Edit settings
+            {t("schedules.editSettings")}
           </DropdownMenu.Item>
           <DropdownMenu.Separator className="-mx-1 my-1 h-px bg-border" />
           <DropdownMenu.Item
@@ -977,7 +980,7 @@ function ScheduleActionMenu({
             onSelect={onDelete}
           >
             <Trash2 className="h-3.5 w-3.5" />
-            Delete schedule
+            {t("schedules.deleteSchedule")}
           </DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>

@@ -49,6 +49,7 @@ import type {
   LLMSettingsRequest,
 } from "@/types/api";
 import OAuthModal from "./settings/oauth-modal";
+import { syncLanguageFromServer, useI18n } from "@/i18n";
 
 const settingsTabs = [
   "llm",
@@ -113,6 +114,7 @@ export default function SettingsPage() {
     ? (requestedTab as SettingsTab)
     : "llm";
 
+  const { t } = useI18n();
   const rate = useRateLimit();
   const updateRate = useUpdateRateLimit();
   const mail = useAgentMail();
@@ -217,6 +219,14 @@ export default function SettingsPage() {
       ),
     );
     setEnvChanges({});
+  }, [environment.data]);
+
+  // Adopt the operator's configured output language as the dashboard UI
+  // language when this browser has no explicit preference yet, so a fresh
+  // install honors XALGORIX_LANGUAGE. An explicit in-browser choice wins.
+  useEffect(() => {
+    const configured = envValue(environment.data, "XALGORIX_LANGUAGE");
+    if (configured) syncLanguageFromServer(configured);
   }, [environment.data]);
 
   // Sort providers alphabetically by displayName, with the
@@ -393,7 +403,7 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <header className="space-y-1">
         <h1 className="font-sans text-2xl font-semibold tracking-tight">
-          Settings
+          {t("settings.title")}
         </h1>
         <p className="text-sm text-muted-foreground">
           LLM provider, environment variables, integrations, and account access.
@@ -402,12 +412,12 @@ export default function SettingsPage() {
 
       <Tabs value={activeTab} onValueChange={changeTab}>
         <TabsList className="flex h-auto flex-wrap">
-          <TabsTrigger value="llm">LLM</TabsTrigger>
-          <TabsTrigger value="engagement">Engagement</TabsTrigger>
-          <TabsTrigger value="notifications">Notifications</TabsTrigger>
-          <TabsTrigger value="email">AgentMail</TabsTrigger>
-          <TabsTrigger value="environment">Environment</TabsTrigger>
-          <TabsTrigger value="account">Account</TabsTrigger>
+          <TabsTrigger value="llm">{t("settings.tab.llm")}</TabsTrigger>
+          <TabsTrigger value="engagement">{t("settings.tab.engagement")}</TabsTrigger>
+          <TabsTrigger value="notifications">{t("settings.tab.notifications")}</TabsTrigger>
+          <TabsTrigger value="email">{t("settings.tab.email")}</TabsTrigger>
+          <TabsTrigger value="environment">{t("settings.tab.environment")}</TabsTrigger>
+          <TabsTrigger value="account">{t("settings.tab.account")}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="llm">
@@ -426,7 +436,7 @@ export default function SettingsPage() {
           ) : (
             <Card>
               <CardHeader>
-                <CardTitle>LLM provider</CardTitle>
+                <CardTitle>{t("settings.card.llmProvider")}</CardTitle>
                 <CardDescription>
                   Saved to {llmForm.envFile || "~/.xalgorix.env"} and used by new scans.
                 </CardDescription>
@@ -899,7 +909,7 @@ export default function SettingsPage() {
 
                 <Separator />
                 <div className="flex items-center justify-end gap-3">
-                  {savedLLM && <span className="text-xs text-success">Saved</span>}
+                  {savedLLM && <span className="text-xs text-success">{t("settings.savedIndicator")}</span>}
                   <Button
                     onClick={saveLLMSettings}
                     disabled={updateLLM.isPending || !llmForm.provider}
@@ -943,7 +953,7 @@ export default function SettingsPage() {
           ) : (
             <Card>
               <CardHeader>
-                <CardTitle>Rate limits</CardTitle>
+                <CardTitle>{t("settings.card.rateLimits")}</CardTitle>
                 <CardDescription>
                   Applied to outbound requests issued by the agent and persisted to the env file.
                 </CardDescription>
@@ -985,7 +995,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="flex items-center justify-end gap-3">
                   {savedRate && (
-                    <span className="text-xs text-success">Saved</span>
+                    <span className="text-xs text-success">{t("settings.savedIndicator")}</span>
                   )}
                   <Button
                     onClick={async () => {
@@ -1021,7 +1031,7 @@ export default function SettingsPage() {
             <>
             <Card>
               <CardHeader>
-                <CardTitle>Discord notifications</CardTitle>
+                <CardTitle>{t("settings.card.discord")}</CardTitle>
                 <CardDescription>
                   Global defaults used unless a scan provides its own webhook.
                 </CardDescription>
@@ -1074,7 +1084,7 @@ export default function SettingsPage() {
                 <Separator />
                 <div className="flex items-center justify-end gap-3">
                   {savedNotifications && (
-                    <span className="text-xs text-success">Saved</span>
+                    <span className="text-xs text-success">{t("settings.savedIndicator")}</span>
                   )}
                   <Button
                     onClick={async () => {
@@ -1098,7 +1108,7 @@ export default function SettingsPage() {
             </Card>
             <Card>
               <CardHeader>
-                <CardTitle>Telegram notifications</CardTitle>
+                <CardTitle>{t("settings.card.telegram")}</CardTitle>
                 <CardDescription>
                   Send scan events and findings to a Telegram chat or channel.
                   Configure a bot via @BotFather and add it to the target chat as an admin.
@@ -1190,7 +1200,7 @@ export default function SettingsPage() {
           ) : (
             <Card>
               <CardHeader>
-                <CardTitle>AgentMail</CardTitle>
+                <CardTitle>{t("settings.card.agentMail")}</CardTitle>
                 <CardDescription>
                   Inbound triage requires a configured pod and API key.
                 </CardDescription>
@@ -1226,7 +1236,7 @@ export default function SettingsPage() {
                 <Separator />
                 <div className="flex items-center justify-end gap-3">
                   {savedMail && (
-                    <span className="text-xs text-success">Saved</span>
+                    <span className="text-xs text-success">{t("settings.savedIndicator")}</span>
                   )}
                   <Button
                     onClick={async () => {
@@ -1279,7 +1289,7 @@ export default function SettingsPage() {
                         </Badge>
                       )}
                       {savedEnvironment && (
-                        <span className="text-xs text-success">Saved</span>
+                        <span className="text-xs text-success">{t("settings.savedIndicator")}</span>
                       )}
                       <Button
                         onClick={async () => {
@@ -1304,7 +1314,7 @@ export default function SettingsPage() {
                     <Input
                       value={envFilter}
                       onChange={(e) => setEnvFilter(e.target.value)}
-                      placeholder="Search variables..."
+                      placeholder={t("settings.searchVariables")}
                       className="pl-8"
                     />
                   </div>
@@ -1343,8 +1353,8 @@ export default function SettingsPage() {
         <TabsContent value="account">
           <Card>
             <CardHeader>
-              <CardTitle>Account</CardTitle>
-              <CardDescription>Session and access.</CardDescription>
+              <CardTitle>{t("settings.card.account")}</CardTitle>
+              <CardDescription>{t("settings.account.desc")}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-2 text-sm sm:grid-cols-2">

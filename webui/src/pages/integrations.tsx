@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { useI18n } from "@/i18n";
 import {
   CheckCircle2,
   ExternalLink,
@@ -34,6 +35,7 @@ type Integration = {
 };
 
 export default function IntegrationsPage() {
+  const { t } = useI18n();
   const mail = useAgentMail();
   const rate = useRateLimit();
   const version = useVersion();
@@ -128,7 +130,7 @@ export default function IntegrationsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{t("integrations.title")}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Services the agent can talk to. Configure once, reuse across every
           scan.
@@ -141,7 +143,7 @@ export default function IntegrationsPage() {
         return (
           <section key={cat} className="space-y-3">
             <h2 className="text-[11px] uppercase tracking-wider text-muted-foreground">
-              {cat}
+              {t(`integrations.category.${cat}`)}
             </h2>
             <div className="grid gap-3 md:grid-cols-2">
               {items.map((it) => (
@@ -156,6 +158,7 @@ export default function IntegrationsPage() {
 }
 
 function IntegrationCard({ integration }: { integration: Integration }) {
+  const { t } = useI18n();
   const Icon = integration.icon;
   return (
     <Card className="overflow-hidden">
@@ -178,11 +181,11 @@ function IntegrationCard({ integration }: { integration: Integration }) {
               </h3>
               {integration.isConfigured ? (
                 <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px]">
-                  <CheckCircle2 className="h-3 w-3" /> Connected
+                  <CheckCircle2 className="h-3 w-3" /> {t("integrations.connected")}
                 </Badge>
               ) : (
                 <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                  Not connected
+                  {t("integrations.notConnected")}
                 </Badge>
               )}
             </div>

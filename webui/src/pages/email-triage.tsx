@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useI18n } from "@/i18n";
 import { Link } from "react-router-dom";
 import { CheckCircle2, Inbox, Mail, Radio, ShieldAlert } from "lucide-react";
 import {
@@ -51,6 +52,7 @@ function eventTitle(event: FeedEvent): string {
 }
 
 export default function EmailTriagePage() {
+  const { t } = useI18n();
   const { data: mail } = useAgentMail();
   const events = useWSStore((s) => s.events);
 
@@ -65,10 +67,10 @@ export default function EmailTriagePage() {
     <div className="space-y-6">
       <header className="space-y-1">
         <h1 className="font-sans text-2xl font-semibold tracking-tight">
-          Email triage
+          {t("email.title")}
         </h1>
         <p className="text-sm text-muted-foreground">
-          Live AgentMail events and ingestion status.
+          {t("email.subtitle")}
         </p>
       </header>
 
@@ -76,13 +78,13 @@ export default function EmailTriagePage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm">
-              <Inbox className="h-4 w-4" /> AgentMail pod
+              <Inbox className="h-4 w-4" /> {t("email.pod")}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="font-mono text-sm text-foreground">
               {mail?.pod || (
-                <span className="text-muted-foreground">not configured</span>
+                <span className="text-muted-foreground">{t("email.notConfigured")}</span>
               )}
             </div>
           </CardContent>
@@ -90,30 +92,30 @@ export default function EmailTriagePage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm">
-              <ShieldAlert className="h-4 w-4" /> API key
+              <ShieldAlert className="h-4 w-4" /> {t("email.apiKey")}
             </CardTitle>
           </CardHeader>
           <CardContent>
             {mail?.hasApiKey ? (
               <Badge variant="success">
-                <CheckCircle2 className="mr-1 h-3 w-3" /> set
+                <CheckCircle2 className="mr-1 h-3 w-3" /> {t("email.set")}
               </Badge>
             ) : (
-              <Badge variant="muted">missing</Badge>
+              <Badge variant="muted">{t("email.missing")}</Badge>
             )}
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm">
-              <Radio className="h-4 w-4" /> Status
+              <Radio className="h-4 w-4" /> {t("email.status")}
             </CardTitle>
           </CardHeader>
           <CardContent>
             {configured ? (
-              <Badge variant="success">listening</Badge>
+              <Badge variant="success">{t("email.listening")}</Badge>
             ) : (
-              <Badge variant="warning">setup required</Badge>
+              <Badge variant="warning">{t("email.setupRequired")}</Badge>
             )}
           </CardContent>
         </Card>

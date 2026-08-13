@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react"
+import { useI18n } from "@/i18n"
 import { Link } from "react-router-dom"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -45,6 +46,7 @@ import {
 } from "lucide-react"
 
 export default function InstancesPage() {
+  const { t } = useI18n()
   const [q, setQ] = useState("")
   const [status, setStatus] = useState<string>("all")
   const [mode, setMode] = useState<string>("all")
@@ -79,15 +81,15 @@ export default function InstancesPage() {
   return (
     <div className="space-y-6">
       <header className="flex flex-col gap-1">
-        <h1 className="font-sans text-2xl font-semibold tracking-tight">Instances</h1>
+        <h1 className="font-sans text-2xl font-semibold tracking-tight">{t("instances.title")}</h1>
         <p className="text-sm text-muted-foreground">
-          Active scan instances and global host pressure. Completed scans are historical records.
+          {t("instances.subtitle")}
         </p>
       </header>
 
       {error ? (
         <ErrorState
-          title="Could not load instances"
+          title={t("instances.loadError")}
           description={error instanceof Error ? error.message : "Unknown error"}
           action={<Button size="sm" variant="outline" onClick={() => refetch()}>Retry</Button>}
         />
@@ -120,24 +122,24 @@ export default function InstancesPage() {
                   </div>
                   <Select value={status} onValueChange={setStatus}>
                     <SelectTrigger className="w-full sm:w-44">
-                      <SelectValue placeholder="All statuses" />
+                      <SelectValue placeholder={t("instances.allStatuses")} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All statuses</SelectItem>
-                      <SelectItem value="running">Running</SelectItem>
-                      <SelectItem value="paused">Paused</SelectItem>
-                      <SelectItem value="saved">Saved</SelectItem>
-                      <SelectItem value="finished">Finished</SelectItem>
-                      <SelectItem value="stopped">Stopped</SelectItem>
-                      <SelectItem value="failed">Failed</SelectItem>
+                      <SelectItem value="all">{t("instances.allStatuses")}</SelectItem>
+                      <SelectItem value="running">{t("status.running")}</SelectItem>
+                      <SelectItem value="paused">{t("status.paused")}</SelectItem>
+                      <SelectItem value="saved">{t("status.saved")}</SelectItem>
+                      <SelectItem value="finished">{t("status.finished")}</SelectItem>
+                      <SelectItem value="stopped">{t("status.stopped")}</SelectItem>
+                      <SelectItem value="failed">{t("status.failed")}</SelectItem>
                     </SelectContent>
                   </Select>
                   <Select value={mode} onValueChange={setMode}>
                     <SelectTrigger className="w-full sm:w-44">
-                      <SelectValue placeholder="All modes" />
+                      <SelectValue placeholder={t("instances.allModes")} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All modes</SelectItem>
+                      <SelectItem value="all">{t("instances.allModes")}</SelectItem>
                       {modeOptions.map((m) => (
                         <SelectItem key={m} value={m}>
                           {m}
@@ -150,8 +152,8 @@ export default function InstancesPage() {
 
               {total === 0 ? (
                 <EmptyState
-                  title="No instances match"
-                  description="Adjust the search or filters to see more."
+                  title={t("instances.emptyTitle")}
+                  description={t("instances.emptyDescription")}
                 />
               ) : (
                 <>

@@ -517,8 +517,17 @@ var methodologyPhaseNames = map[int]string{
 
 // generateReport creates a professional PDF pentest report for a scan.
 func (s *Server) generateReport(scan *ScanRecord) (string, error) {
-	pdf := fpdf.New("P", "mm", "A4", "")
+	language := ""
+	if s.cfg != nil {
+		language = s.cfg.Language
+	}
+	pdf := newReportPDF(language)
 	pdf.SetAutoPageBreak(true, 20)
+
+	// tr localizes a static English report label into the configured output
+	// language (no-op for English). Used to translate section headings, table
+	// headers, and boilerplate; dynamic/technical values are left untouched.
+	tr := func(s string) string { return reportTr(language, s) }
 
 	palette := themeReportPalette()
 	darkBg := palette.bg
@@ -617,17 +626,17 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 	pdf.SetXY(74, 41)
 	pdf.SetFont("Helvetica", "B", 23)
 	setColor(white)
-	pdf.MultiCell(112, 9, "Security Assessment Report", "", "L", false)
+	pdf.MultiCell(112, 9, tr("Security Assessment Report"), "", "L", false)
 
 	pdf.SetXY(74, 62)
 	pdf.SetFont("Helvetica", "B", 14)
 	setColor(coral)
-	pdf.MultiCell(112, 7, reportDisplayText(brandName, "Target", 60), "", "L", false)
+	pdf.MultiCell(112, 7, reportDisplayText(brandName, tr("Target"), 60), "", "L", false)
 
 	pdf.SetXY(74, 78)
 	pdf.SetFont("Courier", "", 8)
 	setColor(gray)
-	pdf.MultiCell(112, 4.5, reportDisplayText(scan.Target, "No target recorded", 95), "", "L", false)
+	pdf.MultiCell(112, 4.5, reportDisplayText(scan.Target, tr("No target recorded"), 95), "", "L", false)
 
 	pdf.SetY(124)
 	coverRisk := riskLabel(riskScore(scan.Vulns))
@@ -636,10 +645,10 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 		value string
 		color [3]int
 	}{
-		{"Status", strings.ToUpper(reportDisplayText(scan.Status, "unknown", 18)), coral},
-		{"Risk", coverRisk, sevColor(strings.ToLower(coverRisk))},
-		{"Findings", fmt.Sprintf("%d", len(scan.Vulns)), red},
-		{"Started", formatReportDate(startTime), gray},
+		{tr("Status"), strings.ToUpper(reportDisplayText(scan.Status, "unknown", 18)), coral},
+		{tr("Risk"), coverRisk, sevColor(strings.ToLower(coverRisk))},
+		{tr("Findings"), fmt.Sprintf("%d", len(scan.Vulns)), red},
+		{tr("Started"), formatReportDate(startTime), gray},
 	}
 	coverCardW := 42.5
 	for i, c := range coverCards {
@@ -660,11 +669,11 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 	pdf.SetXY(14, 176)
 	pdf.SetFont("Helvetica", "B", 10)
 	setColor(gray)
-	pdf.CellFormat(182, 6, "SCAN ID", "", 1, "L", false, 0, "")
+	pdf.CellFormat(182, 6, tr("SCAN ID"), "", 1, "L", false, 0, "")
 	pdf.SetX(14)
 	pdf.SetFont("Courier", "", 10)
 	setColor(white)
-	pdf.CellFormat(182, 7, reportDisplayText(scan.ID, "not recorded", 90), "", 1, "L", false, 0, "")
+	pdf.CellFormat(182, 7, reportDisplayText(scan.ID, tr("not recorded"), 90), "", 1, "L", false, 0, "")
 
 	pdf.SetY(248)
 	drawRect(14, pdf.GetY(), 182, 0.3, border)
@@ -674,7 +683,7 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 	pdf.CellFormat(182, 5, "Xalgorix", "", 1, "L", false, 0, "")
 	pdf.SetFont("Helvetica", "", 8)
 	setColor(gray)
-	pdf.CellFormat(182, 5, "Autonomous AI-powered security assessment", "", 1, "L", false, 0, "")
+	pdf.CellFormat(182, 5, tr("Autonomous AI-powered security assessment"), "", 1, "L", false, 0, "")
 	drawRect(0, 294, 210, 3, coral)
 
 	// ─── EXECUTIVE SUMMARY ─────────────────────────────────
@@ -685,7 +694,7 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 	pdf.SetY(15)
 	pdf.SetFont("Helvetica", "B", 22)
 	setColor(coral)
-	pdf.CellFormat(190, 12, "Executive Summary", "", 1, "L", false, 0, "")
+	pdf.CellFormat(190, 12, tr("Executive Summary"), "", 1, "L", false, 0, "")
 	drawRect(10, pdf.GetY()+2, 50, 0.8, coral)
 	pdf.Ln(8)
 
@@ -773,7 +782,7 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 	pdf.SetXY(14, riskY+5)
 	pdf.SetFont("Helvetica", "B", 11)
 	setColor(gray)
-	pdf.CellFormat(60, 6, "OVERALL RISK SCORE", "", 0, "L", false, 0, "")
+	pdf.CellFormat(60, 6, tr("OVERALL RISK SCORE"), "", 0, "L", false, 0, "")
 	pdf.SetFont("Helvetica", "B", 22)
 	setColor(riskColor)
 	pdf.CellFormat(25, 10, fmt.Sprintf("%.1f", score), "", 0, "L", false, 0, "")
@@ -784,7 +793,7 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 	// ── Executive Risk Narrative ──
 	pdf.SetFont("Helvetica", "B", 11)
 	setColor(white)
-	pdf.CellFormat(190, 7, "Risk Assessment", "", 1, "L", false, 0, "")
+	pdf.CellFormat(190, 7, tr("Risk Assessment"), "", 1, "L", false, 0, "")
 	pdf.SetFont("Helvetica", "", 9)
 	setColor(white)
 	narrative := fmt.Sprintf(
@@ -818,7 +827,7 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 	// Scan metadata
 	pdf.SetFont("Helvetica", "B", 13)
 	setColor(white)
-	pdf.CellFormat(190, 8, "Scan Details", "", 1, "L", false, 0, "")
+	pdf.CellFormat(190, 8, tr("Scan Details"), "", 1, "L", false, 0, "")
 	pdf.Ln(2)
 
 	metaItems := [][2]string{
@@ -854,16 +863,16 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 	pdf.SetY(15)
 	pdf.SetFont("Helvetica", "B", 22)
 	setColor(coral)
-	pdf.CellFormat(190, 12, "Testing Methodology", "", 1, "L", false, 0, "")
+	pdf.CellFormat(190, 12, tr("Testing Methodology"), "", 1, "L", false, 0, "")
 	drawRect(10, pdf.GetY()+2, 50, 0.8, coral)
 	pdf.Ln(8)
 
 	pdf.SetFont("Helvetica", "", 9)
 	setColor(white)
 	pdf.SetX(10)
-	pdf.MultiCell(190, 4.5, "Xalgorix follows a comprehensive 22-phase penetration testing methodology "+
+	pdf.MultiCell(190, 4.5, tr("Xalgorix follows a comprehensive 22-phase penetration testing methodology "+
 		"aligned with OWASP, PTES, and industry best practices. Each phase is executed by an autonomous AI agent "+
-		"with tool access to terminal, browser, and specialized security utilities.", "", "L", false)
+		"with tool access to terminal, browser, and specialized security utilities."), "", "L", false)
 	pdf.Ln(4)
 
 	// Determine which phases were executed
@@ -913,11 +922,11 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 		} else {
 			setColor(gray)
 		}
-		status := "SKIPPED"
+		status := tr("SKIPPED")
 		if executed {
-			status = "SELECTED"
+			status = tr("SELECTED")
 		}
-		pdf.CellFormat(145, 7, fmt.Sprintf("Phase %d: %s", phaseNum, name), "", 0, "L", false, 0, "")
+		pdf.CellFormat(145, 7, fmt.Sprintf(tr("Phase %d: %s"), phaseNum, tr(name)), "", 0, "L", false, 0, "")
 		pdf.SetFont("Helvetica", "B", 7)
 		if executed {
 			setColor(teal)
@@ -934,10 +943,10 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 	pdf.SetX(10)
 	drawRect(12, pdf.GetY()+1, 3, 3, teal)
 	pdf.SetX(18)
-	pdf.CellFormat(30, 5, "= Executed", "", 0, "L", false, 0, "")
+	pdf.CellFormat(30, 5, tr("= Executed"), "", 0, "L", false, 0, "")
 	drawRect(50, pdf.GetY()+1, 3, 3, gray)
 	pdf.SetX(56)
-	pdf.CellFormat(30, 5, "= Skipped", "", 1, "L", false, 0, "")
+	pdf.CellFormat(30, 5, tr("= Skipped"), "", 1, "L", false, 0, "")
 
 	// ─── RECONNAISSANCE FINDINGS ─────────────────────────
 	recon := collectReconReportSummary(scan.Events)
@@ -949,14 +958,14 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 		pdf.SetY(15)
 		pdf.SetFont("Helvetica", "B", 22)
 		setColor(teal)
-		pdf.CellFormat(190, 12, "Reconnaissance Findings", "", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 12, tr("Reconnaissance Findings"), "", 1, "L", false, 0, "")
 		drawRect(10, pdf.GetY()+2, 62, 0.8, teal)
 		pdf.Ln(8)
 
 		pdf.SetFont("Helvetica", "", 9)
 		setColor(white)
 		pdf.SetX(10)
-		pdf.MultiCell(190, 4.5, "The following non-exploit reconnaissance observations were extracted from the scan feed and tool outputs. These are included for attack-surface documentation and operational handoff.", "", "L", false)
+		pdf.MultiCell(190, 4.5, tr("The following non-exploit reconnaissance observations were extracted from the scan feed and tool outputs. These are included for attack-surface documentation and operational handoff."), "", "L", false)
 		pdf.Ln(5)
 
 		drawReconList := func(title string, items []string) {
@@ -1008,20 +1017,20 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 	}
 	pdf.SetFont("Helvetica", "B", 16)
 	setColor(coral)
-	pdf.CellFormat(190, 10, "Blue Team Reference Timestamps", "", 1, "L", false, 0, "")
+	pdf.CellFormat(190, 10, tr("Blue Team Reference Timestamps"), "", 1, "L", false, 0, "")
 	drawRect(10, pdf.GetY()+1, 50, 0.8, teal)
 	pdf.Ln(6)
 
 	pdf.SetFont("Helvetica", "", 8)
 	setColor(gray)
 	pdf.SetX(10)
-	pdf.MultiCell(190, 4, "The following RFC3339 timestamps enable Blue Team operators to correlate "+
-		"scan activity with SIEM/log sources for use-case development and alert tuning.", "", "L", false)
+	pdf.MultiCell(190, 4, tr("The following RFC3339 timestamps enable Blue Team operators to correlate "+
+		"scan activity with SIEM/log sources for use-case development and alert tuning."), "", "L", false)
 	pdf.Ln(3)
 
 	tsItems := [][2]string{
-		{"Scan Start", scan.StartedAt},
-		{"Scan End", scan.FinishedAt},
+		{tr("Scan Start"), scan.StartedAt},
+		{tr("Scan End"), scan.FinishedAt},
 	}
 	// Add per-vulnerability discovery timestamps
 	for i, v := range scan.Vulns {
@@ -1085,14 +1094,14 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 		pdf.SetY(15)
 		pdf.SetFont("Helvetica", "B", 22)
 		setColor(coral)
-		pdf.CellFormat(190, 12, "Findings Summary", "", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 12, tr("Findings Summary"), "", 1, "L", false, 0, "")
 		drawRect(10, pdf.GetY()+2, 50, 0.8, coral)
 		pdf.Ln(8)
 
 		pdf.SetFont("Helvetica", "", 8)
 		setColor(white)
 		pdf.SetX(10)
-		pdf.MultiCell(190, 4, "The following table summarizes all findings with their security framework mappings (CWE, OWASP Top 10 2021). Detailed write-ups follow in the Vulnerability Details section.", "", "L", false)
+		pdf.MultiCell(190, 4, tr("The following table summarizes all findings with their security framework mappings (CWE, OWASP Top 10 2021). Detailed write-ups follow in the Vulnerability Details section."), "", "L", false)
 		pdf.Ln(4)
 
 		// Table header
@@ -1102,8 +1111,8 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 		setColor(coral)
 		pdf.SetXY(12, thY+1)
 		pdf.CellFormat(10, 6, "ID", "", 0, "L", false, 0, "")
-		pdf.CellFormat(68, 6, "FINDING", "", 0, "L", false, 0, "")
-		pdf.CellFormat(20, 6, "SEVERITY", "", 0, "C", false, 0, "")
+		pdf.CellFormat(68, 6, tr("FINDING"), "", 0, "L", false, 0, "")
+		pdf.CellFormat(20, 6, tr("SEVERITY"), "", 0, "C", false, 0, "")
 		pdf.CellFormat(14, 6, "CVSS", "", 0, "C", false, 0, "")
 		pdf.CellFormat(40, 6, "CVE", "", 0, "L", false, 0, "")
 		pdf.CellFormat(18, 6, "CWE", "", 0, "L", false, 0, "")
@@ -1188,7 +1197,7 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 		pdf.SetY(15)
 		pdf.SetFont("Helvetica", "B", 22)
 		setColor(coral)
-		pdf.CellFormat(190, 12, "Vulnerability Details", "", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 12, tr("Vulnerability Details"), "", 1, "L", false, 0, "")
 		drawRect(10, pdf.GetY()+2, 50, 0.8, coral)
 		pdf.Ln(8)
 
@@ -1241,10 +1250,10 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 				pdf.SetX(14)
 				if v.Verified {
 					setColor(teal)
-					pdf.CellFormat(0, 5, fmt.Sprintf("Verified via: %s", strings.ToUpper(v.VerificationMethod)), "", 1, "L", false, 0, "")
+					pdf.CellFormat(0, 5, fmt.Sprintf(tr("Verified via: %s"), strings.ToUpper(v.VerificationMethod)), "", 1, "L", false, 0, "")
 				} else {
 					setColor(amber)
-					pdf.CellFormat(0, 5, fmt.Sprintf("UNVERIFIED — manual review required (reported via %s)", strings.ToUpper(v.VerificationMethod)), "", 1, "L", false, 0, "")
+					pdf.CellFormat(0, 5, fmt.Sprintf(tr("UNVERIFIED — manual review required (reported via %s)"), strings.ToUpper(v.VerificationMethod)), "", 1, "L", false, 0, "")
 				}
 			}
 
@@ -1254,7 +1263,7 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 				pdf.SetFont("Helvetica", "", 8)
 				setColor(gray)
 				pdf.SetXY(14, metaY)
-				pdf.CellFormat(15, 5, "CVSS:", "", 0, "L", false, 0, "")
+				pdf.CellFormat(15, 5, tr("CVSS:"), "", 0, "L", false, 0, "")
 				setColor(sc)
 				pdf.SetFont("Helvetica", "B", 8)
 				pdf.CellFormat(15, 5, fmt.Sprintf("%.1f", v.CVSS), "", 0, "L", false, 0, "")
@@ -1274,7 +1283,7 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 				if v.CVE != "" {
 					setColor(gray)
 					pdf.SetFont("Helvetica", "", 8)
-					pdf.CellFormat(12, 5, "CVE:", "", 0, "L", false, 0, "")
+					pdf.CellFormat(12, 5, tr("CVE:"), "", 0, "L", false, 0, "")
 					setColor(white)
 					cveText := reportDisplayText(v.CVE, "", 80)
 					pdf.CellFormat(90, 5, cveText, "", 0, "L", false, 0, "")
@@ -1282,7 +1291,7 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 				if v.Method != "" {
 					setColor(gray)
 					pdf.SetFont("Helvetica", "", 8)
-					pdf.CellFormat(18, 5, "Method:", "", 0, "L", false, 0, "")
+					pdf.CellFormat(18, 5, tr("Method:"), "", 0, "L", false, 0, "")
 					setColor(white)
 					pdf.CellFormat(20, 5, v.Method, "", 0, "L", false, 0, "")
 				}
@@ -1466,7 +1475,7 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 		pdf.SetY(15)
 		pdf.SetFont("Helvetica", "B", 22)
 		setColor(coral)
-		pdf.CellFormat(190, 12, "Tested Endpoints & URLs", "", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 12, tr("Tested Endpoints & URLs"), "", 1, "L", false, 0, "")
 		drawRect(10, pdf.GetY()+2, 50, 0.8, coral)
 		pdf.Ln(8)
 
@@ -1504,32 +1513,13 @@ func (s *Server) generateReport(scan *ScanRecord) (string, error) {
 	pdf.SetY(15)
 	pdf.SetFont("Helvetica", "B", 22)
 	setColor(red)
-	pdf.CellFormat(190, 12, "Disclaimer", "", 1, "L", false, 0, "")
+	pdf.CellFormat(190, 12, tr("Disclaimer"), "", 1, "L", false, 0, "")
 	drawRect(10, pdf.GetY()+2, 50, 0.8, teal)
 	pdf.Ln(10)
 
-	disclaimer := `This penetration test was conducted by Xalgorix, an autonomous AI-powered security assessment tool. The findings in this report are based on automated testing and manual verification where possible.
-
-IMPORTANT NOTICES:
-
-* Scope: This assessment was limited to the target systems explicitly listed in this report. Any systems or services outside the defined scope were not tested.
-
-* False Positives: While Xalgorix attempts to verify findings before reporting, some findings may require manual validation. We recommend validating all critical and high-severity findings before taking remediation actions.
-
-* Limitations: Automated testing cannot discover all vulnerabilities. Manual testing, code review, and other complementary security activities are recommended for comprehensive security coverage.
-
-* Legal: This assessment was conducted with authorization from the target owner. Unauthorized security testing is illegal. Ensure you have proper authorization before testing any system.
-
-* Report Accuracy: This report is provided "as is" without warranties of any kind. The testing methodology and findings are based on the tools and techniques available at the time of testing.
-
-* Remediation: For any vulnerabilities found, follow industry best practices for remediation. Consult with security professionals for complex vulnerabilities.
-
-Generated by Xalgorix - Autonomous AI Pentesting Engine
-https://github.com/xalgord/xalgorix`
-
 	pdf.SetFont("Helvetica", "", 10)
 	setColor(white)
-	pdf.MultiCell(182, 5, disclaimer, "", "L", false)
+	pdf.MultiCell(182, 5, tr(reportDisclaimerEN), "", "L", false)
 
 	// ─── REFERENCE INDEX APPENDIX ──────────────────────────
 	if len(scan.Vulns) > 0 {
@@ -1540,20 +1530,20 @@ https://github.com/xalgord/xalgorix`
 		pdf.SetY(15)
 		pdf.SetFont("Helvetica", "B", 22)
 		setColor(teal)
-		pdf.CellFormat(190, 12, "Reference Index", "", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 12, tr("Reference Index"), "", 1, "L", false, 0, "")
 		drawRect(10, pdf.GetY()+2, 50, 0.8, teal)
 		pdf.Ln(8)
 
 		pdf.SetFont("Helvetica", "", 8)
 		setColor(white)
 		pdf.SetX(10)
-		pdf.MultiCell(190, 4, "The mappings below are inferred from each finding's vulnerability class and are provided as a consolidated index for traceability and compliance reporting.", "", "L", false)
+		pdf.MultiCell(190, 4, tr("The mappings below are inferred from each finding's vulnerability class and are provided as a consolidated index for traceability and compliance reporting."), "", "L", false)
 		pdf.Ln(5)
 
 		// ── CWE Reference Table ──
 		pdf.SetFont("Helvetica", "B", 13)
 		setColor(teal)
-		pdf.CellFormat(190, 8, "CWE Reference Table", "", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 8, tr("CWE Reference Table"), "", 1, "L", false, 0, "")
 		pdf.Ln(2)
 
 		// Table header
@@ -1562,10 +1552,10 @@ https://github.com/xalgord/xalgorix`
 		pdf.SetFont("Helvetica", "B", 7)
 		setColor(teal)
 		pdf.SetXY(12, cweThY+1)
-		pdf.CellFormat(15, 6, "FINDING", "", 0, "L", false, 0, "")
+		pdf.CellFormat(15, 6, tr("FINDING"), "", 0, "L", false, 0, "")
 		pdf.CellFormat(22, 6, "CWE", "", 0, "L", false, 0, "")
-		pdf.CellFormat(80, 6, "CWE NAME", "", 0, "L", false, 0, "")
-		pdf.CellFormat(63, 6, "FINDING TITLE", "", 0, "L", false, 0, "")
+		pdf.CellFormat(80, 6, tr("CWE NAME"), "", 0, "L", false, 0, "")
+		pdf.CellFormat(63, 6, tr("FINDING TITLE"), "", 0, "L", false, 0, "")
 		pdf.Ln(8)
 
 		for i, v := range scan.Vulns {
@@ -1626,7 +1616,7 @@ https://github.com/xalgord/xalgorix`
 
 		pdf.SetFont("Helvetica", "B", 13)
 		setColor(teal)
-		pdf.CellFormat(190, 8, "OWASP Top 10 (2021) Coverage", "", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 8, tr("OWASP Top 10 (2021) Coverage"), "", 1, "L", false, 0, "")
 		pdf.Ln(2)
 
 		// owaspCounts was pre-computed above
@@ -1638,9 +1628,9 @@ https://github.com/xalgord/xalgorix`
 		setColor(teal)
 		pdf.SetXY(12, owThY+1)
 		pdf.CellFormat(16, 6, "ID", "", 0, "L", false, 0, "")
-		pdf.CellFormat(120, 6, "OWASP CATEGORY", "", 0, "L", false, 0, "")
-		pdf.CellFormat(20, 6, "FINDINGS", "", 0, "C", false, 0, "")
-		pdf.CellFormat(24, 6, "STATUS", "", 0, "C", false, 0, "")
+		pdf.CellFormat(120, 6, tr("OWASP CATEGORY"), "", 0, "L", false, 0, "")
+		pdf.CellFormat(20, 6, tr("FINDINGS"), "", 0, "C", false, 0, "")
+		pdf.CellFormat(24, 6, tr("STATUS"), "", 0, "C", false, 0, "")
 		pdf.Ln(8)
 
 		for i, cat := range owaspCategories {
@@ -1686,7 +1676,7 @@ https://github.com/xalgord/xalgorix`
 				drawRect(166, rowY+1, 22, 5, red)
 				pdf.SetTextColor(255, 255, 255)
 				pdf.SetXY(166, rowY+1)
-				pdf.CellFormat(22, 5, "FOUND", "", 0, "C", false, 0, "")
+				pdf.CellFormat(22, 5, tr("FOUND"), "", 0, "C", false, 0, "")
 			} else {
 				setColor(gray)
 				pdf.CellFormat(20, 7, "0", "", 0, "C", false, 0, "")
@@ -1710,7 +1700,7 @@ https://github.com/xalgord/xalgorix`
 
 			pdf.SetFont("Helvetica", "B", 13)
 			setColor(teal)
-			pdf.CellFormat(190, 8, "PTES Phase Mapping", "", 1, "L", false, 0, "")
+			pdf.CellFormat(190, 8, tr("PTES Phase Mapping"), "", 1, "L", false, 0, "")
 			pdf.Ln(2)
 
 			ptesPhases := []string{
@@ -1727,9 +1717,9 @@ https://github.com/xalgord/xalgorix`
 			pdf.SetFont("Helvetica", "B", 7)
 			setColor(teal)
 			pdf.SetXY(12, ptThY+1)
-			pdf.CellFormat(100, 6, "PTES PHASE", "", 0, "L", false, 0, "")
-			pdf.CellFormat(30, 6, "FINDINGS", "", 0, "C", false, 0, "")
-			pdf.CellFormat(50, 6, "STATUS", "", 0, "C", false, 0, "")
+			pdf.CellFormat(100, 6, tr("PTES PHASE"), "", 0, "L", false, 0, "")
+			pdf.CellFormat(30, 6, tr("FINDINGS"), "", 0, "C", false, 0, "")
+			pdf.CellFormat(50, 6, tr("STATUS"), "", 0, "C", false, 0, "")
 			pdf.Ln(8)
 
 			for j, phase := range ptesPhases {
@@ -1756,7 +1746,7 @@ https://github.com/xalgord/xalgorix`
 				} else {
 					setColor(gray)
 				}
-				pdf.CellFormat(100, 7, phase, "", 0, "L", false, 0, "")
+				pdf.CellFormat(100, 7, tr(phase), "", 0, "L", false, 0, "")
 
 				pdf.SetFont("Helvetica", "B", 7)
 				if hasFindings {
@@ -1764,7 +1754,7 @@ https://github.com/xalgord/xalgorix`
 					pdf.CellFormat(30, 7, fmt.Sprintf("%d", count), "", 0, "C", false, 0, "")
 					pdf.SetFont("Helvetica", "B", 6)
 					setColor(white)
-					pdf.CellFormat(50, 7, "TESTED", "", 0, "C", false, 0, "")
+					pdf.CellFormat(50, 7, tr("TESTED"), "", 0, "C", false, 0, "")
 				} else {
 					setColor(gray)
 					pdf.CellFormat(30, 7, "0", "", 0, "C", false, 0, "")
