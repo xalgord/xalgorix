@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 import { useVersion } from "@/api/queries";
 import { useI18n } from "@/i18n";
 
-const GITHUB_REPO = "xalgord/xalgorix";
+const GITHUB_REPO = "xalgorix/xalgorix";
 
 const NAV: { to: string; labelKey: string; icon: typeof LayoutGrid; end?: boolean }[] = [
   { to: "/", labelKey: "nav.overview", icon: LayoutGrid, end: true },

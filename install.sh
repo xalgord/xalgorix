@@ -2,7 +2,7 @@
 #
 # Xalgorix installer — one-line install of the latest release binary.
 #
-#   curl -sSL https://raw.githubusercontent.com/xalgord/xalgorix/main/install.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/xalgorix/xalgorix/main/install.sh | bash
 #
 # What it does:
 #   1. Detects your OS and CPU architecture.
@@ -15,7 +15,7 @@
 #
 set -euo pipefail
 
-REPO="xalgord/xalgorix"
+REPO="xalgorix/xalgorix"
 BINARY="xalgorix"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'

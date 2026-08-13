@@ -129,7 +129,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "❌ Failed to fetch latest version from GitHub\n")
 			fmt.Fprintf(os.Stderr, "   This is usually caused by GitHub API rate limiting (60 req/hour for unauthenticated users).\n")
 			fmt.Fprintf(os.Stderr, "   Try again in a few minutes, or update manually:\n")
-			fmt.Fprintf(os.Stderr, "   wget -O $(which xalgorix) https://github.com/xalgord/xalgorix/releases/latest/download/xalgorix-linux-amd64\n")
+			fmt.Fprintf(os.Stderr, "   wget -O $(which xalgorix) https://github.com/xalgorix/xalgorix/releases/latest/download/xalgorix-linux-amd64\n")
 			os.Exit(1)
 		}
 
@@ -972,7 +972,7 @@ func execRestart(path string, argv, env []string) error {
 func fetchLatestRelease() (version string, downloadURL string) {
 	client := &http.Client{Timeout: 15 * time.Second}
 
-	req, err := http.NewRequest("GET", "https://api.github.com/repos/xalgord/xalgorix/releases/latest", nil)
+	req, err := http.NewRequest("GET", "https://api.github.com/repos/xalgorix/xalgorix/releases/latest", nil)
 	if err != nil {
 		return "", ""
 	}
@@ -1024,7 +1024,7 @@ func fetchLatestRelease() (version string, downloadURL string) {
 
 // fetchLatestTag uses the git tags API as a fallback when releases API is rate-limited.
 func fetchLatestTag(client *http.Client) (string, string) {
-	req, err := http.NewRequest("GET", "https://api.github.com/repos/xalgord/xalgorix/tags?per_page=1", nil)
+	req, err := http.NewRequest("GET", "https://api.github.com/repos/xalgorix/xalgorix/tags?per_page=1", nil)
 	if err != nil {
 		return "", ""
 	}
@@ -1053,7 +1053,7 @@ func fetchLatestTag(client *http.Client) (string, string) {
 	}
 
 	wantName := fmt.Sprintf("xalgorix-%s-%s", runtime.GOOS, runtime.GOARCH)
-	downloadURL := fmt.Sprintf("https://github.com/xalgord/xalgorix/releases/download/v%s/%s", ver, wantName)
+	downloadURL := fmt.Sprintf("https://github.com/xalgorix/xalgorix/releases/download/v%s/%s", ver, wantName)
 	return ver, downloadURL
 }
 

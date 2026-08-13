@@ -11,11 +11,11 @@ By participating you agree to our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 New here? These labels are the best entry points:
 
-- [`good first issue`](https://github.com/xalgord/xalgorix/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+- [`good first issue`](https://github.com/xalgorix/xalgorix/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
   — small, well-scoped tasks that don't require deep knowledge of the codebase.
-- [`help wanted`](https://github.com/xalgord/xalgorix/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+- [`help wanted`](https://github.com/xalgorix/xalgorix/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
   — issues we'd love community help on.
-- [`documentation`](https://github.com/xalgord/xalgorix/issues?q=is%3Aissue+is%3Aopen+label%3Adocumentation)
+- [`documentation`](https://github.com/xalgorix/xalgorix/issues?q=is%3Aissue+is%3Aopen+label%3Adocumentation)
   — documentation improvements, great for a first PR.
 
 Comment on an issue to let us know you're picking it up so we don't double up.

@@ -8,13 +8,13 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-10b981?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Linux-111111?style=for-the-badge&logo=linux&logoColor=white)](#-installation)
 [![Hosted](https://img.shields.io/badge/Hosted-www.xalgorix.com-6d28d9?style=for-the-badge&logo=icloud&logoColor=white)](https://www.xalgorix.com/)
-[![GitHub stars](https://img.shields.io/github/stars/xalgord/xalgorix?style=for-the-badge&logo=github&color=yellow)](https://github.com/xalgord/xalgorix/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/xalgord/xalgorix?style=for-the-badge&logo=github&color=blue)](https://github.com/xalgord/xalgorix/network/members)
-[![GitHub release](https://img.shields.io/github/v/release/xalgord/xalgorix?style=for-the-badge&logo=github&color=green)](https://github.com/xalgord/xalgorix/releases)
+[![GitHub stars](https://img.shields.io/github/stars/xalgorix/xalgorix?style=for-the-badge&logo=github&color=yellow)](https://github.com/xalgorix/xalgorix/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/xalgorix/xalgorix?style=for-the-badge&logo=github&color=blue)](https://github.com/xalgorix/xalgorix/network/members)
+[![GitHub release](https://img.shields.io/github/v/release/xalgorix/xalgorix?style=for-the-badge&logo=github&color=green)](https://github.com/xalgorix/xalgorix/releases)
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/xalgord/xalgorix)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/xalgorix/xalgorix)
 
-<a href="https://trendshift.io/repositories/35278?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-35278" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/35278/daily?language=Go" alt="xalgord/xalgorix | Trendshift" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/35278?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-35278" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/35278/daily?language=Go" alt="xalgorix/xalgorix | Trendshift" width="250" height="55"/></a>
 
 </div>
 
@@ -69,7 +69,7 @@ Open `http://localhost:9137`. You **don't need an LLM key to start** — the das
 **Easiest — Docker Compose** (maps the port + a persistent volume for you):
 
 ```bash
-curl -sSLO https://raw.githubusercontent.com/xalgord/xalgorix/main/docker-compose.yml
+curl -sSLO https://raw.githubusercontent.com/xalgorix/xalgorix/main/docker-compose.yml
 docker compose up -d
 docker compose logs -f   # shows the generated admin password on first start
 ```
@@ -79,7 +79,7 @@ The image ships an extensive offensive-security toolset preinstalled (nmap, nucl
 **Or build from source** (needs Go 1.25+ and Node.js):
 
 ```bash
-git clone https://github.com/xalgord/xalgorix.git
+git clone https://github.com/xalgorix/xalgorix.git
 cd xalgorix
 make build
 sudo install -m 755 build/xalgorix /usr/local/bin/xalgorix
@@ -153,7 +153,7 @@ Most scanners **detect**. Xalgorix **proves**. An autonomous agent works through
 
 > Directional comparison — Nuclei and ZAP are excellent at what they do. Xalgorix adds the reasoning-heavy discovery and exploit-verification layer on top.
 
-If Xalgorix saves you a triage cycle, please **[⭐ star the repo](https://github.com/xalgord/xalgorix)** — it genuinely helps others find it.
+If Xalgorix saves you a triage cycle, please **[⭐ star the repo](https://github.com/xalgorix/xalgorix)** — it genuinely helps others find it.
 
 ## 🎯 Use Cases
 
@@ -248,7 +248,7 @@ go version
 ### 🔨 Build From Source
 
 ```bash
-git clone https://github.com/xalgord/xalgorix.git
+git clone https://github.com/xalgorix/xalgorix.git
 cd xalgorix
 make build
 sudo install -m 755 build/xalgorix /usr/local/bin/xalgorix
@@ -781,5 +781,5 @@ Xalgorix is released under the Apache License 2.0. See [LICENSE](LICENSE).
 | ------------- | -------------------------------------------------------------------------------- |
 | ☁️ Hosted (Cloud) | [www.xalgorix.com](https://www.xalgorix.com/)                                   |
 | 📖 Documentation | [docs.xalgorix.com](https://docs.xalgorix.com)                                   |
-| 🐛 Issues        | [github.com/xalgord/xalgorix/issues](https://github.com/xalgord/xalgorix/issues) |
+| 🐛 Issues        | [github.com/xalgorix/xalgorix/issues](https://github.com/xalgorix/xalgorix/issues) |
 | ☕ Support       | [buymeacoffee.com/xalgord](https://buymeacoffee.com/xalgord)                     |

@@ -73,7 +73,7 @@ An extensive toolset ships preinstalled — `nmap`, `nuclei`, `httpx`, `subfinde
 
 ## Links
 
-- **Source & docs:** https://github.com/xalgord/xalgorix
+- **Source & docs:** https://github.com/xalgorix/xalgorix
 - **Documentation:** https://docs.xalgorix.com
 - **Hosted (no install):** https://www.xalgorix.com
 - **One-line install (any Linux, amd64/arm64):** `curl -sSL https://www.xalgorix.com/install | bash`
