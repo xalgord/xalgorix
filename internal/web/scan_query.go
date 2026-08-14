@@ -571,6 +571,38 @@ func isTerminalScanStatus(status string) bool {
 	}
 }
 
+// isInterruptedRecoverableRecord reports whether an on-disk scan record was
+// interrupted by something the operator did NOT intend as a final stop, and is
+// therefore a candidate for auto-resume on the next startup.
+//
+// Two cases qualify:
+//   - running/pending: the process died before the scan reached a terminal
+//     state (crash / SIGKILL). scan.json still says running/pending.
+//   - stopped with a signal_/panic_ reason: a graceful SIGTERM/SIGINT (or a
+//     recovered panic) persisted the scan as "stopped" but PRESERVED its
+//     queue_state on purpose (shouldPreserveQueueStateOnExit). Without this
+//     case those scans stayed "stopped" forever and only a fresh "Start" was
+//     offered — the bug this closes.
+//
+// A user-initiated stop is deliberately NOT recoverable: handleStop clears the
+// queue_state, so even when such a record reaches this function the downstream
+// resumability check (valid queue_state ownership) fails and it stays stopped.
+// Gating resume on queue_state ownership — not on this predicate alone — is
+// what keeps user-stopped/finished scans from being revived.
+func isInterruptedRecoverableRecord(status, stopReason string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "running", "pending":
+		return true
+	case "stopped":
+		reason := strings.ToLower(strings.TrimSpace(stopReason))
+		return strings.HasPrefix(reason, "signal_") ||
+			reason == "panic_recovered" ||
+			reason == "server_restart_resuming"
+	default:
+		return false
+	}
+}
+
 func isUnresolvedSubScanStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "", "pending", "running":
@@ -973,14 +1005,18 @@ func (s *Server) rebuildInstancesFromDisk() {
 	for i := range entries {
 		entry := &entries[i]
 		_, resumable := instanceIdentity(entry)
-		if entry.rec.Status != "running" && entry.rec.Status != "pending" {
+		if !isInterruptedRecoverableRecord(entry.rec.Status, entry.rec.StopReason) {
 			continue
 		}
 		if resumable {
 			entry.rec.Status = "pending"
 			entry.rec.StopReason = "server_restart_resuming"
 			entry.rec.FinishedAt = ""
-		} else {
+		} else if entry.rec.Status != "stopped" {
+			// Only terminalize records that were mid-flight (running/pending)
+			// and have no resume state. A signal-stopped record with no valid
+			// queue_state is already correctly "stopped"; leave its reason
+			// intact rather than rewriting it every boot.
 			entry.rec.Status = "stopped"
 			entry.rec.StopReason = "server_restart_no_resume_state"
 			entry.rec.FinishedAt = time.Now().Format(time.RFC3339)
