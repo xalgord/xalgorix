@@ -261,6 +261,10 @@ func main() {
 		printServiceAccessInfo(cfg, port)
 		fmt.Println()
 
+		// Opt-in profiling: starts a loopback pprof listener only when
+		// XALGORIX_PPROF_ADDR is set (disabled by default). See pprof.go.
+		web.StartDebugServerFromEnv()
+
 		srv := web.NewServer(cfg, port)
 		if err := srv.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "Server error: %v\n", err)

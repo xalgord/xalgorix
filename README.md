@@ -624,6 +624,7 @@ Some settings require a restart because they affect process startup or server bi
 | `XALGORIX_LLM_MAX_RETRIES`           | `5`              | Retry count for transient LLM failures.                |
 | `XALGORIX_MEMORY_COMPRESSOR_TIMEOUT` | `30`             | Timeout in seconds for context compression.            |
 | `XALGORIX_MAX_ITERATIONS`            | `0`              | Agent iteration cap. `0` means unlimited.              |
+| `XALGORIX_PPROF_ADDR`                | none             | Opt-in Go profiler. When set (e.g. `127.0.0.1:6060`), starts a standalone pprof server at `/debug/pprof/` on that address for CPU/heap diagnosis. Disabled by default. Exposes process internals — bind loopback and reach it via an SSH tunnel; never expose publicly. |
 | `GEMINI_API_KEY`                     | none             | Optional Gemini key for web-search enrichment.         |
 
 ### 🔒 Web and Security
