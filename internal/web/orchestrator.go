@@ -141,16 +141,35 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 		}
 	}
 	s.dispatchMu.Lock()
-	if durable, err := s.loadExactDispatchSnapshot(instanceID); err == nil &&
+	durable, durErr := s.loadExactDispatchSnapshot(instanceID)
+	if durErr == nil &&
 		(isTerminalScanStatus(durable.Status) || strings.EqualFold(durable.Status, "stopping")) {
+		// A durable terminal snapshot normally tombstones this id so a stale
+		// dispatch can't resurrect a stopped scan. BUT a graceful shutdown
+		// persists interrupted scans as "stopped" + "signal_..." while
+		// deliberately PRESERVING their queue_state for resume. Those must be
+		// allowed to auto-resume — otherwise the exact-snapshot tombstone
+		// silently blocks every restart resume and the scans sit at "pending"
+		// forever (they were dispatched but refused here).
+		//
+		// Only an auto-resume (req.IsResume, set exclusively by the boot
+		// queue-state resumer) of a RECOVERABLE interruption may pass. A
+		// user/terminal stop clears queue_state (so it's never auto-resumed)
+		// and its stop reason is not signal_/panic_/restart, so it stays
+		// refused on both counts.
+		if req.IsResume && isInterruptedRecoverableRecord(durable.Status, durable.StopReason) {
+			log.Printf("[scan] resume dispatch %q proceeding past durable %q/%q (recoverable interruption)",
+				instanceID, durable.Status, durable.StopReason)
+		} else {
+			delete(s.dispatchReservations, instanceID)
+			s.dispatchMu.Unlock()
+			log.Printf("[scan] refusing dispatch %q after durable exact stop/status %q", instanceID, durable.Status)
+			return
+		}
+	} else if durErr != nil && !errors.Is(durErr, errDispatchSnapshotNotFound) {
 		delete(s.dispatchReservations, instanceID)
 		s.dispatchMu.Unlock()
-		log.Printf("[scan] refusing dispatch %q after durable exact stop/status %q", instanceID, durable.Status)
-		return
-	} else if err != nil && !errors.Is(err, errDispatchSnapshotNotFound) {
-		delete(s.dispatchReservations, instanceID)
-		s.dispatchMu.Unlock()
-		log.Printf("[scan] refusing dispatch %q with unreadable durable state: %v", instanceID, err)
+		log.Printf("[scan] refusing dispatch %q with unreadable durable state: %v", instanceID, durErr)
 		return
 	}
 	s.instancesMu.Lock()
