@@ -253,10 +253,17 @@ func (s *Server) findScanByID(scanID string) (string, *ScanRecord) {
 		return "", nil
 	}
 
-	entries := s.findAllScans()
-	resolveUnique := func(topLevelOnly bool) (string, *ScanRecord, bool) {
+	// Locate the matching scan DIRECTORY using the cached, events-free
+	// summaries instead of re-walking the data dir and fully parsing every
+	// scan.json (including each scan's large event log) on every request.
+	// Only the single matched record is then loaded in full (with events).
+	// This keeps GET /api/scans/{id} at O(1) full parse instead of
+	// O(all scans on disk) — the hot-path blowup seen in CPU/heap profiles
+	// (findScanByID → findAllScans → json.Unmarshal dominating CPU and RSS).
+	entries := s.findAllScanSummaries()
+	resolveUniqueDir := func(topLevelOnly bool) (string, bool, bool) {
 		var matchedDir string
-		var matched *ScanRecord
+		found := false
 		for _, entry := range entries {
 			if topLevelOnly && entry.rec.ParentTarget != "" {
 				continue
@@ -264,21 +271,30 @@ func (s *Server) findScanByID(scanID string) (string, *ScanRecord) {
 			if entry.rec.ID != scanID && entry.rec.InstanceID != scanID && filepath.Base(entry.dir) != scanID {
 				continue
 			}
-			if matched != nil {
-				log.Printf("[scan] refusing ambiguous scan id %q: records %q and %q both match", scanID, matched.ID, entry.rec.ID)
-				return "", nil, true
+			if found {
+				log.Printf("[scan] refusing ambiguous scan id %q: multiple records match", scanID)
+				return "", false, true // ambiguous → resolved, no match
 			}
-			rec := entry.rec
 			matchedDir = entry.dir
-			matched = &rec
+			found = true
 		}
-		return matchedDir, matched, matched != nil
+		return matchedDir, found, false
 	}
-	if dir, rec, found := resolveUnique(true); found {
-		return dir, rec
+	loadFull := func(dir string) (string, *ScanRecord) {
+		if rec, ok := loadScanRecordFromDir(dir); ok {
+			return dir, rec
+		}
+		return "", nil
 	}
-	if dir, rec, found := resolveUnique(false); found {
-		return dir, rec
+	if dir, found, ambiguous := resolveUniqueDir(true); ambiguous {
+		return "", nil
+	} else if found {
+		return loadFull(dir)
+	}
+	if dir, found, ambiguous := resolveUniqueDir(false); ambiguous {
+		return "", nil
+	} else if found {
+		return loadFull(dir)
 	}
 
 	// Legacy flat path fallback (dataDir/scanID/scan.json).
@@ -714,7 +730,11 @@ func (s *Server) attachWildcardSubScans(rec *ScanRecord) {
 	if rec == nil || rec.ParentTarget != "" {
 		return
 	}
-	s.attachWildcardSubScansFrom(rec, s.findAllScans())
+	// Use the cached, events-free summaries: sub-scan attachment only reads
+	// child target/status/counts/vulns, never the event log. Calling the
+	// full findAllScans() here (per parent, on every GET) was a primary
+	// driver of the JSON-decode CPU and multi-GB transient allocations.
+	s.attachWildcardSubScansFrom(rec, s.findAllScanSummaries())
 }
 
 // attachWildcardSubScansFrom is the same as attachWildcardSubScans but reuses
