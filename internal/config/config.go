@@ -48,6 +48,22 @@ type Config struct {
 	// budget so the full call fits. XALGORIX_MAX_OUTPUT_TOKENS, default 8192.
 	MaxOutputTokens int
 
+	// GeminiSafetyThreshold sets the HarmBlockThreshold applied to every
+	// adjustable safety category (harassment, hate speech, sexually explicit,
+	// dangerous content) on the NATIVE Gemini API path
+	// (generativelanguage.googleapis.com). Xalgorix is an authorized
+	// security-testing tool: Gemini's default filter classifies legitimate
+	// exploit payloads and offensive-security methodology as
+	// HARM_CATEGORY_DANGEROUS_CONTENT and blocks the response, which surfaces
+	// as an empty candidate (finishReason SAFETY) and a failed agent turn.
+	// XALGORIX_GEMINI_SAFETY. Accepted values (case-insensitive): BLOCK_NONE
+	// (default), OFF, BLOCK_ONLY_HIGH, BLOCK_MEDIUM_AND_ABOVE,
+	// BLOCK_LOW_AND_ABOVE, or DEFAULT/"" to send no safetySettings and use
+	// Google's server-side defaults. This ONLY affects Gemini content
+	// filtering — it does not touch scope enforcement, target authorization,
+	// the destructive-command guard, logging, or audit trails.
+	GeminiSafetyThreshold string
+
 	// ContextCompactTokens is an OPTIONAL absolute override for the compaction
 	// trigger. When > 0, the agent auto-compacts older turns into a structured
 	// digest (+ saved notes) once the running message history is estimated to
@@ -344,6 +360,11 @@ func load() *Config {
 		LLMContextWindow:     envOrInt("XALGORIX_LLM_CONTEXT_WINDOW", 128000),
 		ContextCompactRatio:  envOrFloat("XALGORIX_CONTEXT_COMPACT_RATIO", 0.75),
 		MemCompTimeout:       envOrInt("XALGORIX_MEMORY_COMPRESSOR_TIMEOUT", 30),
+
+		// Gemini content-filter posture (native Gemini API path only). Default
+		// BLOCK_NONE so authorized security-testing output is not refused;
+		// DEFAULT / "" restores Google's server-side defaults.
+		GeminiSafetyThreshold: envOr("XALGORIX_GEMINI_SAFETY", "BLOCK_NONE"),
 
 		// Runtime
 		RuntimeBackend:        "native", // Always native in Go version
