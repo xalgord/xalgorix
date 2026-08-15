@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 )
 
 func makeEvents(n int) []WSEvent {
@@ -192,6 +195,85 @@ func TestReadScanSummary_SkipsEventsKeepsMetadata(t *testing.T) {
 	}
 	if len(rec.Vulns) != 1 || rec.Vulns[0].ID != "v1" {
 		t.Fatalf("vulns (a field AFTER events in the JSON) not preserved: %+v", rec.Vulns)
+	}
+}
+
+func TestSaveScanRecordTo_WritesDetailSidecar(t *testing.T) {
+	s := newTestServer(t, nil)
+	dir := filepath.Join(s.dataDir, "side.com", "2026-08-16", "side.com_a")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := &ScanRecord{ID: "side.com_a", Target: "side.com", Status: "finished", Events: makeEvents(800)}
+	s.saveScanRecordTo(rec, dir)
+
+	if _, err := os.Stat(filepath.Join(dir, scanMetaFile)); err != nil {
+		t.Fatalf("sidecar not written: %v", err)
+	}
+	meta, ok := readScanDetailMeta(dir)
+	if !ok {
+		t.Fatal("readScanDetailMeta failed")
+	}
+	if meta.EventsTotal != 800 || !meta.EventsTruncated || len(meta.Events) != detailEventTail {
+		t.Fatalf("sidecar contents wrong: total=%d trunc=%v inline=%d", meta.EventsTotal, meta.EventsTruncated, len(meta.Events))
+	}
+	// scan.json remains the full source of truth.
+	full, ok := loadScanRecordFromDir(dir)
+	if !ok || len(full.Events) != 800 {
+		t.Fatalf("scan.json must keep all events, got ok=%v n=%d", ok, len(full.Events))
+	}
+}
+
+func TestLoadScanRecordForDetail_UsesSidecarFastPath(t *testing.T) {
+	s := newTestServer(t, nil)
+	dir := filepath.Join(s.dataDir, "fp.com", "2026-08-16", "fp.com_a")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// scan.json says 10 events; a sidecar (fresher) says something different so
+	// we can prove the reader served the sidecar, not scan.json.
+	writeScanRecord(t, dir, ".", ScanRecord{ID: "fp.com_a", Target: "fp.com", Status: "finished", Events: makeEvents(10)})
+	// Rename the written file into place (writeScanRecord wrote scan.json here).
+	sentinel := &ScanRecord{ID: "fp.com_a", Target: "fp.com", Status: "finished", Events: makeEvents(3)}
+	sentinel.EventsTotal = 999
+	sentinel.EventsTruncated = true
+	writeScanDetailMetaLight(dir, sentinel)
+	// Make the sidecar newer than scan.json.
+	now := time.Now().Add(2 * time.Second)
+	_ = os.Chtimes(filepath.Join(dir, scanMetaFile), now, now)
+
+	rec, ok := s.loadScanRecordForDetail(dir, detailEventTail)
+	if !ok {
+		t.Fatal("load failed")
+	}
+	if rec.EventsTotal != 999 {
+		t.Fatalf("expected sidecar to be served (total=999), got %d", rec.EventsTotal)
+	}
+}
+
+func TestReadScanDetailMeta_IgnoresStaleSidecar(t *testing.T) {
+	s := newTestServer(t, nil)
+	dir := filepath.Join(s.dataDir, "stale.com", "2026-08-16", "stale.com_a")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Old sidecar first.
+	writeScanDetailMetaLight(dir, &ScanRecord{ID: "stale.com_a", EventsTotal: 5})
+	old := time.Now().Add(-1 * time.Hour)
+	_ = os.Chtimes(filepath.Join(dir, scanMetaFile), old, old)
+	// Newer scan.json (as if a later write skipped the sidecar).
+	writeScanRecord(t, dir, ".", ScanRecord{ID: "stale.com_a", Target: "stale.com", Status: "finished", Events: makeEvents(50)})
+
+	if _, ok := readScanDetailMeta(dir); ok {
+		t.Fatal("stale sidecar (older than scan.json) must be ignored")
+	}
+	// The detail loader should then rebuild from scan.json and refresh the sidecar.
+	rec, ok := s.loadScanRecordForDetail(dir, detailEventTail)
+	if !ok || rec.EventsTotal != 50 {
+		t.Fatalf("rebuild from scan.json failed: ok=%v total=%d", ok, rec.EventsTotal)
+	}
+	if meta, ok := readScanDetailMeta(dir); !ok || meta.EventsTotal != 50 {
+		t.Fatalf("sidecar not refreshed after rebuild: ok=%v", ok)
 	}
 }
 

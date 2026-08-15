@@ -3045,7 +3045,13 @@ func (s *Server) saveScanRecordTo(rec *ScanRecord, scanDir string) {
 	if err := os.WriteFile(filepath.Join(scanDir, "scan.json"), data, 0600); err != nil {
 		log.Printf("Error: failed to save scan record to %s: %v", scanDir, err)
 		s.broadcast(WSEvent{Type: "error", Content: fmt.Sprintf("⚠️ Failed to save scan data: %v", err)})
+		return
 	}
+	// Refresh the detail sidecar (metadata + event tail) so GET /api/scans/{id}
+	// stays instant regardless of how large the event log grows. Best-effort and
+	// written after scan.json so a reader never sees a sidecar newer than its
+	// source (readScanDetailMeta treats a stale sidecar as absent).
+	writeScanDetailMeta(scanDir, rec)
 }
 
 // diskAvailable returns available bytes on the filesystem containing path, or 0 on error.

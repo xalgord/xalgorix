@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // detailEventTail is how many of the most recent events GET /api/scans/{id}
@@ -134,6 +135,95 @@ func decodeEvents(raws []json.RawMessage) []WSEvent {
 	return events
 }
 
+// scanMetaFile is a small sidecar next to scan.json holding exactly what the
+// detail view needs: the scan metadata plus only the last detailEventTail
+// events and the true event count. Reading it is O(tail) instead of streaming
+// the whole (possibly hundreds-of-MB) scan.json, which is what makes opening a
+// large scan instant — the same shape the SaaS gets for free from Postgres.
+// scan.json remains the full source of truth (reports, full-event consumers).
+const scanMetaFile = "scan.meta.json"
+
+// buildDetailMeta returns a light copy of rec carrying only the tail of events
+// plus the total/truncation hints — the exact payload the detail view needs.
+func buildDetailMeta(rec *ScanRecord) *ScanRecord {
+	light := *rec
+	total := len(rec.Events)
+	if total > detailEventTail {
+		light.Events = append([]WSEvent(nil), rec.Events[total-detailEventTail:]...)
+	} else {
+		light.Events = append([]WSEvent(nil), rec.Events...)
+	}
+	light.EventsTotal = total
+	light.EventsTruncated = total > len(light.Events)
+	return &light
+}
+
+// writeScanDetailMeta persists the detail sidecar for a full record. Best-effort:
+// a failure just means the next detail read falls back to streaming scan.json.
+func writeScanDetailMeta(dir string, rec *ScanRecord) {
+	if dir == "" || rec == nil {
+		return
+	}
+	writeScanDetailMetaLight(dir, buildDetailMeta(rec))
+}
+
+// writeScanDetailMetaLight writes an already-trimmed light record atomically.
+func writeScanDetailMetaLight(dir string, light *ScanRecord) {
+	if dir == "" || light == nil {
+		return
+	}
+	data, err := json.Marshal(light)
+	if err != nil {
+		return
+	}
+	tmp, err := os.CreateTemp(dir, ".scanmeta-*.tmp")
+	if err != nil {
+		return
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		_ = os.Remove(tmpPath)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return
+	}
+	// Atomic replace so a concurrent reader never sees a half-written sidecar.
+	if err := os.Rename(tmpPath, filepath.Join(dir, scanMetaFile)); err != nil {
+		_ = os.Remove(tmpPath)
+	}
+}
+
+// readScanDetailMeta loads the detail sidecar if present and current. It is
+// considered stale (and ignored) when scan.json is newer, so a scan.json
+// written by a path that didn't refresh the sidecar can't serve stale data.
+func readScanDetailMeta(dir string) (*ScanRecord, bool) {
+	if dir == "" {
+		return nil, false
+	}
+	metaPath := filepath.Join(dir, scanMetaFile)
+	metaInfo, err := os.Stat(metaPath)
+	if err != nil {
+		return nil, false
+	}
+	if srcInfo, err := os.Stat(filepath.Join(dir, "scan.json")); err == nil {
+		if srcInfo.ModTime().After(metaInfo.ModTime()) {
+			return nil, false // sidecar predates the latest scan.json → rebuild
+		}
+	}
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return nil, false
+	}
+	var rec ScanRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return nil, false
+	}
+	return &rec, true
+}
+
 // readScanSummary parses a scan.json into a ScanRecord WITHOUT its event log,
 // streaming past the events array so a huge log is never read into memory. This
 // is the events-free parse behind the summary cache; it replaces the old
@@ -163,6 +253,13 @@ func (s *Server) loadScanRecordForDetail(dir string, tail int) (*ScanRecord, boo
 	if tail < 0 {
 		tail = 0
 	}
+
+	// Fast path: a current sidecar already holds metadata + the event tail, so
+	// serve it without touching the (possibly huge) scan.json at all.
+	if meta, ok := readScanDetailMeta(dir); ok {
+		return meta, true
+	}
+
 	path := filepath.Join(dir, "scan.json")
 
 	// Ring buffer keeping only the last `tail` raw events.
@@ -189,7 +286,25 @@ func (s *Server) loadScanRecordForDetail(dir string, tail int) (*ScanRecord, boo
 	rec.Events = decodeEvents(ring)
 	rec.EventsTotal = total
 	rec.EventsTruncated = total > len(rec.Events)
+
+	// Lazily persist the sidecar so the next open of this (immutable, terminal)
+	// scan is instant. Running scans get a fresh sidecar from saveScanRecordTo
+	// on every save, so only backfill terminal ones here.
+	if isTerminalDetailStatus(rec.Status) {
+		writeScanDetailMetaLight(dir, rec)
+	}
 	return rec, true
+}
+
+// isTerminalDetailStatus reports whether a scan will no longer change on disk,
+// making its detail sidecar safe to cache indefinitely.
+func isTerminalDetailStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "finished", "completed", "stopped", "failed":
+		return true
+	default:
+		return false
+	}
 }
 
 // loadScanEventsWindow returns the events in [offset, offset+limit) in original
