@@ -92,5 +92,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # TOOLS_REFRESH busts the dedicated nuclei engine+template layer on
+          # every run, so each published image ships the latest nuclei + latest
+          # templates (matters if a build-cache backend is added here later).
           build-args: |
             VERSION=${{ steps.meta.outputs.version || github.ref_name }}
+            TOOLS_REFRESH=${{ github.run_id }}

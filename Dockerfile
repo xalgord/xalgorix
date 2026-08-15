@@ -74,10 +74,13 @@ RUN CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION}" \
 # Latest versions of the Go tools the engine knows how to auto-install
 # (packageMap → goTools), into /go/bin. Best-effort per tool so one flaky
 # module never fails the image; anything missing stays runtime-installable.
+# NOTE: nuclei is deliberately NOT in this loop. It's the security-critical,
+# fast-moving scanner, so it's installed + template-synced in a dedicated,
+# cache-bustable layer in the runtime stage (see NUCLEI_VERSION/TOOLS_REFRESH
+# below) to guarantee a fresh engine + latest templates on every refreshed build.
 ENV GOBIN=/go/bin
 RUN set -eux; \
     for pkg in \
-      github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
       github.com/projectdiscovery/httpx/cmd/httpx@latest \
       github.com/projectdiscovery/dnsx/cmd/dnsx@latest \
       github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest \
@@ -213,8 +216,32 @@ RUN git clone --depth 1 https://github.com/Dionach/CMSmap /opt/CMSmap \
     && chmod +x /usr/local/bin/cmsmap \
     || echo "WARN: cmsmap prefetch failed (installable at runtime)"
 
-# Bake nuclei templates so first-run scans don't stall on a template fetch.
-RUN /root/go/bin/nuclei -update-templates >/dev/null 2>&1 || echo "WARN: nuclei template prefetch skipped"
+# ── nuclei engine + templates: always-latest, dedicated cache-bustable layer ──
+# nuclei is the security-critical, fast-moving scanner — a stale engine or stale
+# vuln templates directly means missed findings. Installing it HERE (instead of
+# the bulk go-tool loop in the builder) isolates it after every other expensive
+# apt/tool/pipx layer, so a cache-bust re-pulls the latest engine AND templates
+# cheaply, without re-running the layers above:
+#
+#   * default build ................ uses Docker's layer cache (fast, unchanged)
+#   * --build-arg TOOLS_REFRESH=<changing value> .. forces a fresh engine +
+#         templates. redeploy.sh and the release CI pass this on every build, so
+#         shipped images always carry the latest nuclei + latest templates.
+#   * --build-arg NUCLEI_VERSION=vX.Y.Z ........... pin the engine for repro builds.
+#
+# The runtime Go toolchain (copied above) builds it; the module/build caches are
+# pruned afterwards so the layer stays lean. Best-effort: a network blip leaves
+# nuclei runtime-installable, consistent with the rest of this image.
+ARG NUCLEI_VERSION=latest
+ARG TOOLS_REFRESH=
+# echo references TOOLS_REFRESH so a changing value invalidates this layer's
+# cache; go clean runs in the SAME RUN so the module/build caches are never
+# committed to the image.
+RUN echo "nuclei refresh token: ${TOOLS_REFRESH:-none}"; \
+    { GOBIN=/root/go/bin go install -v "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@${NUCLEI_VERSION}" \
+      && /root/go/bin/nuclei -update-templates >/dev/null 2>&1 ; } \
+      || echo "WARN: nuclei engine/template refresh failed (installable at runtime)"; \
+    go clean -cache -modcache 2>/dev/null || true
 
 # Make `httpx` resolve to ProjectDiscovery's scanner. Kali/pip ship a Python
 # `httpx` CLI (the HTTP client) at /usr/bin/httpx that otherwise answers `httpx`
@@ -223,6 +250,14 @@ RUN /root/go/bin/nuclei -update-templates >/dev/null 2>&1 || echo "WARN: nuclei 
 # binary so nothing falls back to the Python client.
 RUN if [ -x /root/go/bin/httpx ]; then ln -sf /root/go/bin/httpx /usr/bin/httpx; \
     else echo "WARN: ProjectDiscovery httpx not baked into /root/go/bin"; fi
+
+# Same story for nuclei: Kali's kali-tools-vulnerability metapackage installs an
+# (often older) nuclei at /usr/bin/nuclei. /root/go/bin is already ahead of
+# /usr/bin on PATH, but pin the absolute path to the freshly-installed PD engine
+# so login shells and any hard-coded /usr/bin/nuclei can't fall back to the apt
+# build.
+RUN if [ -x /root/go/bin/nuclei ]; then ln -sf /root/go/bin/nuclei /usr/bin/nuclei; \
+    else echo "WARN: ProjectDiscovery nuclei not present in /root/go/bin"; fi
 
 ENV XALGORIX_BIND=0.0.0.0 \
     XALGORIX_BROWSER_PATH=/usr/bin/chromium \
