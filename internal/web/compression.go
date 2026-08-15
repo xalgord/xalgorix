@@ -61,7 +61,7 @@ func (w *gzipResponseWriter) WriteHeader(status int) {
 	}
 	w.wroteHeader = true
 
-	h := w.ResponseWriter.Header()
+	h := w.Header()
 	// Only compress a normal body: skip informational/no-content/not-modified
 	// responses, anything already encoded, and non-text content types.
 	if status >= 200 && status != http.StatusNoContent && status != http.StatusNotModified &&
@@ -71,7 +71,10 @@ func (w *gzipResponseWriter) WriteHeader(status int) {
 		h.Del("Content-Length")
 		h.Set("Content-Encoding", "gzip")
 		addVaryAcceptEncoding(h)
-		gz := gzipWriterPool.Get().(*gzip.Writer)
+		gz, ok := gzipWriterPool.Get().(*gzip.Writer)
+		if !ok {
+			gz = gzip.NewWriter(io.Discard)
+		}
 		gz.Reset(w.ResponseWriter)
 		w.gz = gz
 	}
@@ -83,8 +86,8 @@ func (w *gzipResponseWriter) Write(b []byte) (int, error) {
 		// Handlers that Write without an explicit WriteHeader: pin the
 		// Content-Type from the first chunk (mirroring net/http's own
 		// sniffing) so the compress decision is stable, then default to 200.
-		if w.ResponseWriter.Header().Get("Content-Type") == "" {
-			w.ResponseWriter.Header().Set("Content-Type", http.DetectContentType(b))
+		if w.Header().Get("Content-Type") == "" {
+			w.Header().Set("Content-Type", http.DetectContentType(b))
 		}
 		w.WriteHeader(http.StatusOK)
 	}
