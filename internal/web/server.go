@@ -1257,10 +1257,12 @@ func (s *Server) Start() error {
 	httpServer := &http.Server{
 		Addr: addr,
 		// safe.HTTPMiddleware MUST be the outermost wrapper so it catches
-		// panics from every layer below it (auth, rate-limit, mux,
+		// panics from every layer below it (auth, rate-limit, gzip, mux,
 		// individual handlers). On panic it increments PanicsRecovered,
 		// emits a structured log line with stack trace, and returns 500.
-		Handler: safe.HTTPMiddleware(authMw(rlMiddleware(mux))),
+		// gzip sits innermost (closest to the mux) so it compresses handler
+		// output after auth + rate limiting have run; it skips /ws.
+		Handler: safe.HTTPMiddleware(authMw(rlMiddleware(gzipMiddleware(mux)))),
 		// Bound the time spent reading request headers so a slow client
 		// cannot hold a connection open indefinitely (Slowloris). The
 		// dashboard serves interactive traffic, so keep this generous.
