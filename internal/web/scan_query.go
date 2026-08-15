@@ -595,11 +595,21 @@ func isTerminalScanStatus(status string) bool {
 // Two cases qualify:
 //   - running/pending: the process died before the scan reached a terminal
 //     state (crash / SIGKILL). scan.json still says running/pending.
-//   - stopped with a signal_/panic_ reason: a graceful SIGTERM/SIGINT (or a
-//     recovered panic) persisted the scan as "stopped" but PRESERVED its
-//     queue_state on purpose (shouldPreserveQueueStateOnExit). Without this
-//     case those scans stayed "stopped" forever and only a fresh "Start" was
-//     offered — the bug this closes.
+//   - stopped with a signal_/panic_/server_shutdown reason: a graceful
+//     SIGTERM/SIGINT, a recovered panic, or a scan that was still QUEUED
+//     (pending, waiting for an admission slot) when the server shut down.
+//     All persist the scan as "stopped" but PRESERVE its queue_state on
+//     purpose (shouldPreserveQueueStateOnExit / the admission-loop shutdown
+//     branch). Without this case those scans stayed "stopped"/"pending"
+//     forever and only a fresh "Start" was offered — the bug this closes.
+//
+// The "server_shutdown" reason specifically is set for a scan that never got a
+// slot before shutdown (orchestrator admission loop). Its queue_state is kept
+// (preserveQueue), so it MUST also be recognized here — otherwise auto-resume
+// keeps the queue_state but the exact-stop tombstone refuses dispatch, and the
+// scan is stranded as an orphaned "pending" record with no driver goroutine
+// that nothing ever promotes (observed: queued wildcard scans never starting
+// after a restart even with free slots).
 //
 // A user-initiated stop is deliberately NOT recoverable: handleStop clears the
 // queue_state, so even when such a record reaches this function the downstream
@@ -614,7 +624,8 @@ func isInterruptedRecoverableRecord(status, stopReason string) bool {
 		reason := strings.ToLower(strings.TrimSpace(stopReason))
 		return strings.HasPrefix(reason, "signal_") ||
 			reason == "panic_recovered" ||
-			reason == "server_restart_resuming"
+			reason == "server_restart_resuming" ||
+			reason == "server_shutdown"
 	default:
 		return false
 	}
