@@ -3,7 +3,6 @@ package web
 import (
 	"encoding/json"
 	"errors"
-	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -123,34 +122,52 @@ type scanEntry struct {
 	rec ScanRecord // parsed record
 }
 
-// findAllScans recursively walks dataDir to find all scan.json files.
-// Structure: dataDir/target/date/slug/scan.json
+// walkScanDirs invokes fn with the path to every scan.json under root WITHOUT
+// descending into a scan directory's artifact subtree. A directory that
+// contains a scan.json IS a scan directory; its subdirectories (tool output,
+// downloaded site assets, caches — collectively tens of GB and, on a busy
+// install, ~millions of filesystem entries) are never traversed. This keeps a
+// full walk proportional to the number of SCANS (a few thousand directory
+// listings) instead of the total data size.
+//
+// Before this, both walkers used filepath.WalkDir over the entire data dir, so
+// every scan-list / scan-resolve request statted the whole artifact tree
+// (~1.9M entries for 401 scans here). That, not any single scan.json's size,
+// was what made the scan pages slow.
+func walkScanDirs(root string, fn func(scanJSONPath string)) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() && e.Name() == "scan.json" {
+			fn(filepath.Join(root, "scan.json"))
+			return // this is a scan dir; do not descend into its artifacts
+		}
+	}
+	for _, e := range entries {
+		// e.IsDir() is false for symlinks, so symlinked dirs are not followed
+		// (no traversal loops).
+		if e.IsDir() {
+			walkScanDirs(filepath.Join(root, e.Name()), fn)
+		}
+	}
+}
+
+// findAllScans finds all scan.json files under dataDir and fully parses each
+// (event log included). Structure: dataDir/target/date/slug/scan.json.
 func (s *Server) findAllScans() []scanEntry {
 	var results []scanEntry
-	_ = filepath.WalkDir(s.dataDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			name := d.Name()
-			if name == "scratch" || name == "reports" || name == "logs" || name == "artifacts" || name == "tools" || name == "snapshots" || name == "notes" || name == ".git" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Name() != "scan.json" {
-			return nil
-		}
+	walkScanDirs(s.dataDir, func(path string) {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return nil
+			return
 		}
 		var rec ScanRecord
 		if json.Unmarshal(data, &rec) != nil {
-			return nil
+			return
 		}
 		results = append(results, scanEntry{dir: filepath.Dir(path), rec: rec})
-		return nil
 	})
 	return results
 }
@@ -177,11 +194,11 @@ type scanRecordLite struct {
 }
 
 // findAllScanSummaries is the events-free, cached counterpart to findAllScans.
-// It walks the data dir, parses each scan.json without decoding its event log,
-// and memoizes the result per file keyed by (modtime, size). Subsequent walks
-// only stat each file and re-parse the few that changed, so warm rebuilds are
-// effectively free. Callers that need the event log (report generation,
-// scan-detail) must use findAllScans instead.
+// It walks the data dir (pruning artifact subtrees via walkScanDirs), parses
+// each scan.json without decoding its event log, and memoizes the result per
+// file keyed by (modtime, size). Subsequent walks only stat each scan.json and
+// re-parse the few that changed. Callers that need the event log (report
+// generation) must use findAllScans instead.
 func (s *Server) findAllScanSummaries() []scanEntry {
 	var results []scanEntry
 
@@ -192,39 +209,25 @@ func (s *Server) findAllScanSummaries() []scanEntry {
 	}
 	seen := make(map[string]struct{})
 
-	_ = filepath.WalkDir(s.dataDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			name := d.Name()
-			if name == "scratch" || name == "reports" || name == "logs" || name == "artifacts" || name == "tools" || name == "snapshots" || name == "notes" || name == ".git" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Name() != "scan.json" {
-			return nil
-		}
-		info, ierr := d.Info()
+	walkScanDirs(s.dataDir, func(path string) {
+		info, ierr := os.Stat(path)
 		if ierr != nil {
-			return nil
+			return
 		}
 		seen[path] = struct{}{}
 		modNano := info.ModTime().UnixNano()
 		size := info.Size()
 		if c, ok := s.scanSummaryCache[path]; ok && c.modNano == modNano && c.size == size {
 			results = append(results, scanEntry{dir: filepath.Dir(path), rec: c.rec})
-			return nil
+			return
 		}
 		recPtr, ok := readScanSummary(path)
 		if !ok {
-			return nil
+			return
 		}
 		rec := *recPtr
 		s.scanSummaryCache[path] = scanSummaryCacheEntry{modNano: modNano, size: size, rec: rec}
 		results = append(results, scanEntry{dir: filepath.Dir(path), rec: rec})
-		return nil
 	})
 
 	// Drop cache entries for files that no longer exist so deleted scans

@@ -170,6 +170,37 @@ func TestHandleScanEvents_Endpoint(t *testing.T) {
 	}
 }
 
+func TestWalkScanDirs_PrunesArtifactSubtree(t *testing.T) {
+	root := t.TempDir()
+	// Canonical scan dir: target/date/slug/scan.json
+	slug := filepath.Join(root, "example.com", "2026-08-16", "example.com_a")
+	if err := os.MkdirAll(slug, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(slug, "scan.json"), []byte(`{"id":"a"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Artifact subtree UNDER the slug dir, including a decoy scan.json that a
+	// scanned site might have produced. The walker must NOT descend here.
+	decoy := filepath.Join(slug, "js", "assets")
+	if err := os.MkdirAll(decoy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(decoy, "scan.json"), []byte(`{"id":"decoy"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var found []string
+	walkScanDirs(root, func(p string) { found = append(found, p) })
+
+	if len(found) != 1 {
+		t.Fatalf("expected exactly 1 scan.json (artifact subtree pruned), got %d: %v", len(found), found)
+	}
+	if filepath.Dir(found[0]) != slug {
+		t.Fatalf("found wrong scan dir: %s", found[0])
+	}
+}
+
 func TestReadScanSummary_SkipsEventsKeepsMetadata(t *testing.T) {
 	s := newTestServer(t, nil)
 	writeScanRecord(t, s.dataDir, "sum.com/2026-08-15/sum.com_s", ScanRecord{
