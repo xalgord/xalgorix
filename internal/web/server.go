@@ -464,38 +464,47 @@ type SubScanSummary struct {
 
 // ScanRecord is a persisted scan result.
 type ScanRecord struct {
-	ID                       string           `json:"id"`
-	InstanceID               string           `json:"instance_id,omitempty"` // parent queue/instance id returned by /api/scan
-	Name                     string           `json:"name,omitempty"`        // user-defined scan name
-	Target                   string           `json:"target"`
-	ParentTarget             string           `json:"parent_target,omitempty"` // parent domain for subdomain scans (wildcard mode)
-	StartedAt                string           `json:"started_at"`
-	FinishedAt               string           `json:"finished_at,omitempty"`
-	Status                   string           `json:"status"`                               // saved, running, finished, stopped
-	StopReason               string           `json:"stop_reason,omitempty"`                // why scan stopped (error, user, watchdog, etc.)
-	ScanMode                 string           `json:"scan_mode,omitempty"`                  // single, wildcard, dast
-	Instruction              string           `json:"instruction,omitempty"`                // custom scan instructions
-	SeverityFilter           []string         `json:"severity_filter,omitempty"`            // severity filter for scan
-	DiscordWebhook           string           `json:"discord_webhook,omitempty"`            // discord notification webhook
-	DiscordWebhookConfigured bool             `json:"discord_webhook_configured,omitempty"` // true when a per-scan or global webhook is configured
-	TelegramConfigured       bool             `json:"telegram_configured,omitempty"`        // true when global Telegram notifications are configured (token never exposed)
-	ReconMode                string           `json:"recon_mode,omitempty"`                 // active or passive reconnaissance
-	ScanIntensity            string           `json:"scan_intensity,omitempty"`             // active or passive testing/scanning
-	Events                   []WSEvent        `json:"events"`
-	Vulns                    []VulnSummary    `json:"vulns"`
-	TotalTokens              int              `json:"total_tokens"`
-	Iterations               int              `json:"iterations"`
-	ToolCalls                int              `json:"tool_calls"`
-	CompanyName              string           `json:"company_name,omitempty"` // report branding: company name
-	LogoPath                 string           `json:"logo_path,omitempty"`    // report branding: logo path
-	Phases                   []int            `json:"phases,omitempty"`       // selected methodology phases
-	CurrentPhase             int              `json:"current_phase,omitempty"`
-	SubScans                 []SubScanSummary `json:"sub_scans,omitempty"`
-	SubScanTotal             int              `json:"sub_scan_total,omitempty"`
-	SubScanCompleted         int              `json:"sub_scan_completed,omitempty"`
-	SubScanRunning           int              `json:"sub_scan_running,omitempty"`
-	SubScanRemaining         int              `json:"sub_scan_remaining,omitempty"`
-	WorkStarted              bool             `json:"work_started,omitempty"` // positive proof that an agent session was admitted
+	ID                       string    `json:"id"`
+	InstanceID               string    `json:"instance_id,omitempty"` // parent queue/instance id returned by /api/scan
+	Name                     string    `json:"name,omitempty"`        // user-defined scan name
+	Target                   string    `json:"target"`
+	ParentTarget             string    `json:"parent_target,omitempty"` // parent domain for subdomain scans (wildcard mode)
+	StartedAt                string    `json:"started_at"`
+	FinishedAt               string    `json:"finished_at,omitempty"`
+	Status                   string    `json:"status"`                               // saved, running, finished, stopped
+	StopReason               string    `json:"stop_reason,omitempty"`                // why scan stopped (error, user, watchdog, etc.)
+	ScanMode                 string    `json:"scan_mode,omitempty"`                  // single, wildcard, dast
+	Instruction              string    `json:"instruction,omitempty"`                // custom scan instructions
+	SeverityFilter           []string  `json:"severity_filter,omitempty"`            // severity filter for scan
+	DiscordWebhook           string    `json:"discord_webhook,omitempty"`            // discord notification webhook
+	DiscordWebhookConfigured bool      `json:"discord_webhook_configured,omitempty"` // true when a per-scan or global webhook is configured
+	TelegramConfigured       bool      `json:"telegram_configured,omitempty"`        // true when global Telegram notifications are configured (token never exposed)
+	ReconMode                string    `json:"recon_mode,omitempty"`                 // active or passive reconnaissance
+	ScanIntensity            string    `json:"scan_intensity,omitempty"`             // active or passive testing/scanning
+	Events                   []WSEvent `json:"events"`
+	// EventsTotal / EventsTruncated are RESPONSE-ONLY hints for the scan-detail
+	// view. GET /api/scans/{id} returns only a tail of the event log (the most
+	// recent detailEventTail events) so a scan with a multi-hundred-MB event log
+	// doesn't have to be fully parsed, marshaled, and shipped on every open.
+	// When Truncated is set, the client lazily pages older events via
+	// GET /api/scans/{id}/events?offset=&limit=. Both are omitempty so the
+	// persisted scan.json is unaffected (they are zero on the saved record).
+	EventsTotal      int              `json:"events_total,omitempty"`
+	EventsTruncated  bool             `json:"events_truncated,omitempty"`
+	Vulns            []VulnSummary    `json:"vulns"`
+	TotalTokens      int              `json:"total_tokens"`
+	Iterations       int              `json:"iterations"`
+	ToolCalls        int              `json:"tool_calls"`
+	CompanyName      string           `json:"company_name,omitempty"` // report branding: company name
+	LogoPath         string           `json:"logo_path,omitempty"`    // report branding: logo path
+	Phases           []int            `json:"phases,omitempty"`       // selected methodology phases
+	CurrentPhase     int              `json:"current_phase,omitempty"`
+	SubScans         []SubScanSummary `json:"sub_scans,omitempty"`
+	SubScanTotal     int              `json:"sub_scan_total,omitempty"`
+	SubScanCompleted int              `json:"sub_scan_completed,omitempty"`
+	SubScanRunning   int              `json:"sub_scan_running,omitempty"`
+	SubScanRemaining int              `json:"sub_scan_remaining,omitempty"`
+	WorkStarted      bool             `json:"work_started,omitempty"` // positive proof that an agent session was admitted
 }
 
 // QueueState persists scan queue state for recovery after restart
@@ -1045,6 +1054,13 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/scans/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/vulns/") && r.Method == http.MethodDelete {
 			s.handleDeleteVuln(w, r)
+			return
+		}
+		// GET /api/scans/{id}/events?offset=&limit= — lazy-page the event log
+		// that the detail response only tails. Must be checked before the
+		// generic detail handler.
+		if strings.HasSuffix(r.URL.Path, "/events") && r.Method == http.MethodGet {
+			s.handleScanEvents(w, r)
 			return
 		}
 		s.handleGetScan(w, r)
@@ -3351,28 +3367,35 @@ func (s *Server) handleGetScan(w http.ResponseWriter, r *http.Request) {
 	// Extract scan ID from URL: /api/scans/{id}
 	scanID := strings.TrimPrefix(r.URL.Path, "/api/scans/")
 	if scanID == "" || scanID == "latest" {
-		// Find latest scan by StartedAt timestamp
-		allScans := []scanEntry{}
-		for _, entry := range s.findAllScans() {
+		// Find the latest top-level scan by StartedAt using the events-free
+		// summaries (cheap), then load only that one record with an event tail.
+		summaries := []scanEntry{}
+		for _, entry := range s.findAllScanSummaries() {
 			if entry.rec.ParentTarget != "" {
 				continue
 			}
-			allScans = append(allScans, entry)
+			summaries = append(summaries, entry)
 		}
-		if len(allScans) == 0 {
+		if len(summaries) == 0 {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`null`))
 			return
 		}
-		sort.Slice(allScans, func(i, j int) bool {
-			return allScans[i].rec.StartedAt > allScans[j].rec.StartedAt
+		sort.Slice(summaries, func(i, j int) bool {
+			return summaries[i].rec.StartedAt > summaries[j].rec.StartedAt
 		})
-		rec := allScans[0].rec
-		s.applyInstanceSnapshot(&rec, true)
-		s.attachWildcardSubScans(&rec)
-		finalizeScanRecordForResponse(&rec)
-		s.markDiscordWebhookConfigured(&rec)
-		s.markTelegramConfigured(&rec)
+		rec, ok := s.loadScanRecordForDetail(summaries[0].dir, detailEventTail)
+		if !ok || rec == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`null`))
+			return
+		}
+		s.applyInstanceSnapshot(rec, true)
+		s.attachWildcardSubScans(rec)
+		finalizeScanRecordForResponse(rec)
+		finalizeEventsMeta(rec)
+		s.markDiscordWebhookConfigured(rec)
+		s.markTelegramConfigured(rec)
 		data, _ := json.Marshal(rec)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(data)
@@ -3449,19 +3472,23 @@ func (s *Server) handleGetScan(w http.ResponseWriter, r *http.Request) {
 		inst := s.instances[scanID]
 		s.instancesMu.RUnlock()
 		if rec := s.scanRecordFromInstance(inst); rec != nil {
-			if _, persisted := s.findScanByID(scanID); persisted != nil {
-				s.applyInstanceSnapshot(persisted, true)
-				s.attachWildcardSubScans(persisted)
-				finalizeScanRecordForResponse(persisted)
-				s.markDiscordWebhookConfigured(persisted)
-				s.markTelegramConfigured(persisted)
-				data, _ := json.Marshal(persisted)
-				w.Header().Set("Content-Type", "application/json")
-				w.Write(data)
-				return
+			if dir, ok := s.resolveScanDirByID(scanID); ok {
+				if persisted, ok2 := s.loadScanRecordForDetail(dir, detailEventTail); ok2 && persisted != nil {
+					s.applyInstanceSnapshot(persisted, true)
+					s.attachWildcardSubScans(persisted)
+					finalizeScanRecordForResponse(persisted)
+					finalizeEventsMeta(persisted)
+					s.markDiscordWebhookConfigured(persisted)
+					s.markTelegramConfigured(persisted)
+					data, _ := json.Marshal(persisted)
+					w.Header().Set("Content-Type", "application/json")
+					w.Write(data)
+					return
+				}
 			}
 			s.attachWildcardSubScans(rec)
 			finalizeScanRecordForResponse(rec)
+			finalizeEventsMeta(rec)
 			s.markDiscordWebhookConfigured(rec)
 			s.markTelegramConfigured(rec)
 			data, _ := json.Marshal(rec)
@@ -3471,9 +3498,13 @@ func (s *Server) handleGetScan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	dir, rec := s.findScanByID(scanID)
-	_ = dir
-	if rec == nil {
+	dir, ok := s.resolveScanDirByID(scanID)
+	if !ok {
+		http.Error(w, "scan not found", http.StatusNotFound)
+		return
+	}
+	rec, ok := s.loadScanRecordForDetail(dir, detailEventTail)
+	if !ok || rec == nil {
 		http.Error(w, "scan not found", http.StatusNotFound)
 		return
 	}
@@ -3481,11 +3512,64 @@ func (s *Server) handleGetScan(w http.ResponseWriter, r *http.Request) {
 	s.applyInstanceSnapshot(rec, true)
 	s.attachWildcardSubScans(rec)
 	finalizeScanRecordForResponse(rec)
+	finalizeEventsMeta(rec)
 	s.markDiscordWebhookConfigured(rec)
 	s.markTelegramConfigured(rec)
 	data, _ := json.Marshal(rec)
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(data)
+}
+
+// finalizeEventsMeta keeps the events pagination hints coherent after other
+// layers (applyInstanceSnapshot) may have swapped in a live event buffer.
+// EventsTotal never claims fewer than the events actually shown, and Truncated
+// is only set when older events genuinely remain to be paged.
+func finalizeEventsMeta(rec *ScanRecord) {
+	if rec == nil {
+		return
+	}
+	if rec.EventsTotal < len(rec.Events) {
+		rec.EventsTotal = len(rec.Events)
+	}
+	rec.EventsTruncated = rec.EventsTotal > len(rec.Events)
+}
+
+// handleScanEvents serves a page of a scan's event log:
+// GET /api/scans/{id}/events?offset=&limit=  →  {events, total, offset, limit}
+func (s *Server) handleScanEvents(w http.ResponseWriter, r *http.Request) {
+	scanID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/scans/"), "/events")
+	dir, ok := s.resolveScanDirByID(scanID)
+	if !ok {
+		http.Error(w, "scan not found", http.StatusNotFound)
+		return
+	}
+	offset := 0
+	limit := detailEventTail
+	if v := strings.TrimSpace(r.URL.Query().Get("offset")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	events, total, ok := loadScanEventsWindow(dir, offset, limit)
+	if !ok {
+		http.Error(w, "scan not found", http.StatusNotFound)
+		return
+	}
+	if events == nil {
+		events = []WSEvent{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"events": events,
+		"total":  total,
+		"offset": offset,
+		"limit":  limit,
+	})
 }
 
 // handleDeleteVuln removes a single vulnerability from a scan record.

@@ -245,21 +245,19 @@ func (s *Server) findAllScanSummaries() []scanEntry {
 	return results
 }
 
-// findScanByID searches for a scan by its AgentID (the slug dir name).
-func (s *Server) findScanByID(scanID string) (string, *ScanRecord) {
+// resolveScanDirByID locates the on-disk directory for a scan id WITHOUT
+// loading (and therefore without parsing the potentially huge event log of)
+// the matched record. It uses the cached, events-free summaries so resolution
+// is O(1) full parses. Callers that need the record decide how much of it to
+// load: findScanByID loads the whole record; the scan-detail path loads only a
+// tail of events (loadScanRecordForDetail).
+func (s *Server) resolveScanDirByID(scanID string) (string, bool) {
 	// Sanitize: prevent path traversal via ../
 	scanID = filepath.Base(scanID)
 	if scanID == "" || scanID == "." || scanID == ".." {
-		return "", nil
+		return "", false
 	}
 
-	// Locate the matching scan DIRECTORY using the cached, events-free
-	// summaries instead of re-walking the data dir and fully parsing every
-	// scan.json (including each scan's large event log) on every request.
-	// Only the single matched record is then loaded in full (with events).
-	// This keeps GET /api/scans/{id} at O(1) full parse instead of
-	// O(all scans on disk) — the hot-path blowup seen in CPU/heap profiles
-	// (findScanByID → findAllScans → json.Unmarshal dominating CPU and RSS).
 	entries := s.findAllScanSummaries()
 	resolveUniqueDir := func(topLevelOnly bool) (string, bool, bool) {
 		var matchedDir string
@@ -280,30 +278,35 @@ func (s *Server) findScanByID(scanID string) (string, *ScanRecord) {
 		}
 		return matchedDir, found, false
 	}
-	loadFull := func(dir string) (string, *ScanRecord) {
-		if rec, ok := loadScanRecordFromDir(dir); ok {
-			return dir, rec
-		}
-		return "", nil
-	}
 	if dir, found, ambiguous := resolveUniqueDir(true); ambiguous {
-		return "", nil
+		return "", false
 	} else if found {
-		return loadFull(dir)
+		return dir, true
 	}
 	if dir, found, ambiguous := resolveUniqueDir(false); ambiguous {
-		return "", nil
+		return "", false
 	} else if found {
-		return loadFull(dir)
+		return dir, true
 	}
 
 	// Legacy flat path fallback (dataDir/scanID/scan.json).
 	direct := filepath.Join(s.dataDir, scanID, "scan.json")
-	if data, err := os.ReadFile(direct); err == nil {
-		var rec ScanRecord
-		if json.Unmarshal(data, &rec) == nil {
-			return filepath.Join(s.dataDir, scanID), &rec
-		}
+	if _, err := os.Stat(direct); err == nil {
+		return filepath.Join(s.dataDir, scanID), true
+	}
+	return "", false
+}
+
+// findScanByID searches for a scan by its AgentID (the slug dir name) and
+// returns the fully-loaded record (event log included). Prefer
+// resolveScanDirByID + a tail loader on the read hot path.
+func (s *Server) findScanByID(scanID string) (string, *ScanRecord) {
+	dir, ok := s.resolveScanDirByID(scanID)
+	if !ok {
+		return "", nil
+	}
+	if rec, ok := loadScanRecordFromDir(dir); ok {
+		return dir, rec
 	}
 	return "", nil
 }

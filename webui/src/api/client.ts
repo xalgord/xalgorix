@@ -12,6 +12,7 @@ import type {
   Paginated,
   QueueStatus,
   RateLimitSettings,
+  ScanEventsPage,
   ScanInstance,
   ScanListItem,
   ScanRecord,
@@ -226,6 +227,12 @@ export const api = {
   listScansPage: (params: ListParams) =>
     http<Paginated<ScanListItem>>(`/api/scans${listQuery(params)}`),
   getScan: (id: string) => http<ScanRecord | null>(`/api/scans/${id}`),
+  // Lazily page older events for a scan whose detail response only tailed the
+  // most recent ones (see ScanRecord.events_truncated).
+  scanEvents: (id: string, offset: number, limit: number) =>
+    http<ScanEventsPage>(
+      `/api/scans/${id}/events?offset=${offset}&limit=${limit}`,
+    ),
   // Flattened + deduped findings across all scans, computed server-side in a
   // single walk. Replaces the previous per-scan getScan() fan-out.
   listFindings: () => http<FlatFinding[] | null>("/api/findings"),
