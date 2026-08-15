@@ -217,16 +217,11 @@ func (s *Server) findAllScanSummaries() []scanEntry {
 			results = append(results, scanEntry{dir: filepath.Dir(path), rec: c.rec})
 			return nil
 		}
-		data, rerr := os.ReadFile(path)
-		if rerr != nil {
+		recPtr, ok := readScanSummary(path)
+		if !ok {
 			return nil
 		}
-		var lite scanRecordLite
-		if json.Unmarshal(data, &lite) != nil {
-			return nil
-		}
-		rec := lite.ScanRecord
-		rec.Events = nil
+		rec := *recPtr
 		s.scanSummaryCache[path] = scanSummaryCacheEntry{modNano: modNano, size: size, rec: rec}
 		results = append(results, scanEntry{dir: filepath.Dir(path), rec: rec})
 		return nil

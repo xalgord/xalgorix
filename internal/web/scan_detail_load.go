@@ -61,19 +61,41 @@ func walkScanJSON(path string, onEvent func(idx int, raw json.RawMessage)) (map[
 				return nil, 0, err
 			}
 			if d, ok := t.(json.Delim); ok && d == '[' {
-				for dec.More() {
-					var raw json.RawMessage
-					if err := dec.Decode(&raw); err != nil {
+				if onEvent == nil {
+					// Summary mode: skip the events array by token depth without
+					// materializing any element. Critically this avoids copying a
+					// multi-hundred-MB events blob into memory (the old
+					// ReadFile + scanRecordLite path did exactly that on every
+					// cache-cold walk, thrashing GC near GOMEMLIMIT). Element
+					// strings are tokenized transiently and GC'd one at a time.
+					depth := 1
+					for depth > 0 {
+						tok, err := dec.Token()
+						if err != nil {
+							return nil, 0, err
+						}
+						if delim, ok := tok.(json.Delim); ok {
+							switch delim {
+							case '[', '{':
+								depth++
+							case ']', '}':
+								depth--
+							}
+						}
+					}
+				} else {
+					for dec.More() {
+						var raw json.RawMessage
+						if err := dec.Decode(&raw); err != nil {
+							return nil, 0, err
+						}
+						onEvent(total, raw)
+						total++
+					}
+					// Closing ']'.
+					if _, err := dec.Token(); err != nil {
 						return nil, 0, err
 					}
-					if onEvent != nil {
-						onEvent(total, raw)
-					}
-					total++
-				}
-				// Closing ']'.
-				if _, err := dec.Token(); err != nil {
-					return nil, 0, err
 				}
 			}
 			// else: null (or unexpected) → no events.
@@ -110,6 +132,24 @@ func decodeEvents(raws []json.RawMessage) []WSEvent {
 		}
 	}
 	return events
+}
+
+// readScanSummary parses a scan.json into a ScanRecord WITHOUT its event log,
+// streaming past the events array so a huge log is never read into memory. This
+// is the events-free parse behind the summary cache; it replaces the old
+// os.ReadFile + Unmarshal(scanRecordLite) path that copied the entire events
+// blob into a RawMessage only to discard it.
+func readScanSummary(path string) (*ScanRecord, bool) {
+	meta, _, err := walkScanJSON(path, nil)
+	if err != nil {
+		return nil, false
+	}
+	rec, err := recordFromMeta(meta)
+	if err != nil {
+		return nil, false
+	}
+	rec.Events = nil
+	return rec, true
 }
 
 // loadScanRecordForDetail loads a scan record for the detail response with only

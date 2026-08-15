@@ -167,6 +167,34 @@ func TestHandleScanEvents_Endpoint(t *testing.T) {
 	}
 }
 
+func TestReadScanSummary_SkipsEventsKeepsMetadata(t *testing.T) {
+	s := newTestServer(t, nil)
+	writeScanRecord(t, s.dataDir, "sum.com/2026-08-15/sum.com_s", ScanRecord{
+		ID:          "sum.com_s",
+		Target:      "sum.com",
+		Status:      "finished",
+		TotalTokens: 4242,
+		Iterations:  7,
+		Vulns:       []VulnSummary{{ID: "v1", Title: "x", Severity: "high"}},
+		Events:      makeEvents(400),
+	})
+	dir, _ := s.resolveScanDirByID("sum.com_s")
+
+	rec, ok := readScanSummary(dir + "/scan.json")
+	if !ok {
+		t.Fatal("readScanSummary failed")
+	}
+	if rec.Events != nil {
+		t.Fatalf("summary must not carry events, got %d", len(rec.Events))
+	}
+	if rec.Target != "sum.com" || rec.TotalTokens != 4242 || rec.Iterations != 7 {
+		t.Fatalf("metadata not preserved: %+v", rec)
+	}
+	if len(rec.Vulns) != 1 || rec.Vulns[0].ID != "v1" {
+		t.Fatalf("vulns (a field AFTER events in the JSON) not preserved: %+v", rec.Vulns)
+	}
+}
+
 func TestHandleGetScan_ReturnsTailAndTruncatedFlag(t *testing.T) {
 	s := newTestServer(t, nil)
 	total := 700
