@@ -4,7 +4,7 @@ contact_links:
     url: https://docs.xalgorix.com
     about: Setup, configuration, integrations, and the CLI/API reference.
   - name: 🔒 Report a security vulnerability
-    url: https://github.com/xalgord/xalgorix/security/policy
+    url: https://github.com/xalgorix/xalgorix/security/policy
     about: Please do NOT open a public issue for security bugs — follow our responsible-disclosure process in SECURITY.md.
   - name: ☁️ Hosted version (no install)
     url: https://www.xalgorix.com

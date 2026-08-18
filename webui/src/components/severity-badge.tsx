@@ -1,4 +1,5 @@
 import { cn, normalizeSeverity, type Severity } from "@/lib/utils";
+import { useI18n } from "@/i18n";
 
 const STYLES: Record<Severity, string> = {
   critical: "bg-red-500/10 text-red-400 border-red-500/30",
@@ -17,6 +18,7 @@ export function SeverityBadge({
   className?: string;
   showDot?: boolean;
 }) {
+  const { t } = useI18n();
   const sev = normalizeSeverity(severity);
   const dotColor: Record<Severity, string> = {
     critical: "bg-red-500",
@@ -39,7 +41,7 @@ export function SeverityBadge({
           aria-hidden
         />
       )}
-      {sev}
+      {t(`severity.${sev}`)}
     </span>
   );
 }

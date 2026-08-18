@@ -2,15 +2,15 @@ package web
 
 import (
 	"encoding/json"
-	"io/fs"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/xalgord/xalgorix/v4/internal/config"
 	pdfreport "github.com/xalgord/xalgorix/v4/internal/reporting"
 	"github.com/xalgord/xalgorix/v4/internal/tools/reporting"
 )
@@ -170,11 +170,26 @@ func (s *Server) generateReportAt(scan *ScanRecord, scanDir string) (string, err
 	s.currentScanDir = scanDir
 	s.mu.Unlock()
 
-	logoPath, _ := s.resolveReportLogoPath(scan.LogoPath)
+	restoreScanDir := func() {
+		s.mu.Lock()
+		s.currentScanDir = prevDir
+		s.mu.Unlock()
+	}
 
-	s.mu.Lock()
-	s.currentScanDir = prevDir
-	s.mu.Unlock()
+	// The redesigned reporting package currently renders with Latin core
+	// fonts. Preserve the localized/CJK renderer added on main for non-English
+	// reports until that support is moved into internal/reporting.
+	language := config.DefaultLanguage
+	if s.cfg != nil {
+		language = config.NormalizeLanguage(s.cfg.Language)
+	}
+	if language != config.DefaultLanguage {
+		defer restoreScanDir()
+		return s.generateReport(scan)
+	}
+
+	logoPath, _ := s.resolveReportLogoPath(scan.LogoPath)
+	restoreScanDir()
 
 	return pdfreport.Generate(toReportingScan(scan), pdfreport.Options{
 		LogoPath:    logoPath,
@@ -189,34 +204,52 @@ type scanEntry struct {
 	rec ScanRecord // parsed record
 }
 
-// findAllScans recursively walks dataDir to find all scan.json files.
-// Structure: dataDir/target/date/slug/scan.json
+// walkScanDirs invokes fn with the path to every scan.json under root WITHOUT
+// descending into a scan directory's artifact subtree. A directory that
+// contains a scan.json IS a scan directory; its subdirectories (tool output,
+// downloaded site assets, caches — collectively tens of GB and, on a busy
+// install, ~millions of filesystem entries) are never traversed. This keeps a
+// full walk proportional to the number of SCANS (a few thousand directory
+// listings) instead of the total data size.
+//
+// Before this, both walkers used filepath.WalkDir over the entire data dir, so
+// every scan-list / scan-resolve request statted the whole artifact tree
+// (~1.9M entries for 401 scans here). That, not any single scan.json's size,
+// was what made the scan pages slow.
+func walkScanDirs(root string, fn func(scanJSONPath string)) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() && e.Name() == "scan.json" {
+			fn(filepath.Join(root, "scan.json"))
+			return // this is a scan dir; do not descend into its artifacts
+		}
+	}
+	for _, e := range entries {
+		// e.IsDir() is false for symlinks, so symlinked dirs are not followed
+		// (no traversal loops).
+		if e.IsDir() {
+			walkScanDirs(filepath.Join(root, e.Name()), fn)
+		}
+	}
+}
+
+// findAllScans finds all scan.json files under dataDir and fully parses each
+// (event log included). Structure: dataDir/target/date/slug/scan.json.
 func (s *Server) findAllScans() []scanEntry {
 	var results []scanEntry
-	_ = filepath.WalkDir(s.dataDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			name := d.Name()
-			if name == "scratch" || name == "reports" || name == "logs" || name == "artifacts" || name == "tools" || name == "snapshots" || name == "notes" || name == ".git" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Name() != "scan.json" {
-			return nil
-		}
+	walkScanDirs(s.dataDir, func(path string) {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return nil
+			return
 		}
 		var rec ScanRecord
 		if json.Unmarshal(data, &rec) != nil {
-			return nil
+			return
 		}
 		results = append(results, scanEntry{dir: filepath.Dir(path), rec: rec})
-		return nil
 	})
 	return results
 }
@@ -243,11 +276,11 @@ type scanRecordLite struct {
 }
 
 // findAllScanSummaries is the events-free, cached counterpart to findAllScans.
-// It walks the data dir, parses each scan.json without decoding its event log,
-// and memoizes the result per file keyed by (modtime, size). Subsequent walks
-// only stat each file and re-parse the few that changed, so warm rebuilds are
-// effectively free. Callers that need the event log (report generation,
-// scan-detail) must use findAllScans instead.
+// It walks the data dir (pruning artifact subtrees via walkScanDirs), parses
+// each scan.json without decoding its event log, and memoizes the result per
+// file keyed by (modtime, size). Subsequent walks only stat each scan.json and
+// re-parse the few that changed. Callers that need the event log (report
+// generation) must use findAllScans instead.
 func (s *Server) findAllScanSummaries() []scanEntry {
 	var results []scanEntry
 
@@ -258,44 +291,25 @@ func (s *Server) findAllScanSummaries() []scanEntry {
 	}
 	seen := make(map[string]struct{})
 
-	_ = filepath.WalkDir(s.dataDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			name := d.Name()
-			if name == "scratch" || name == "reports" || name == "logs" || name == "artifacts" || name == "tools" || name == "snapshots" || name == "notes" || name == ".git" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Name() != "scan.json" {
-			return nil
-		}
-		info, ierr := d.Info()
+	walkScanDirs(s.dataDir, func(path string) {
+		info, ierr := os.Stat(path)
 		if ierr != nil {
-			return nil
+			return
 		}
 		seen[path] = struct{}{}
 		modNano := info.ModTime().UnixNano()
 		size := info.Size()
 		if c, ok := s.scanSummaryCache[path]; ok && c.modNano == modNano && c.size == size {
 			results = append(results, scanEntry{dir: filepath.Dir(path), rec: c.rec})
-			return nil
+			return
 		}
-		data, rerr := os.ReadFile(path)
-		if rerr != nil {
-			return nil
+		recPtr, ok := readScanSummary(path)
+		if !ok {
+			return
 		}
-		var lite scanRecordLite
-		if json.Unmarshal(data, &lite) != nil {
-			return nil
-		}
-		rec := lite.ScanRecord
-		rec.Events = nil
+		rec := *recPtr
 		s.scanSummaryCache[path] = scanSummaryCacheEntry{modNano: modNano, size: size, rec: rec}
 		results = append(results, scanEntry{dir: filepath.Dir(path), rec: rec})
-		return nil
 	})
 
 	// Drop cache entries for files that no longer exist so deleted scans
@@ -311,71 +325,131 @@ func (s *Server) findAllScanSummaries() []scanEntry {
 	return results
 }
 
-// findScanByID searches for a scan by its AgentID (the slug dir name).
-func (s *Server) findScanByID(scanID string) (string, *ScanRecord) {
+// resolveScanDirByID locates the on-disk directory for a scan id WITHOUT
+// loading (and therefore without parsing the potentially huge event log of)
+// the matched record. It uses the cached, events-free summaries so resolution
+// is O(1) full parses. Callers that need the record decide how much of it to
+// load: findScanByID loads the whole record; the scan-detail path loads only a
+// tail of events (loadScanRecordForDetail).
+func (s *Server) resolveScanDirByID(scanID string) (string, bool) {
 	// Sanitize: prevent path traversal via ../
 	scanID = filepath.Base(scanID)
 	if scanID == "" || scanID == "." || scanID == ".." {
-		return "", nil
+		return "", false
 	}
 
-	// First: prefer top-level scans. Multiple wildcard child records share the
-	// same instance id; returning a child here makes the UI route land on one
-	// subdomain instead of the parent wildcard scan.
-	entries := s.findAllScans()
-	for _, entry := range entries {
-		if entry.rec.ParentTarget != "" {
-			continue
+	entries := s.findAllScanSummaries()
+	resolveUniqueDir := func(topLevelOnly bool) (string, bool, bool) {
+		var matchedDir string
+		found := false
+		for _, entry := range entries {
+			if topLevelOnly && entry.rec.ParentTarget != "" {
+				continue
+			}
+			if entry.rec.ID != scanID && entry.rec.InstanceID != scanID && filepath.Base(entry.dir) != scanID {
+				continue
+			}
+			if found {
+				log.Printf("[scan] refusing ambiguous scan id %q: multiple records match", scanID)
+				return "", false, true // ambiguous → resolved, no match
+			}
+			matchedDir = entry.dir
+			found = true
 		}
-		if entry.rec.ID == scanID || entry.rec.InstanceID == scanID || filepath.Base(entry.dir) == scanID {
-			return entry.dir, &entry.rec
-		}
+		return matchedDir, found, false
 	}
-	// Second: allow direct child lookup when the caller explicitly uses a child
-	// scan id, for report generation and historical compatibility.
-	for _, entry := range entries {
-		if entry.rec.ID == scanID || entry.rec.InstanceID == scanID || filepath.Base(entry.dir) == scanID {
-			return entry.dir, &entry.rec
-		}
+	if dir, found, ambiguous := resolveUniqueDir(true); ambiguous {
+		return "", false
+	} else if found {
+		return dir, true
 	}
-	// Second: try legacy flat path as fallback (dataDir/scanID/scan.json)
+	if dir, found, ambiguous := resolveUniqueDir(false); ambiguous {
+		return "", false
+	} else if found {
+		return dir, true
+	}
+
+	// Legacy flat path fallback (dataDir/scanID/scan.json).
 	direct := filepath.Join(s.dataDir, scanID, "scan.json")
-	if data, err := os.ReadFile(direct); err == nil {
-		var rec ScanRecord
-		if json.Unmarshal(data, &rec) == nil {
-			return filepath.Join(s.dataDir, scanID), &rec
-		}
+	if _, err := os.Stat(direct); err == nil {
+		return filepath.Join(s.dataDir, scanID), true
+	}
+	return "", false
+}
+
+// findScanByID searches for a scan by its AgentID (the slug dir name) and
+// returns the fully-loaded record (event log included). Prefer
+// resolveScanDirByID + a tail loader on the read hot path.
+func (s *Server) findScanByID(scanID string) (string, *ScanRecord) {
+	dir, ok := s.resolveScanDirByID(scanID)
+	if !ok {
+		return "", nil
+	}
+	if rec, ok := loadScanRecordFromDir(dir); ok {
+		return dir, rec
 	}
 	return "", nil
 }
 
-var shortHexIDPattern = regexp.MustCompile(`^[a-f0-9]{8}$`)
+// persistedInstanceIDClaim reports whether any top-level persisted record
+// claims an external instance ID. Ambiguous duplicate claims are still a hard
+// reservation conflict even though they are intentionally non-authoritative
+// for reads.
+func (s *Server) persistedInstanceIDClaim(instanceID string) (string, bool) {
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
+		return "", false
+	}
+	if rec, err := s.loadExactDispatchSnapshot(instanceID); err == nil {
+		return rec.Status, true
+	} else if !errors.Is(err, errDispatchSnapshotNotFound) {
+		return "conflict", true
+	}
+	status := ""
+	claims := 0
+	for _, entry := range s.findAllScans() {
+		if entry.rec.ParentTarget == "" && entry.rec.InstanceID == instanceID {
+			claims++
+			status = entry.rec.Status
+		}
+	}
+	if claims > 1 {
+		return "conflict", true
+	}
+	return status, claims == 1
+}
 
-func (s *Server) findRecentScanForShortAlias(scanID string) (string, *ScanRecord) {
-	if !shortHexIDPattern.MatchString(scanID) {
+// findScanByInstanceID resolves only the immutable external instance identity
+// persisted on a top-level scan record. It deliberately does not accept record
+// IDs, directory names, target similarity, or short aliases: authoritative
+// status snapshots must either prove the requested run identity or return no
+// news.
+func (s *Server) findScanByInstanceID(instanceID string) (string, *ScanRecord) {
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
 		return "", nil
 	}
-
-	entries := s.findAllScans()
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].rec.StartedAt > entries[j].rec.StartedAt
-	})
-
-	for _, entry := range entries {
-		if entry.rec.ParentTarget != "" {
-			continue
-		}
-		startedAt, err := time.Parse(time.RFC3339Nano, entry.rec.StartedAt)
-		if err != nil {
-			continue
-		}
-		if time.Since(startedAt) > 24*time.Hour {
-			continue
-		}
-		log.Printf("[web] Resolving short scan route %s to recent scan %s", scanID, entry.rec.ID)
-		return entry.dir, &entry.rec
+	if rec, err := s.loadExactDispatchSnapshot(instanceID); err == nil {
+		return filepath.Dir(s.dispatchSnapshotPath(instanceID)), rec
+	} else if !errors.Is(err, errDispatchSnapshotNotFound) {
+		log.Printf("[scan] refusing unreadable exact dispatch snapshot %q: %v", instanceID, err)
+		return "", nil
 	}
-	return "", nil
+	var matchedDir string
+	var matched *ScanRecord
+	for _, entry := range s.findAllScans() {
+		if entry.rec.ParentTarget != "" || entry.rec.InstanceID != instanceID {
+			continue
+		}
+		if matched != nil {
+			log.Printf("[scan] refusing ambiguous external instance id %q: records %q and %q both claim it", instanceID, matched.ID, entry.rec.ID)
+			return "", nil
+		}
+		rec := entry.rec
+		matchedDir = entry.dir
+		matched = &rec
+	}
+	return matchedDir, matched
 }
 
 func (s *Server) markDiscordWebhookConfigured(rec *ScanRecord) {
@@ -399,6 +473,15 @@ func (s *Server) markTelegramConfigured(rec *ScanRecord) {
 	rec.TelegramConfigured = s.telegramConfigured()
 }
 
+func cloneSubScanSummaries(source []SubScanSummary) []SubScanSummary {
+	if source == nil {
+		return nil
+	}
+	cloned := make([]SubScanSummary, len(source))
+	copy(cloned, source)
+	return cloned
+}
+
 func (s *Server) scanRecordFromInstance(inst *ScanInstance) *ScanRecord {
 	if inst == nil {
 		return nil
@@ -412,6 +495,7 @@ func (s *Server) scanRecordFromInstance(inst *ScanInstance) *ScanRecord {
 	copy(vulns, inst.Vulns)
 	phases := append([]int(nil), inst.Phases...)
 	severityFilter := append([]string(nil), inst.SeverityFilter...)
+	subScans := cloneSubScanSummaries(inst.SubScans)
 
 	return &ScanRecord{
 		ID:                       inst.ID,
@@ -440,6 +524,105 @@ func (s *Server) scanRecordFromInstance(inst *ScanInstance) *ScanRecord {
 		LogoPath:                 inst.LogoPath,
 		Phases:                   phases,
 		CurrentPhase:             inst.CurrentPhase,
+		SubScans:                 subScans,
+		SubScanTotal:             inst.SubScanTotal,
+		SubScanCompleted:         inst.SubScanCompleted,
+		SubScanRunning:           inst.SubScanRunning,
+		SubScanRemaining:         inst.SubScanRemaining,
+		WorkStarted:              inst.WorkStarted,
+	}
+}
+
+// mirrorWildcardProgress copies the persisted wildcard parent snapshot into
+// its live instance. The copy keeps /api/instances/{id} lock-only and avoids
+// sharing the mutable parentRecord slice with concurrent HTTP encoders.
+func (s *Server) mirrorWildcardProgress(instanceID string, rec *ScanRecord) {
+	if instanceID == "" || rec == nil {
+		return
+	}
+	children := cloneSubScanSummaries(rec.SubScans)
+
+	s.instancesMu.RLock()
+	inst := s.instances[instanceID]
+	if inst != nil {
+		inst.mu.Lock()
+		inst.SubScans = children
+		inst.SubScanTotal = rec.SubScanTotal
+		inst.SubScanCompleted = rec.SubScanCompleted
+		inst.SubScanRunning = rec.SubScanRunning
+		inst.SubScanRemaining = rec.SubScanRemaining
+		normalizeTerminalWildcardInstanceLocked(inst)
+		inst.mu.Unlock()
+	}
+	s.instancesMu.RUnlock()
+}
+
+// normalizeTerminalSubScans converts unresolved children to a terminal status
+// while preserving whether the scanner ever dispatched them. Never-started
+// pending children remain without lifecycle timestamps; running/started
+// children receive the parent's terminal timestamp.
+func normalizeTerminalSubScans(children []SubScanSummary, parentStatus, finishedAt string) int {
+	fallbackStatus := terminalSubScanStatus(parentStatus)
+	completed := 0
+	for i := range children {
+		status := strings.ToLower(strings.TrimSpace(children[i].Status))
+		started := status == "running" || children[i].StartedAt != "" || children[i].ID != "" ||
+			children[i].VulnCount > 0 || children[i].TotalTokens > 0
+		if isUnresolvedSubScanStatus(status) {
+			children[i].Status = fallbackStatus
+			if started && children[i].FinishedAt == "" {
+				children[i].FinishedAt = finishedAt
+			}
+		}
+		if isFinishedSubScanStatus(children[i].Status) {
+			completed++
+		}
+	}
+	return completed
+}
+
+// normalizeTerminalWildcardProgress prevents a terminal compact snapshot from
+// retaining children as pending/running. This mirrors the historical full
+// response's normalization without its disk walk.
+func normalizeTerminalWildcardProgress(rec *ScanRecord) {
+	if rec == nil || !isTerminalScanStatus(rec.Status) {
+		return
+	}
+	finishedAt := rec.FinishedAt
+	if finishedAt == "" {
+		finishedAt = time.Now().Format(time.RFC3339)
+	}
+	completed := normalizeTerminalSubScans(rec.SubScans, rec.Status, finishedAt)
+	if rec.SubScanTotal < len(rec.SubScans) {
+		rec.SubScanTotal = len(rec.SubScans)
+	}
+	rec.SubScanCompleted = completed
+	rec.SubScanRunning = 0
+	rec.SubScanRemaining = rec.SubScanTotal - completed
+	if rec.SubScanRemaining < 0 {
+		rec.SubScanRemaining = 0
+	}
+}
+
+// normalizeTerminalWildcardInstanceLocked keeps status and wildcard children
+// coherent for exact instance readers. The caller must hold inst.mu.
+func normalizeTerminalWildcardInstanceLocked(inst *ScanInstance) {
+	if inst == nil || inst.ScanMode != "wildcard" || !isTerminalScanStatus(inst.Status) {
+		return
+	}
+	finishedAt := inst.FinishedAt
+	if finishedAt == "" {
+		finishedAt = time.Now().Format(time.RFC3339)
+	}
+	completed := normalizeTerminalSubScans(inst.SubScans, inst.Status, finishedAt)
+	if inst.SubScanTotal < len(inst.SubScans) {
+		inst.SubScanTotal = len(inst.SubScans)
+	}
+	inst.SubScanCompleted = completed
+	inst.SubScanRunning = 0
+	inst.SubScanRemaining = inst.SubScanTotal - completed
+	if inst.SubScanRemaining < 0 {
+		inst.SubScanRemaining = 0
 	}
 }
 
@@ -482,6 +665,49 @@ func isTerminalScanStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "finished", "completed", "stopped", "failed":
 		return true
+	default:
+		return false
+	}
+}
+
+// isInterruptedRecoverableRecord reports whether an on-disk scan record was
+// interrupted by something the operator did NOT intend as a final stop, and is
+// therefore a candidate for auto-resume on the next startup.
+//
+// Two cases qualify:
+//   - running/pending: the process died before the scan reached a terminal
+//     state (crash / SIGKILL). scan.json still says running/pending.
+//   - stopped with a signal_/panic_/server_shutdown reason: a graceful
+//     SIGTERM/SIGINT, a recovered panic, or a scan that was still QUEUED
+//     (pending, waiting for an admission slot) when the server shut down.
+//     All persist the scan as "stopped" but PRESERVE its queue_state on
+//     purpose (shouldPreserveQueueStateOnExit / the admission-loop shutdown
+//     branch). Without this case those scans stayed "stopped"/"pending"
+//     forever and only a fresh "Start" was offered — the bug this closes.
+//
+// The "server_shutdown" reason specifically is set for a scan that never got a
+// slot before shutdown (orchestrator admission loop). Its queue_state is kept
+// (preserveQueue), so it MUST also be recognized here — otherwise auto-resume
+// keeps the queue_state but the exact-stop tombstone refuses dispatch, and the
+// scan is stranded as an orphaned "pending" record with no driver goroutine
+// that nothing ever promotes (observed: queued wildcard scans never starting
+// after a restart even with free slots).
+//
+// A user-initiated stop is deliberately NOT recoverable: handleStop clears the
+// queue_state, so even when such a record reaches this function the downstream
+// resumability check (valid queue_state ownership) fails and it stays stopped.
+// Gating resume on queue_state ownership — not on this predicate alone — is
+// what keeps user-stopped/finished scans from being revived.
+func isInterruptedRecoverableRecord(status, stopReason string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "running", "pending":
+		return true
+	case "stopped":
+		reason := strings.ToLower(strings.TrimSpace(stopReason))
+		return strings.HasPrefix(reason, "signal_") ||
+			reason == "panic_recovered" ||
+			reason == "server_restart_resuming" ||
+			reason == "server_shutdown"
 	default:
 		return false
 	}
@@ -576,6 +802,7 @@ func (s *Server) applyInstanceSnapshot(rec *ScanRecord, includeEvents bool) {
 	if snapshot.TotalTokens > rec.TotalTokens {
 		rec.TotalTokens = snapshot.TotalTokens
 	}
+	rec.WorkStarted = rec.WorkStarted || snapshot.WorkStarted
 	for _, vuln := range snapshot.Vulns {
 		appendVulnSummaryUnique(&rec.Vulns, vuln)
 	}
@@ -597,7 +824,11 @@ func (s *Server) attachWildcardSubScans(rec *ScanRecord) {
 	if rec == nil || rec.ParentTarget != "" {
 		return
 	}
-	s.attachWildcardSubScansFrom(rec, s.findAllScans())
+	// Use the cached, events-free summaries: sub-scan attachment only reads
+	// child target/status/counts/vulns, never the event log. Calling the
+	// full findAllScans() here (per parent, on every GET) was a primary
+	// driver of the JSON-decode CPU and multi-GB transient allocations.
+	s.attachWildcardSubScansFrom(rec, s.findAllScanSummaries())
 }
 
 // attachWildcardSubScansFrom is the same as attachWildcardSubScans but reuses
@@ -840,60 +1071,126 @@ func (s *Server) rebuildInstancesFromDisk() {
 		}
 	}
 
-	for _, entry := range s.findAllScans() {
-		instID := entry.rec.ID
-		resumable := false
-		if mappedID, ok := qMap[filepath.Clean(entry.dir)]; ok {
-			instID, resumable = mappedID, true
-		} else if mappedID, ok := qMap[entry.rec.ID]; ok {
-			instID, resumable = mappedID, true
-		} else if mappedID, ok := qMap[normalizeScanTarget(entry.rec.Target)]; ok {
-			instID, resumable = mappedID, true
-		}
-
-		if entry.rec.Status == "running" || entry.rec.Status == "pending" {
-			if resumable {
-				entry.rec.Status = "pending"
-				entry.rec.StopReason = "server_restart_resuming"
-				entry.rec.FinishedAt = ""
-			} else {
-				entry.rec.Status = "stopped"
-				entry.rec.StopReason = "server_restart_no_resume_state"
-				entry.rec.FinishedAt = time.Now().Format(time.RFC3339)
+	entries := s.findAllScans()
+	externalIdentityCounts := make(map[string]int)
+	for i := range entries {
+		entry := &entries[i]
+		if entry.rec.ParentTarget == "" {
+			if persistedID := strings.TrimSpace(entry.rec.InstanceID); persistedID != "" {
+				externalIdentityCounts[persistedID]++
 			}
-			s.saveScanRecordTo(&entry.rec, entry.dir)
+		}
+	}
+	instanceIdentity := func(entry *scanEntry) (string, bool) {
+		// ScanRecord.InstanceID is immutable run ownership metadata. Once it
+		// exists, queue recovery may prove that same run resumable but must never
+		// replace it with an identity inferred from a target, directory, or
+		// canonical record ID.
+		persistedID := strings.TrimSpace(entry.rec.InstanceID)
+		candidates := []string{
+			qMap[filepath.Clean(entry.dir)],
+			qMap[entry.rec.ID],
+			qMap[normalizeScanTarget(entry.rec.Target)],
+		}
+		if persistedID != "" {
+			for _, mappedID := range candidates {
+				if mappedID == persistedID {
+					return persistedID, true
+				}
+			}
+			return persistedID, false
 		}
 
-		// Skip subdomain scans — they belong to their parent wildcard scan
+		// Legacy records without ownership metadata can only inherit an active
+		// instance ID from an exact queue-state relationship. Historical terminal
+		// records are keyed by their canonical record ID; no short-alias guess is
+		// permitted.
+		for _, mappedID := range candidates {
+			if mappedID != "" {
+				return mappedID, true
+			}
+		}
+		return entry.rec.ID, false
+	}
+
+	// First normalize every interrupted record so wildcard parent aggregation
+	// below observes the recovered child statuses rather than stale running
+	// values captured before the restart.
+	for i := range entries {
+		entry := &entries[i]
+		_, resumable := instanceIdentity(entry)
+		if !isInterruptedRecoverableRecord(entry.rec.Status, entry.rec.StopReason) {
+			continue
+		}
+		if resumable {
+			entry.rec.Status = "pending"
+			entry.rec.StopReason = "server_restart_resuming"
+			entry.rec.FinishedAt = ""
+		} else if entry.rec.Status != "stopped" {
+			// Only terminalize records that were mid-flight (running/pending)
+			// and have no resume state. A signal-stopped record with no valid
+			// queue_state is already correctly "stopped"; leave its reason
+			// intact rather than rewriting it every boot.
+			entry.rec.Status = "stopped"
+			entry.rec.StopReason = "server_restart_no_resume_state"
+			entry.rec.FinishedAt = time.Now().Format(time.RFC3339)
+		}
+		normalizeTerminalWildcardProgress(&entry.rec)
+		s.saveScanRecordTo(&entry.rec, entry.dir)
+	}
+
+	for i := range entries {
+		entry := &entries[i]
+		// Skip subdomain scans — they belong to their parent wildcard scan.
 		if entry.rec.ParentTarget != "" {
 			continue
 		}
 
+		instID, _ := instanceIdentity(entry)
+		if externalIdentityCounts[instID] > 1 {
+			log.Printf("[scan] refusing to rebuild ambiguous external instance id %q claimed by %d top-level records", instID, externalIdentityCounts[instID])
+			continue
+		}
+		if entry.rec.ScanMode == "wildcard" || entry.rec.SubScans != nil || entry.rec.SubScanTotal > 0 {
+			// Rebuild the exact parent snapshot from the now-normalized child
+			// records. This restores findings and physical provenance as well as
+			// authoritative child counters without requiring request-time I/O.
+			s.attachWildcardSubScansFrom(&entry.rec, entries)
+			normalizeTerminalWildcardProgress(&entry.rec)
+			s.saveScanRecordTo(&entry.rec, entry.dir)
+		}
+
 		inst := &ScanInstance{
-			ID:             instID,
-			Name:           entry.rec.Name,
-			Targets:        entry.rec.Target,
-			ParentTarget:   entry.rec.ParentTarget,
-			Status:         entry.rec.Status,
-			StartedAt:      entry.rec.StartedAt,
-			FinishedAt:     entry.rec.FinishedAt,
-			StopReason:     entry.rec.StopReason,
-			Iterations:     entry.rec.Iterations,
-			ToolCalls:      entry.rec.ToolCalls,
-			VulnCount:      len(entry.rec.Vulns),
-			TotalTokens:    entry.rec.TotalTokens,
-			ScanMode:       entry.rec.ScanMode,
-			Instruction:    entry.rec.Instruction,
-			SeverityFilter: entry.rec.SeverityFilter,
-			Phases:         entry.rec.Phases,
-			ReconMode:      entry.rec.ReconMode,
-			ScanIntensity:  entry.rec.ScanIntensity,
-			CompanyName:    entry.rec.CompanyName,
-			LogoPath:       entry.rec.LogoPath,
-			DiscordWebhook: entry.rec.DiscordWebhook,
-			Vulns:          entry.rec.Vulns,
-			CurrentPhase:   entry.rec.CurrentPhase,
-			events:         append([]WSEvent(nil), entry.rec.Events...),
+			ID:               instID,
+			Name:             entry.rec.Name,
+			Targets:          entry.rec.Target,
+			ParentTarget:     entry.rec.ParentTarget,
+			Status:           entry.rec.Status,
+			StartedAt:        entry.rec.StartedAt,
+			FinishedAt:       entry.rec.FinishedAt,
+			StopReason:       entry.rec.StopReason,
+			Iterations:       entry.rec.Iterations,
+			ToolCalls:        entry.rec.ToolCalls,
+			VulnCount:        len(entry.rec.Vulns),
+			TotalTokens:      entry.rec.TotalTokens,
+			ScanMode:         entry.rec.ScanMode,
+			Instruction:      entry.rec.Instruction,
+			SeverityFilter:   entry.rec.SeverityFilter,
+			Phases:           entry.rec.Phases,
+			ReconMode:        entry.rec.ReconMode,
+			ScanIntensity:    entry.rec.ScanIntensity,
+			CompanyName:      entry.rec.CompanyName,
+			LogoPath:         entry.rec.LogoPath,
+			DiscordWebhook:   entry.rec.DiscordWebhook,
+			Vulns:            entry.rec.Vulns,
+			CurrentPhase:     entry.rec.CurrentPhase,
+			SubScans:         cloneSubScanSummaries(entry.rec.SubScans),
+			SubScanTotal:     entry.rec.SubScanTotal,
+			SubScanCompleted: entry.rec.SubScanCompleted,
+			SubScanRunning:   entry.rec.SubScanRunning,
+			SubScanRemaining: entry.rec.SubScanRemaining,
+			WorkStarted:      entry.rec.WorkStarted,
+			events:           append([]WSEvent(nil), entry.rec.Events...),
 		}
 		if inst.CurrentPhase == 0 {
 			inst.CurrentPhase = firstSelectedPhase(inst.Phases)

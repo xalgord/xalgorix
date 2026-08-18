@@ -1,4 +1,5 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { useI18n } from "@/i18n";
 import { Link } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -55,6 +56,7 @@ interface SeverityCounts {
 }
 
 export default function FindingsPage() {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const { data: scans } = useScansList();
   const del = useDeleteVuln();
@@ -215,7 +217,7 @@ export default function FindingsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Findings</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{t("findings.title")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Vulnerabilities across {ids.length} scan{ids.length === 1 ? "" : "s"}, ranked by
             severity.
@@ -286,12 +288,12 @@ export default function FindingsPage() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All severities</SelectItem>
-              <SelectItem value="critical">Critical</SelectItem>
-              <SelectItem value="high">High</SelectItem>
-              <SelectItem value="medium">Medium</SelectItem>
-              <SelectItem value="low">Low</SelectItem>
-              <SelectItem value="info">Info</SelectItem>
+              <SelectItem value="all">{t("findings.allSeverities")}</SelectItem>
+              <SelectItem value="critical">{t("severity.critical")}</SelectItem>
+              <SelectItem value="high">{t("severity.high")}</SelectItem>
+              <SelectItem value="medium">{t("severity.medium")}</SelectItem>
+              <SelectItem value="low">{t("severity.low")}</SelectItem>
+              <SelectItem value="info">{t("severity.info")}</SelectItem>
             </SelectContent>
           </Select>
         </CardContent>

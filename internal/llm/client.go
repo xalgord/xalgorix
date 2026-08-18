@@ -199,21 +199,45 @@ type geminiGenerationConfig struct {
 	Temperature     *float64 `json:"temperature,omitempty"`
 }
 
+// geminiSafetySetting is one entry of Gemini's "safetySettings" array: an
+// adjustable harm category paired with the HarmBlockThreshold to apply. Xalgorix
+// is an authorized security-testing tool, so by default it sends BLOCK_NONE for
+// every category to stop Gemini's content filter from refusing legitimate
+// exploit payloads / offensive-security methodology (classified under
+// HARM_CATEGORY_DANGEROUS_CONTENT). Operator-configurable via
+// XALGORIX_GEMINI_SAFETY — see config.Config.GeminiSafetyThreshold.
+type geminiSafetySetting struct {
+	Category  string `json:"category"`
+	Threshold string `json:"threshold"`
+}
+
 type geminiRequest struct {
 	Contents          []geminiContent         `json:"contents,omitempty"`
 	SystemInstruction *geminiContent          `json:"system_instruction,omitempty"`
 	GenerationConfig  *geminiGenerationConfig `json:"generationConfig,omitempty"`
+	SafetySettings    []geminiSafetySetting   `json:"safetySettings,omitempty"`
 }
 
 type geminiCandidate struct {
 	Content struct {
 		Parts []geminiPart `json:"parts"`
 	} `json:"content"`
+	// FinishReason is captured so a safety block (finishReason "SAFETY") is
+	// diagnosable instead of surfacing as an opaque "no content" error.
+	FinishReason string `json:"finishReason,omitempty"`
+}
+
+// geminiPromptFeedback carries prompt-level safety verdicts. BlockReason is
+// non-empty (e.g. "SAFETY", "PROHIBITED_CONTENT") when Gemini refused the whole
+// prompt before generating any candidate.
+type geminiPromptFeedback struct {
+	BlockReason string `json:"blockReason,omitempty"`
 }
 
 type geminiResponse struct {
-	Candidates    []geminiCandidate    `json:"candidates"`
-	UsageMetadata *geminiUsageMetadata `json:"usageMetadata,omitempty"`
+	Candidates     []geminiCandidate     `json:"candidates"`
+	UsageMetadata  *geminiUsageMetadata  `json:"usageMetadata,omitempty"`
+	PromptFeedback *geminiPromptFeedback `json:"promptFeedback,omitempty"`
 }
 
 // geminiUsageMetadata carries token counts returned by the Gemini
@@ -641,6 +665,94 @@ func (c *Client) maxOutputTokens() int {
 	return n
 }
 
+// geminiHarmCategories are the adjustable Gemini safety categories Xalgorix sets
+// a threshold on. All four get the same operator-configured threshold so an
+// authorized assessment is not blocked mid-scan when the model reasons about
+// exploit payloads or offensive-security methodology (Gemini files these under
+// HARM_CATEGORY_DANGEROUS_CONTENT). HARM_CATEGORY_CIVIC_INTEGRITY is
+// intentionally omitted — it is unrelated to security testing.
+var geminiHarmCategories = []string{
+	"HARM_CATEGORY_HARASSMENT",
+	"HARM_CATEGORY_HATE_SPEECH",
+	"HARM_CATEGORY_SEXUALLY_EXPLICIT",
+	"HARM_CATEGORY_DANGEROUS_CONTENT",
+}
+
+// unknownGeminiSafetyOnce guards a single warning line for an unrecognized
+// XALGORIX_GEMINI_SAFETY value so a typo produces one breadcrumb, not log spam.
+var unknownGeminiSafetyOnce sync.Once
+
+// normalizeGeminiSafetyThreshold maps the operator-facing XALGORIX_GEMINI_SAFETY
+// value to a canonical Gemini HarmBlockThreshold. It returns ("", false) when no
+// safetySettings should be sent — empty / "default" / "unspecified" — so Gemini
+// applies its own server-side defaults (preserving the pre-change behavior for
+// operators who explicitly opt back into it). Unknown values fall back to
+// BLOCK_NONE (the tool's default posture for authorized security testing) with a
+// one-time warning rather than sending an invalid value that Gemini would 400.
+func normalizeGeminiSafetyThreshold(raw string) (string, bool) {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "", "DEFAULT", "UNSPECIFIED", "HARM_BLOCK_THRESHOLD_UNSPECIFIED":
+		return "", false
+	case "OFF":
+		return "OFF", true
+	case "BLOCK_NONE", "NONE":
+		return "BLOCK_NONE", true
+	case "BLOCK_ONLY_HIGH", "ONLY_HIGH":
+		return "BLOCK_ONLY_HIGH", true
+	case "BLOCK_MEDIUM_AND_ABOVE", "MEDIUM":
+		return "BLOCK_MEDIUM_AND_ABOVE", true
+	case "BLOCK_LOW_AND_ABOVE", "LOW":
+		return "BLOCK_LOW_AND_ABOVE", true
+	default:
+		unknownGeminiSafetyOnce.Do(func() {
+			log.Printf("[llm] unknown XALGORIX_GEMINI_SAFETY=%q; using BLOCK_NONE (authorized-security-testing default)", raw)
+		})
+		return "BLOCK_NONE", true
+	}
+}
+
+// geminiSafetySettings builds the per-request safetySettings array from the
+// operator's configured threshold. Returns nil (the field is omitted, so Gemini
+// uses its server-side defaults) when the operator opted into DEFAULT/"".
+func (c *Client) geminiSafetySettings() []geminiSafetySetting {
+	raw := ""
+	if c.cfg != nil {
+		raw = c.cfg.GeminiSafetyThreshold
+	}
+	threshold, ok := normalizeGeminiSafetyThreshold(raw)
+	if !ok {
+		return nil
+	}
+	settings := make([]geminiSafetySetting, 0, len(geminiHarmCategories))
+	for _, cat := range geminiHarmCategories {
+		settings = append(settings, geminiSafetySetting{Category: cat, Threshold: threshold})
+	}
+	return settings
+}
+
+// geminiBlockDetail returns a human-readable suffix explaining WHY a Gemini
+// response carried no usable content, so a safety block is diagnosable instead
+// of surfacing as an opaque "no content" error. Empty when no signal is present.
+func geminiBlockDetail(resp geminiResponse) string {
+	var finishReason, blockReason string
+	if len(resp.Candidates) > 0 {
+		finishReason = resp.Candidates[0].FinishReason
+	}
+	if resp.PromptFeedback != nil {
+		blockReason = resp.PromptFeedback.BlockReason
+	}
+	if finishReason == "" && blockReason == "" {
+		return ""
+	}
+	detail := fmt.Sprintf(" (finishReason=%q promptFeedback.blockReason=%q", finishReason, blockReason)
+	if strings.EqualFold(finishReason, "SAFETY") ||
+		strings.EqualFold(blockReason, "SAFETY") ||
+		strings.EqualFold(blockReason, "PROHIBITED_CONTENT") {
+		detail += "; Gemini's safety filter blocked this response — set XALGORIX_GEMINI_SAFETY=BLOCK_NONE (or OFF) to allow authorized security-testing content"
+	}
+	return detail + ")"
+}
+
 // usesMaxCompletionTokens reports whether an OpenAI model requires the
 // `max_completion_tokens` parameter and rejects the legacy `max_tokens` with a
 // 400 ("Unsupported parameter: 'max_tokens' is not supported with this model.
@@ -838,6 +950,7 @@ func (c *Client) ChatStream(messages []Message) <-chan StreamChunk {
 				MaxOutputTokens: c.maxOutputTokens(),
 				Temperature:     c.effectiveTemperature(),
 			}
+			gemReq.SafetySettings = c.geminiSafetySettings()
 			body, _ = json.Marshal(gemReq)
 		} else if isAnthropic {
 			var systemPrompt string
@@ -1075,6 +1188,7 @@ func (c *Client) doChat(messages []Message) (out string, err error) {
 			MaxOutputTokens: c.maxOutputTokens(),
 			Temperature:     c.effectiveTemperature(),
 		}
+		gemReq.SafetySettings = c.geminiSafetySettings()
 		body, err = json.Marshal(gemReq)
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal Gemini request: %w", err)
@@ -1139,7 +1253,7 @@ func (c *Client) doChat(messages []Message) (out string, err error) {
 			return "", fmt.Errorf("failed to parse Gemini response: %w", err)
 		}
 		if len(gemResp.Candidates) == 0 || len(gemResp.Candidates[0].Content.Parts) == 0 {
-			return "", fmt.Errorf("no content in Gemini response")
+			return "", fmt.Errorf("no content in Gemini response%s", geminiBlockDetail(gemResp))
 		}
 		if gemResp.UsageMetadata != nil {
 			c.mu.Lock()

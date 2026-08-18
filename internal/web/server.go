@@ -239,6 +239,63 @@ func setWebUICacheHeaders(w http.ResponseWriter) {
 	w.Header().Set("Expires", "0")
 }
 
+func validDispatchID(id string) bool {
+	if len(id) < 16 || len(id) > 128 {
+		return false
+	}
+	for _, r := range id {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// reserveDispatchID serializes duplicate HTTP submissions before runMultiScan
+// registers the instance. Existing/reserved IDs are idempotent acknowledgments,
+// never permission to overwrite another live run.
+func (s *Server) reserveDispatchID(id string) (string, bool) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	if s.dispatchReservations == nil {
+		s.dispatchReservations = make(map[string]bool)
+	}
+	if s.dispatchReservations[id] {
+		return "pending", false
+	}
+	s.instancesMu.RLock()
+	inst := s.instances[id]
+	s.instancesMu.RUnlock()
+	if inst != nil {
+		inst.mu.RLock()
+		status := inst.Status
+		if isTerminalScanStatus(status) && inst.snapshotFinalizing {
+			status = "pending"
+		}
+		inst.mu.RUnlock()
+		return status, false
+	}
+	if rec, err := s.loadExactDispatchSnapshot(id); err == nil {
+		return rec.Status, false
+	} else if !errors.Is(err, errDispatchSnapshotNotFound) {
+		log.Printf("[scan] refusing dispatch id %q because its durable snapshot is unreadable: %v", id, err)
+		return "conflict", false
+	}
+	if status, claimed := s.persistedInstanceIDClaim(id); claimed {
+		return status, false
+	}
+	s.dispatchReservations[id] = true
+	return "", true
+}
+
+func (s *Server) releaseDispatchID(id string) {
+	s.dispatchMu.Lock()
+	delete(s.dispatchReservations, id)
+	s.dispatchMu.Unlock()
+}
+
 func canStartInstanceStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "saved", "stopped", "failed", "finished":
@@ -315,6 +372,10 @@ type ScanRequest struct {
 	// per Requirement 11.4.
 	// Validates: Requirements 11.1, 11.2, 11.5.
 	ProviderProfile string `json:"provider_profile,omitempty"`
+	// DispatchID is an optional caller-owned idempotency key for control-plane
+	// dispatch. It is validated and reserved before the goroutine starts; the
+	// internal InstanceID remains wire-inaccessible for resume safety.
+	DispatchID string `json:"dispatch_id,omitempty"`
 	// Internal fields — `json:"-"` makes them un-settable from the wire.
 	// Critical: a client must not be able to set InstanceID to spoof
 	// broadcasts to another scan, or set IsResume to bypass the resume
@@ -332,6 +393,7 @@ type ScanRequest struct {
 	ResumeSubIndex       int      `json:"-"`
 	ResumeDiscoveryDone  bool     `json:"-"`
 	ResumeOriginalTarget int      `json:"-"`
+	queueOwnership       *queueOwnership
 
 	// Code-scan internals, resolved server-side from CodeScan in handleScan.
 	// codeScanMode drives the agent's methodology; allowLoopbackPorts is the
@@ -402,37 +464,47 @@ type SubScanSummary struct {
 
 // ScanRecord is a persisted scan result.
 type ScanRecord struct {
-	ID                       string           `json:"id"`
-	InstanceID               string           `json:"instance_id,omitempty"` // parent queue/instance id returned by /api/scan
-	Name                     string           `json:"name,omitempty"`        // user-defined scan name
-	Target                   string           `json:"target"`
-	ParentTarget             string           `json:"parent_target,omitempty"` // parent domain for subdomain scans (wildcard mode)
-	StartedAt                string           `json:"started_at"`
-	FinishedAt               string           `json:"finished_at,omitempty"`
-	Status                   string           `json:"status"`                               // saved, running, finished, stopped
-	StopReason               string           `json:"stop_reason,omitempty"`                // why scan stopped (error, user, watchdog, etc.)
-	ScanMode                 string           `json:"scan_mode,omitempty"`                  // single, wildcard, dast
-	Instruction              string           `json:"instruction,omitempty"`                // custom scan instructions
-	SeverityFilter           []string         `json:"severity_filter,omitempty"`            // severity filter for scan
-	DiscordWebhook           string           `json:"discord_webhook,omitempty"`            // discord notification webhook
-	DiscordWebhookConfigured bool             `json:"discord_webhook_configured,omitempty"` // true when a per-scan or global webhook is configured
-	TelegramConfigured       bool             `json:"telegram_configured,omitempty"`        // true when global Telegram notifications are configured (token never exposed)
-	ReconMode                string           `json:"recon_mode,omitempty"`                 // active or passive reconnaissance
-	ScanIntensity            string           `json:"scan_intensity,omitempty"`             // active or passive testing/scanning
-	Events                   []WSEvent        `json:"events"`
-	Vulns                    []VulnSummary    `json:"vulns"`
-	TotalTokens              int              `json:"total_tokens"`
-	Iterations               int              `json:"iterations"`
-	ToolCalls                int              `json:"tool_calls"`
-	CompanyName              string           `json:"company_name,omitempty"` // report branding: company name
-	LogoPath                 string           `json:"logo_path,omitempty"`    // report branding: logo path
-	Phases                   []int            `json:"phases,omitempty"`       // selected methodology phases
-	CurrentPhase             int              `json:"current_phase,omitempty"`
-	SubScans                 []SubScanSummary `json:"sub_scans,omitempty"`
-	SubScanTotal             int              `json:"sub_scan_total,omitempty"`
-	SubScanCompleted         int              `json:"sub_scan_completed,omitempty"`
-	SubScanRunning           int              `json:"sub_scan_running,omitempty"`
-	SubScanRemaining         int              `json:"sub_scan_remaining,omitempty"`
+	ID                       string    `json:"id"`
+	InstanceID               string    `json:"instance_id,omitempty"` // parent queue/instance id returned by /api/scan
+	Name                     string    `json:"name,omitempty"`        // user-defined scan name
+	Target                   string    `json:"target"`
+	ParentTarget             string    `json:"parent_target,omitempty"` // parent domain for subdomain scans (wildcard mode)
+	StartedAt                string    `json:"started_at"`
+	FinishedAt               string    `json:"finished_at,omitempty"`
+	Status                   string    `json:"status"`                               // saved, running, finished, stopped
+	StopReason               string    `json:"stop_reason,omitempty"`                // why scan stopped (error, user, watchdog, etc.)
+	ScanMode                 string    `json:"scan_mode,omitempty"`                  // single, wildcard, dast
+	Instruction              string    `json:"instruction,omitempty"`                // custom scan instructions
+	SeverityFilter           []string  `json:"severity_filter,omitempty"`            // severity filter for scan
+	DiscordWebhook           string    `json:"discord_webhook,omitempty"`            // discord notification webhook
+	DiscordWebhookConfigured bool      `json:"discord_webhook_configured,omitempty"` // true when a per-scan or global webhook is configured
+	TelegramConfigured       bool      `json:"telegram_configured,omitempty"`        // true when global Telegram notifications are configured (token never exposed)
+	ReconMode                string    `json:"recon_mode,omitempty"`                 // active or passive reconnaissance
+	ScanIntensity            string    `json:"scan_intensity,omitempty"`             // active or passive testing/scanning
+	Events                   []WSEvent `json:"events"`
+	// EventsTotal / EventsTruncated are RESPONSE-ONLY hints for the scan-detail
+	// view. GET /api/scans/{id} returns only a tail of the event log (the most
+	// recent detailEventTail events) so a scan with a multi-hundred-MB event log
+	// doesn't have to be fully parsed, marshaled, and shipped on every open.
+	// When Truncated is set, the client lazily pages older events via
+	// GET /api/scans/{id}/events?offset=&limit=. Both are omitempty so the
+	// persisted scan.json is unaffected (they are zero on the saved record).
+	EventsTotal      int              `json:"events_total,omitempty"`
+	EventsTruncated  bool             `json:"events_truncated,omitempty"`
+	Vulns            []VulnSummary    `json:"vulns"`
+	TotalTokens      int              `json:"total_tokens"`
+	Iterations       int              `json:"iterations"`
+	ToolCalls        int              `json:"tool_calls"`
+	CompanyName      string           `json:"company_name,omitempty"` // report branding: company name
+	LogoPath         string           `json:"logo_path,omitempty"`    // report branding: logo path
+	Phases           []int            `json:"phases,omitempty"`       // selected methodology phases
+	CurrentPhase     int              `json:"current_phase,omitempty"`
+	SubScans         []SubScanSummary `json:"sub_scans,omitempty"`
+	SubScanTotal     int              `json:"sub_scan_total,omitempty"`
+	SubScanCompleted int              `json:"sub_scan_completed,omitempty"`
+	SubScanRunning   int              `json:"sub_scan_running,omitempty"`
+	SubScanRemaining int              `json:"sub_scan_remaining,omitempty"`
+	WorkStarted      bool             `json:"work_started,omitempty"` // positive proof that an agent session was admitted
 }
 
 // QueueState persists scan queue state for recovery after restart
@@ -499,15 +571,28 @@ type ScanInstance struct {
 	ScanContext         string        `json:"-"`
 	Vulns               []VulnSummary `json:"vulns,omitempty"`
 	CurrentPhase        int           `json:"current_phase,omitempty"`
-	agent               *agent.Agent
-	cancel              context.CancelFunc
-	scanDir             string
-	sctx                *scanctx.ScanContext // per-instance session state (vulns, notes, terminal, browser)
-	events              []WSEvent            // buffered events for replay
-	chatCfg             *config.Config       // provider settings for post-scan chat (not exposed)
-	chatMessages        []llm.Message        // lightweight post-scan chat history (not exposed)
-	mu                  sync.RWMutex
-	lastSessionTokens   int // tracks token count from current session for delta calculation
+	// Wildcard progress is mirrored from the persisted parent record so the
+	// exact instance endpoint can serve a complete snapshot without a data-dir
+	// walk. SubScans intentionally omits `omitempty`: an empty array is the
+	// capability marker SaaS uses to distinguish upgraded scanners from older
+	// versions that cannot safely finalize wildcard scans from this endpoint.
+	SubScans           []SubScanSummary `json:"sub_scans"`
+	SubScanTotal       int              `json:"sub_scan_total"`
+	SubScanCompleted   int              `json:"sub_scan_completed"`
+	SubScanRunning     int              `json:"sub_scan_running"`
+	SubScanRemaining   int              `json:"sub_scan_remaining"`
+	WorkStarted        bool             `json:"work_started"` // true once any agent session is admitted
+	agent              *agent.Agent
+	cancel             context.CancelFunc
+	scanDir            string
+	sctx               *scanctx.ScanContext // per-instance session state (vulns, notes, terminal, browser)
+	events             []WSEvent            // buffered events for replay
+	chatCfg            *config.Config       // provider settings for post-scan chat (not exposed)
+	chatMessages       []llm.Message        // lightweight post-scan chat history (not exposed)
+	mu                 sync.RWMutex
+	lastSessionTokens  int  // tracks token count from current session for delta calculation
+	snapshotReady      bool // final queue event and session cleanup are complete; persistence may be retried safely
+	snapshotFinalizing bool // terminal status is not externally coherent until the final queue event is durably snapshotted
 }
 
 // maxConcurrentInstances removed — replaced by dynamic resource-aware
@@ -610,25 +695,28 @@ type Server struct {
 	// forceRestartFn performs an immediate restart for POST /api/restart?force=true.
 	// nil in production (the handler re-execs via restartNow); tests set it to a
 	// stub so the force path can be exercised without exec'ing the process.
-	forceRestartFn       func()
-	dataDir              string
-	currentScanDir       string
-	currentScanID        string
-	discordWebhook       string
-	discordMinSeverity   string // minimum severity to send to Discord ("info", "low", "medium", "high", "critical")
-	telegramBotToken     string // XALGORIX_TELEGRAM_BOT_TOKEN (secret, never exposed via API)
-	telegramChatID       string // XALGORIX_TELEGRAM_CHAT_ID (numeric ID or @channelusername)
-	telegramMinSeverity  string // minimum severity to send to Telegram ("info", "low", "medium", "high", "critical")
-	rateLimiter          *RateLimiter
-	settingsMu           sync.Mutex
-	instances            map[string]*ScanInstance // concurrent scan instances
-	instancesMu          sync.RWMutex
-	queueResumeMu        sync.Mutex
-	queueResumeLaunching map[string]bool
-	postScanChatFn       func(*config.Config, []llm.Message) (string, error)
-	schedulesMu          sync.RWMutex
-	schedules            map[string]*ScanSchedule
-	shutdownChan         chan struct{}
+	forceRestartFn         func()
+	dataDir                string
+	currentScanDir         string
+	currentScanID          string
+	discordWebhook         string
+	discordMinSeverity     string // minimum severity to send to Discord ("info", "low", "medium", "high", "critical")
+	telegramBotToken       string // XALGORIX_TELEGRAM_BOT_TOKEN (secret, never exposed via API)
+	telegramChatID         string // XALGORIX_TELEGRAM_CHAT_ID (numeric ID or @channelusername)
+	telegramMinSeverity    string // minimum severity to send to Telegram ("info", "low", "medium", "high", "critical")
+	rateLimiter            *RateLimiter
+	settingsMu             sync.Mutex
+	instances              map[string]*ScanInstance // concurrent scan instances
+	instancesMu            sync.RWMutex
+	dispatchMu             sync.Mutex
+	dispatchReservations   map[string]bool
+	exactStopNotifications map[string]bool
+	queueResumeMu          sync.Mutex
+	queueResumeLaunching   map[string]bool
+	postScanChatFn         func(*config.Config, []llm.Message) (string, error)
+	schedulesMu            sync.RWMutex
+	schedules              map[string]*ScanSchedule
+	shutdownChan           chan struct{}
 	// scanListCache memoizes the built GET /api/scans list for a few seconds
 	// so paging/filtering/polling don't each re-walk the whole data dir.
 	scanListCacheMu sync.Mutex
@@ -717,19 +805,21 @@ func NewServer(cfg *config.Config, port int) *Server {
 	rl := NewRateLimiter(cfg.RateLimitRequests, time.Duration(cfg.RateLimitWindow)*time.Second)
 
 	srv := &Server{
-		cfg:                  cfg,
-		port:                 port,
-		clients:              make(map[*wsClient]bool),
-		currentAgents:        make(map[string]*agent.Agent),
-		dataDir:              dataDir,
-		discordWebhook:       cfg.DiscordWebhook,
-		discordMinSeverity:   strings.ToLower(strings.TrimSpace(cfg.DiscordMinSeverity)),
-		telegramBotToken:     cfg.TelegramBotToken,
-		telegramChatID:       cfg.TelegramChatID,
-		telegramMinSeverity:  strings.ToLower(strings.TrimSpace(cfg.TelegramMinSeverity)),
-		rateLimiter:          rl,
-		instances:            make(map[string]*ScanInstance),
-		queueResumeLaunching: make(map[string]bool),
+		cfg:                    cfg,
+		port:                   port,
+		clients:                make(map[*wsClient]bool),
+		currentAgents:          make(map[string]*agent.Agent),
+		dataDir:                dataDir,
+		discordWebhook:         cfg.DiscordWebhook,
+		discordMinSeverity:     strings.ToLower(strings.TrimSpace(cfg.DiscordMinSeverity)),
+		telegramBotToken:       cfg.TelegramBotToken,
+		telegramChatID:         cfg.TelegramChatID,
+		telegramMinSeverity:    strings.ToLower(strings.TrimSpace(cfg.TelegramMinSeverity)),
+		rateLimiter:            rl,
+		instances:              make(map[string]*ScanInstance),
+		dispatchReservations:   make(map[string]bool),
+		exactStopNotifications: make(map[string]bool),
+		queueResumeLaunching:   make(map[string]bool),
 		// postScanChatFn is set BELOW, after srv has been
 		// allocated, so the closure can capture *srv and read
 		// srv.catalog / srv.profiles at call time. Those fields
@@ -966,6 +1056,13 @@ func (s *Server) Start() error {
 			s.handleDeleteVuln(w, r)
 			return
 		}
+		// GET /api/scans/{id}/events?offset=&limit= — lazy-page the event log
+		// that the detail response only tails. Must be checked before the
+		// generic detail handler.
+		if strings.HasSuffix(r.URL.Path, "/events") && r.Method == http.MethodGet {
+			s.handleScanEvents(w, r)
+			return
+		}
 		s.handleGetScan(w, r)
 	})
 	// DELETE /api/data-dirs/{name} — delete one top-level Scan_Folder under
@@ -1176,10 +1273,12 @@ func (s *Server) Start() error {
 	httpServer := &http.Server{
 		Addr: addr,
 		// safe.HTTPMiddleware MUST be the outermost wrapper so it catches
-		// panics from every layer below it (auth, rate-limit, mux,
+		// panics from every layer below it (auth, rate-limit, gzip, mux,
 		// individual handlers). On panic it increments PanicsRecovered,
 		// emits a structured log line with stack trace, and returns 500.
-		Handler: safe.HTTPMiddleware(authMw(rlMiddleware(mux))),
+		// gzip sits innermost (closest to the mux) so it compresses handler
+		// output after auth + rate limiting have run; it skips /ws.
+		Handler: safe.HTTPMiddleware(authMw(rlMiddleware(gzipMiddleware(mux)))),
 		// Bound the time spent reading request headers so a slow client
 		// cannot hold a connection open indefinitely (Slowloris). The
 		// dashboard serves interactive traffic, so keep this generous.
@@ -1219,6 +1318,7 @@ func (s *Server) Start() error {
 				inst.Status = "stopped"
 				inst.StopReason = "signal_" + sig.String()
 				inst.FinishedAt = time.Now().Format(time.RFC3339)
+				normalizeTerminalWildcardInstanceLocked(inst)
 				if inst.agent != nil {
 					inst.agent.Stop()
 				}
@@ -1607,9 +1707,70 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	instanceID := randomSlug()
+	instanceID := strings.TrimSpace(req.DispatchID)
+	callerDispatchID := instanceID != ""
+	if callerDispatchID {
+		if !validDispatchID(instanceID) {
+			http.Error(w, "dispatch_id must be 16-128 URL-safe characters", http.StatusBadRequest)
+			return
+		}
+	} else {
+		for {
+			instanceID = randomSlug()
+			if _, reserved := s.reserveDispatchID(instanceID); reserved {
+				break
+			}
+		}
+	}
+	if callerDispatchID {
+		if status, reserved := s.reserveDispatchID(instanceID); !reserved {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": status, "instance_id": instanceID})
+			return
+		}
+	}
+	ownership, owned, err := s.acquireQueueOwnership(instanceID)
+	if err != nil {
+		s.releaseDispatchID(instanceID)
+		http.Error(w, "could not acquire dispatch queue ownership", http.StatusInternalServerError)
+		return
+	}
+	if !owned {
+		s.releaseDispatchID(instanceID)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "pending", "instance_id": instanceID})
+		return
+	}
+	req.queueOwnership = ownership
+	status, accepted, err := s.persistPendingDispatchSnapshot(req, instanceID)
+	if err != nil {
+		ownership.release()
+		s.releaseDispatchID(instanceID)
+		http.Error(w, "could not durably reserve dispatch identity", http.StatusInternalServerError)
+		return
+	}
+	if !accepted {
+		ownership.release()
+		s.releaseDispatchID(instanceID)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": status, "instance_id": instanceID})
+		return
+	}
 	req.Name = strings.TrimSpace(req.Name) // propagate name to running scans too
-	go s.runMultiScan(req, &scanCfg, instanceID)
+	req.InstanceID = instanceID
+	if err := s.saveQueueStateDurable(0, req); err != nil {
+		if abortErr := s.abortPendingDispatchSnapshot(instanceID, "queue_state_persist_failed"); abortErr != nil {
+			log.Printf("[scan] failed to terminalize dispatch %s after queue-state error: %v", instanceID, abortErr)
+		}
+		ownership.release()
+		s.releaseDispatchID(instanceID)
+		http.Error(w, "could not durably persist resumable dispatch", http.StatusInternalServerError)
+		return
+	}
+	go func() {
+		defer s.releaseDispatchID(instanceID)
+		s.runMultiScan(req, &scanCfg, instanceID)
+	}()
 
 	// The ack reflects the scan's actual local state: it is QUEUED as
 	// "pending" (orchestrator.go registers it pending, then the admission
@@ -1652,6 +1813,7 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 			inst.Status = "stopped"
 			inst.StopReason = "user_stopped"
 			inst.FinishedAt = time.Now().Format(time.RFC3339Nano)
+			normalizeTerminalWildcardInstanceLocked(inst)
 			if inst.cancel != nil {
 				inst.cancel()
 			}
@@ -2063,25 +2225,30 @@ func (s *Server) handleInstances(w http.ResponseWriter, r *http.Request) {
 	for _, inst := range s.instances {
 		inst.mu.RLock()
 		instances = append(instances, &ScanInstance{
-			ID:             inst.ID,
-			Name:           inst.Name,
-			Targets:        inst.Targets,
-			Status:         inst.Status,
-			StartedAt:      inst.StartedAt,
-			FinishedAt:     inst.FinishedAt,
-			Iterations:     inst.Iterations,
-			ToolCalls:      inst.ToolCalls,
-			VulnCount:      inst.VulnCount,
-			TotalTokens:    inst.TotalTokens,
-			ScanMode:       inst.ScanMode,
-			Instruction:    inst.Instruction,
-			SeverityFilter: append([]string(nil), inst.SeverityFilter...),
-			Phases:         inst.Phases,
-			ReconMode:      inst.ReconMode,
-			ScanIntensity:  inst.ScanIntensity,
-			CompanyName:    inst.CompanyName,
-			LogoPath:       inst.LogoPath,
-			CurrentPhase:   inst.CurrentPhase,
+			ID:               inst.ID,
+			Name:             inst.Name,
+			Targets:          inst.Targets,
+			Status:           inst.Status,
+			StartedAt:        inst.StartedAt,
+			FinishedAt:       inst.FinishedAt,
+			Iterations:       inst.Iterations,
+			ToolCalls:        inst.ToolCalls,
+			VulnCount:        inst.VulnCount,
+			TotalTokens:      inst.TotalTokens,
+			ScanMode:         inst.ScanMode,
+			Instruction:      inst.Instruction,
+			SeverityFilter:   append([]string(nil), inst.SeverityFilter...),
+			Phases:           inst.Phases,
+			ReconMode:        inst.ReconMode,
+			ScanIntensity:    inst.ScanIntensity,
+			CompanyName:      inst.CompanyName,
+			LogoPath:         inst.LogoPath,
+			CurrentPhase:     inst.CurrentPhase,
+			SubScans:         cloneSubScanSummaries(inst.SubScans),
+			SubScanTotal:     inst.SubScanTotal,
+			SubScanCompleted: inst.SubScanCompleted,
+			SubScanRunning:   inst.SubScanRunning,
+			SubScanRemaining: inst.SubScanRemaining,
 		})
 		inst.mu.RUnlock()
 	}
@@ -2227,12 +2394,11 @@ func (s *Server) resolveInstanceForAction(id string) (*ScanInstance, bool) {
 	if ok {
 		return inst, true
 	}
-	// Not a live instance id — try to resolve it as a scan record id, then as a
-	// recent short alias, and map the resolved record back to its instance.
+	// Not a live instance id — resolve only a provable persisted record
+	// relationship and map that record back to its instance. Record IDs remain
+	// supported for dashboard navigation, but recency/target/short-alias guesses
+	// are forbidden for reads and mutations.
 	_, rec := s.findScanByID(id)
-	if rec == nil {
-		_, rec = s.findRecentScanForShortAlias(id)
-	}
 	if rec != nil {
 		if inst := s.instanceForRecord(rec); inst != nil {
 			return inst, true
@@ -2251,17 +2417,143 @@ func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request) {
 	}
 	instanceID := parts[0]
 
-	inst, ok := s.resolveInstanceForAction(instanceID)
-	if !ok {
-		http.Error(w, "instance not found", http.StatusNotFound)
+	// GET /api/instances/{id}/snapshot is the authoritative coordinator API.
+	// It resolves only the exact external instance ID and returns status,
+	// findings, wildcard counters, and events under one lock / one persisted
+	// record read. This gives callers independent identity proof and prevents a
+	// terminal summary from being paired with another run's bare event array.
+	if r.Method == http.MethodGet && len(parts) >= 2 && parts[1] == "snapshot" {
+		s.instancesMu.RLock()
+		exact := s.instances[instanceID]
+		s.instancesMu.RUnlock()
+		if exact != nil {
+			exact.mu.RLock()
+			terminalFinalizing := isTerminalScanStatus(exact.Status) && exact.snapshotFinalizing
+			ready := exact.snapshotReady
+			exact.mu.RUnlock()
+			if terminalFinalizing {
+				if !ready {
+					http.Error(w, "terminal instance snapshot is still finalizing", http.StatusConflict)
+					return
+				}
+				if err := s.retryReadyExactSnapshot(exact); err != nil {
+					log.Printf("[scan] GET exact snapshot retry failed for %s: %v", instanceID, err)
+					http.Error(w, "terminal instance snapshot is still finalizing", http.StatusConflict)
+					return
+				}
+			}
+			exact.mu.RLock()
+			events := append([]WSEvent(nil), exact.events...)
+			response := struct {
+				*ScanInstance
+				InstanceID string    `json:"instance_id"`
+				Events     []WSEvent `json:"events"`
+			}{ScanInstance: exact, InstanceID: exact.ID, Events: events}
+			_ = json.NewEncoder(w).Encode(response)
+			exact.mu.RUnlock()
+			return
+		}
+
+		// An evicted or post-restart terminal run remains readable only when its
+		// persisted immutable InstanceID exactly equals the requested value.
+		// Active persisted records without a live instance are uncertainty.
+		_, rec := s.findScanByInstanceID(instanceID)
+		if rec == nil || !isTerminalScanStatus(rec.Status) {
+			http.Error(w, "instance not found", http.StatusNotFound)
+			return
+		}
+		s.attachWildcardSubScans(rec)
+		finalizeScanRecordForResponse(rec)
+		_ = json.NewEncoder(w).Encode(rec)
 		return
 	}
 
-	// GET /api/instances/{id} — return instance details
+	// Exact control-plane stop must resolve under the same dispatch lock used by
+	// delayed POST registration and work admission. A map lookup performed
+	// before that lock can go stale and tombstone an ID while its live instance
+	// continues running.
+	if r.Header.Get("X-Xalgorix-Exact-Instance") == "1" &&
+		len(parts) >= 2 && parts[1] == "stop" && r.Method == http.MethodPost {
+		rec, notifyListeners, err := s.cancelExactDispatch(instanceID)
+		if err != nil {
+			if errors.Is(err, errDispatchSnapshotNotFound) {
+				http.Error(w, "instance not found", http.StatusNotFound)
+			} else {
+				http.Error(w, "could not durably stop exact instance", http.StatusInternalServerError)
+			}
+			return
+		}
+		if notifyListeners {
+			for _, event := range rec.Events {
+				if event.Type == "stopped" && event.Content == exactStopEventContent {
+					s.notifyInstanceListeners(instanceID, event)
+					break
+				}
+			}
+		}
+		s.broadcastDashboard(WSEvent{Type: "instance_updated", Content: instanceID})
+		if strings.EqualFold(rec.Status, "stopping") {
+			http.Error(w, "instance stop is still finalizing", http.StatusConflict)
+			return
+		}
+		if err := s.clearQueueStateDurable(instanceID); err != nil {
+			log.Printf("[queue] exact stop persisted for %s but queue deletion failed: %v", instanceID, err)
+			http.Error(w, "instance stopped but queue cleanup was not durable", http.StatusInternalServerError)
+			return
+		}
+		// A successful exact stop is the same coherent durable aggregate served
+		// by the snapshot endpoint, including final events and findings.
+		finalizeScanRecordForResponse(rec)
+		_ = json.NewEncoder(w).Encode(rec)
+		return
+	}
+
+	inst, ok := s.resolveInstanceForAction(instanceID)
+
+	// GET /api/instances/{id} — return instance details.
 	if r.Method == http.MethodGet && (len(parts) == 1 || parts[1] == "") {
-		inst.mu.RLock()
-		_ = json.NewEncoder(w).Encode(inst)
-		inst.mu.RUnlock()
+		if ok {
+			// A stop/failure path can mark the instance terminal before the
+			// active session has drained and persisted its final
+			// events/findings. Do not expose that partial terminal snapshot;
+			// callers retry and receive the coherent snapshot after the
+			// runMultiScan defer clears the live session pointers.
+			inst.mu.RLock()
+			if isTerminalScanStatus(inst.Status) && inst.snapshotFinalizing {
+				inst.mu.RUnlock()
+				http.Error(w, "terminal instance snapshot is still finalizing", http.StatusConflict)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(inst)
+			inst.mu.RUnlock()
+			return
+		}
+
+		// No live in-memory instance — serve only an exact persisted terminal
+		// record. The payload keeps its immutable IDs unchanged so callers can
+		// verify either the canonical record ID or external instance ID; unknown
+		// short aliases remain 404/no-news.
+		_, rec := s.findScanByID(instanceID)
+		if rec == nil {
+			http.Error(w, "instance not found", http.StatusNotFound)
+			return
+		}
+		// Only serve terminal records. If the persisted record is somehow
+		// non-terminal, do not expose it — return 404 so the SaaS treats it
+		// as uncertainty and waits for the live instance to appear.
+		if !isTerminalScanStatus(rec.Status) {
+			http.Error(w, "instance not found", http.StatusNotFound)
+			return
+		}
+		s.applyInstanceSnapshot(rec, false)
+		s.attachWildcardSubScans(rec)
+		finalizeScanRecordForResponse(rec)
+		_ = json.NewEncoder(w).Encode(rec)
+		return
+	}
+
+	if !ok {
+		http.Error(w, "instance not found", http.StatusNotFound)
 		return
 	}
 
@@ -2273,6 +2565,7 @@ func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request) {
 			inst.Status = "stopped"
 			inst.StopReason = "user_stopped"
 			inst.FinishedAt = time.Now().Format(time.RFC3339Nano)
+			normalizeTerminalWildcardInstanceLocked(inst)
 			if inst.cancel != nil {
 				inst.cancel()
 			}
@@ -2293,7 +2586,20 @@ func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request) {
 		// Broadcast update to dashboard clients
 		s.broadcastDashboard(WSEvent{Type: "instance_updated", Content: instanceID})
 
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "stopped", "instance_id": instanceID})
+		inst.mu.RLock()
+		stopResponse := struct {
+			InstanceID  string           `json:"instance_id"`
+			Status      string           `json:"status"`
+			SubScans    []SubScanSummary `json:"sub_scans"`
+			WorkStarted bool             `json:"work_started"`
+		}{
+			InstanceID:  inst.ID,
+			Status:      inst.Status,
+			SubScans:    cloneSubScanSummaries(inst.SubScans),
+			WorkStarted: inst.WorkStarted,
+		}
+		inst.mu.RUnlock()
+		_ = json.NewEncoder(w).Encode(stopResponse)
 		return
 	}
 
@@ -2517,6 +2823,7 @@ type scanSession struct {
 	genReport          bool
 	resetState         bool
 	instanceID         string               // parent instance ID for multi-instance tracking
+	parentCtx          context.Context      // parent target context; canceled by exact stop
 	scanMode           string               // single, wildcard, dast — persisted so dashboard shows correct mode
 	sctx               *scanctx.ScanContext // per-session isolated state
 	companyName        string               // report branding: company name
@@ -2597,6 +2904,10 @@ func (sess *scanSession) cleanup() {
 				log.Printf("[cleanup] Persisted %d in-memory vulns into scan.json for session %s", added, sess.sctx.ID)
 			}
 			sess.server.saveScanRecordTo(sess.record, sess.scanDir)
+			// The exact instance endpoint must carry every persisted finding,
+			// including findings hidden from live broadcasts by severity filters.
+			// This runs before runMultiScan publishes its terminal snapshot.
+			sess.server.mirrorPersistedSessionVulnerabilities(sess.instanceID, sess.record.Vulns)
 		}()
 
 		// Wildcard vuln accumulation: merge this session's vulns into
@@ -2686,14 +2997,19 @@ func (sess *scanSession) cleanup() {
 	sess.server.mu.Unlock()
 }
 
-// randomSlug generates a short random hex string for scan IDs.
+var fallbackSlugCounter atomic.Uint64
+
+// randomSlug generates a 128-bit hex identifier. The fallback preserves the
+// same width and process-local uniqueness if the kernel CSPRNG is unavailable.
 func randomSlug() string {
-	b := make([]byte, 4)
+	b := make([]byte, 16)
 	if _, err := cryptorand.Read(b); err != nil {
-		log.Printf("Warning: crypto/rand failed, falling back to time-based slug: %v", err)
-		return fmt.Sprintf("%x", time.Now().UnixNano())
+		counter := fallbackSlugCounter.Add(1)
+		log.Printf("Warning: crypto/rand failed, falling back to hashed process identity: %v", err)
+		sum := sha256.Sum256([]byte(fmt.Sprintf("%d:%d:%d", os.Getpid(), time.Now().UnixNano(), counter)))
+		return hex.EncodeToString(sum[:16])
 	}
-	return fmt.Sprintf("%x", b)
+	return hex.EncodeToString(b)
 }
 
 // sanitizeTarget creates a safe directory name from a target URL/domain.
@@ -2729,7 +3045,13 @@ func (s *Server) saveScanRecordTo(rec *ScanRecord, scanDir string) {
 	if err := os.WriteFile(filepath.Join(scanDir, "scan.json"), data, 0600); err != nil {
 		log.Printf("Error: failed to save scan record to %s: %v", scanDir, err)
 		s.broadcast(WSEvent{Type: "error", Content: fmt.Sprintf("⚠️ Failed to save scan data: %v", err)})
+		return
 	}
+	// Refresh the detail sidecar (metadata + event tail) so GET /api/scans/{id}
+	// stays instant regardless of how large the event log grows. Best-effort and
+	// written after scan.json so a reader never sees a sidecar newer than its
+	// source (readScanDetailMeta treats a stale sidecar as absent).
+	writeScanDetailMeta(scanDir, rec)
 }
 
 // diskAvailable returns available bytes on the filesystem containing path, or 0 on error.
@@ -3051,28 +3373,35 @@ func (s *Server) handleGetScan(w http.ResponseWriter, r *http.Request) {
 	// Extract scan ID from URL: /api/scans/{id}
 	scanID := strings.TrimPrefix(r.URL.Path, "/api/scans/")
 	if scanID == "" || scanID == "latest" {
-		// Find latest scan by StartedAt timestamp
-		allScans := []scanEntry{}
-		for _, entry := range s.findAllScans() {
+		// Find the latest top-level scan by StartedAt using the events-free
+		// summaries (cheap), then load only that one record with an event tail.
+		summaries := []scanEntry{}
+		for _, entry := range s.findAllScanSummaries() {
 			if entry.rec.ParentTarget != "" {
 				continue
 			}
-			allScans = append(allScans, entry)
+			summaries = append(summaries, entry)
 		}
-		if len(allScans) == 0 {
+		if len(summaries) == 0 {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`null`))
 			return
 		}
-		sort.Slice(allScans, func(i, j int) bool {
-			return allScans[i].rec.StartedAt > allScans[j].rec.StartedAt
+		sort.Slice(summaries, func(i, j int) bool {
+			return summaries[i].rec.StartedAt > summaries[j].rec.StartedAt
 		})
-		rec := allScans[0].rec
-		s.applyInstanceSnapshot(&rec, true)
-		s.attachWildcardSubScans(&rec)
-		finalizeScanRecordForResponse(&rec)
-		s.markDiscordWebhookConfigured(&rec)
-		s.markTelegramConfigured(&rec)
+		rec, ok := s.loadScanRecordForDetail(summaries[0].dir, detailEventTail)
+		if !ok || rec == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`null`))
+			return
+		}
+		s.applyInstanceSnapshot(rec, true)
+		s.attachWildcardSubScans(rec)
+		finalizeScanRecordForResponse(rec)
+		finalizeEventsMeta(rec)
+		s.markDiscordWebhookConfigured(rec)
+		s.markTelegramConfigured(rec)
 		data, _ := json.Marshal(rec)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(data)
@@ -3121,6 +3450,7 @@ func (s *Server) handleGetScan(w http.ResponseWriter, r *http.Request) {
 					inst.Status = "stopped"
 					inst.StopReason = "user_deleted"
 					inst.FinishedAt = time.Now().Format(time.RFC3339Nano)
+					normalizeTerminalWildcardInstanceLocked(inst)
 				}
 				if inst.cancel != nil {
 					inst.cancel()
@@ -3148,19 +3478,23 @@ func (s *Server) handleGetScan(w http.ResponseWriter, r *http.Request) {
 		inst := s.instances[scanID]
 		s.instancesMu.RUnlock()
 		if rec := s.scanRecordFromInstance(inst); rec != nil {
-			if _, persisted := s.findScanByID(scanID); persisted != nil {
-				s.applyInstanceSnapshot(persisted, true)
-				s.attachWildcardSubScans(persisted)
-				finalizeScanRecordForResponse(persisted)
-				s.markDiscordWebhookConfigured(persisted)
-				s.markTelegramConfigured(persisted)
-				data, _ := json.Marshal(persisted)
-				w.Header().Set("Content-Type", "application/json")
-				w.Write(data)
-				return
+			if dir, ok := s.resolveScanDirByID(scanID); ok {
+				if persisted, ok2 := s.loadScanRecordForDetail(dir, detailEventTail); ok2 && persisted != nil {
+					s.applyInstanceSnapshot(persisted, true)
+					s.attachWildcardSubScans(persisted)
+					finalizeScanRecordForResponse(persisted)
+					finalizeEventsMeta(persisted)
+					s.markDiscordWebhookConfigured(persisted)
+					s.markTelegramConfigured(persisted)
+					data, _ := json.Marshal(persisted)
+					w.Header().Set("Content-Type", "application/json")
+					w.Write(data)
+					return
+				}
 			}
 			s.attachWildcardSubScans(rec)
 			finalizeScanRecordForResponse(rec)
+			finalizeEventsMeta(rec)
 			s.markDiscordWebhookConfigured(rec)
 			s.markTelegramConfigured(rec)
 			data, _ := json.Marshal(rec)
@@ -3170,13 +3504,13 @@ func (s *Server) handleGetScan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	dir, rec := s.findScanByID(scanID)
-	_ = dir
-	if rec == nil {
-		dir, rec = s.findRecentScanForShortAlias(scanID)
-		_ = dir
+	dir, ok := s.resolveScanDirByID(scanID)
+	if !ok {
+		http.Error(w, "scan not found", http.StatusNotFound)
+		return
 	}
-	if rec == nil {
+	rec, ok := s.loadScanRecordForDetail(dir, detailEventTail)
+	if !ok || rec == nil {
 		http.Error(w, "scan not found", http.StatusNotFound)
 		return
 	}
@@ -3184,11 +3518,64 @@ func (s *Server) handleGetScan(w http.ResponseWriter, r *http.Request) {
 	s.applyInstanceSnapshot(rec, true)
 	s.attachWildcardSubScans(rec)
 	finalizeScanRecordForResponse(rec)
+	finalizeEventsMeta(rec)
 	s.markDiscordWebhookConfigured(rec)
 	s.markTelegramConfigured(rec)
 	data, _ := json.Marshal(rec)
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(data)
+}
+
+// finalizeEventsMeta keeps the events pagination hints coherent after other
+// layers (applyInstanceSnapshot) may have swapped in a live event buffer.
+// EventsTotal never claims fewer than the events actually shown, and Truncated
+// is only set when older events genuinely remain to be paged.
+func finalizeEventsMeta(rec *ScanRecord) {
+	if rec == nil {
+		return
+	}
+	if rec.EventsTotal < len(rec.Events) {
+		rec.EventsTotal = len(rec.Events)
+	}
+	rec.EventsTruncated = rec.EventsTotal > len(rec.Events)
+}
+
+// handleScanEvents serves a page of a scan's event log:
+// GET /api/scans/{id}/events?offset=&limit=  →  {events, total, offset, limit}
+func (s *Server) handleScanEvents(w http.ResponseWriter, r *http.Request) {
+	scanID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/scans/"), "/events")
+	dir, ok := s.resolveScanDirByID(scanID)
+	if !ok {
+		http.Error(w, "scan not found", http.StatusNotFound)
+		return
+	}
+	offset := 0
+	limit := detailEventTail
+	if v := strings.TrimSpace(r.URL.Query().Get("offset")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	events, total, ok := loadScanEventsWindow(dir, offset, limit)
+	if !ok {
+		http.Error(w, "scan not found", http.StatusNotFound)
+		return
+	}
+	if events == nil {
+		events = []WSEvent{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"events": events,
+		"total":  total,
+		"offset": offset,
+		"limit":  limit,
+	})
 }
 
 // handleDeleteVuln removes a single vulnerability from a scan record.
@@ -3213,9 +3600,6 @@ func (s *Server) handleDeleteVuln(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dir, rec := s.findScanByID(scanID)
-	if rec == nil {
-		dir, rec = s.findRecentScanForShortAlias(scanID)
-	}
 	if rec == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)

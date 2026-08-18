@@ -308,6 +308,34 @@ func (s *Server) broadcastToInstance(instanceID string, evt WSEvent) {
 	}
 }
 
+// notifyInstanceListeners delivers an event that is already present in the
+// coherent instance snapshot. Unlike broadcastToInstance it never buffers the
+// event again, preventing exact-stop retries from duplicating replay history.
+func (s *Server) notifyInstanceListeners(instanceID string, evt WSEvent) {
+	evt = withEventTimestamp(evt)
+	if evt.InstanceID == "" {
+		evt.InstanceID = instanceID
+	}
+	data, err := json.Marshal(evt)
+	if err != nil {
+		return
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for client := range s.clients {
+		if client.instanceID == "" || client.instanceID == instanceID {
+			select {
+			case client.send <- data:
+			default:
+				go func(c *wsClient) {
+					s.removeClient(c)
+					c.conn.Close()
+				}(client)
+			}
+		}
+	}
+}
+
 // broadcastDashboard sends an event only to dashboard clients (no instance subscription).
 func (s *Server) broadcastDashboard(evt WSEvent) {
 	evt = withEventTimestamp(evt)

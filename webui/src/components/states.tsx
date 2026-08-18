@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { AlertCircle, Inbox } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/i18n";
 
 export function EmptyState({
   title,
@@ -47,6 +48,7 @@ export function ErrorState({
   action?: ReactNode;
   className?: string;
 }) {
+  const { t } = useI18n();
   return (
     <div
       className={cn(
@@ -57,7 +59,7 @@ export function ErrorState({
       <AlertCircle className="h-4 w-4 text-red-400 mt-0.5" />
       <div className="flex-1">
         <p className="text-sm font-medium text-red-300">
-          {title || "Something went wrong"}
+          {title || t("common.somethingWrong")}
         </p>
         {description && (
           <p className="mt-1 text-xs text-red-200/70">{description}</p>

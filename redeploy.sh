@@ -35,6 +35,10 @@
 #           dashboard on loopback only (recommended behind a reverse proxy).
 #   VERSION=<from cmd/xalgorix/main.go, else `git describe`>   # stamps the
 #           dashboard version so a --build image reports vX.Y.Z, not "vdocker".
+#   NUCLEI_REFRESH=1     # on `build`, re-pull the LATEST nuclei engine + vuln
+#           templates (cache-bust). Set NUCLEI_REFRESH=0 to reuse Docker's cache.
+#   NUCLEI_VERSION=<tag> # pin a specific nuclei engine (e.g. v3.11.1) for repro
+#           builds; default `latest`. Only applied when NUCLEI_REFRESH != 0.
 #
 set -euo pipefail
 
@@ -144,7 +148,17 @@ case "$MODE" in
     VERSION="${VERSION:-$(sed -n 's/^var version = "\(.*\)"$/\1/p' "$BUILD_CONTEXT/cmd/xalgorix/main.go" 2>/dev/null | head -1)}"
     [ -z "$VERSION" ] && VERSION="$(git -C "$BUILD_CONTEXT" describe --tags 2>/dev/null | sed 's/^v//')"
     info "Building $IMAGE from $BUILD_CONTEXT (version=${VERSION:-docker}) ..."
-    docker build ${VERSION:+--build-arg VERSION="$VERSION"} -t "$IMAGE" "$BUILD_CONTEXT"
+    # Refresh nuclei (engine + templates) to the latest on every build unless
+    # NUCLEI_REFRESH=0. The Dockerfile gates nuclei behind TOOLS_REFRESH, so a
+    # changing value re-pulls the latest engine + vuln templates WITHOUT
+    # re-running the heavy apt/tool layers. Pin with NUCLEI_VERSION=vX.Y.Z.
+    REFRESH_ARG=""
+    if [ "${NUCLEI_REFRESH:-1}" != "0" ]; then
+      REFRESH_ARG="--build-arg TOOLS_REFRESH=$(date +%s)"
+      [ -n "${NUCLEI_VERSION:-}" ] && REFRESH_ARG="$REFRESH_ARG --build-arg NUCLEI_VERSION=$NUCLEI_VERSION"
+      info "nuclei: forcing latest engine + templates${NUCLEI_VERSION:+ (pinned $NUCLEI_VERSION)} — set NUCLEI_REFRESH=0 to reuse cache."
+    fi
+    docker build ${VERSION:+--build-arg VERSION="$VERSION"} $REFRESH_ARG -t "$IMAGE" "$BUILD_CONTEXT"
     ;;
   pull)
     info "Pulling $IMAGE ..."

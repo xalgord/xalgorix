@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/banner.png?v=4.5.135" alt="Xalgorix — AI Autonomous Penetration Testing Platform" width="860" />
+<img src="assets/banner.png?v=4.5.151" alt="Xalgorix — AI Autonomous Penetration Testing Platform" width="860" />
 
 <br />
 
@@ -8,13 +8,13 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-10b981?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Linux-111111?style=for-the-badge&logo=linux&logoColor=white)](#-installation)
 [![Hosted](https://img.shields.io/badge/Hosted-www.xalgorix.com-6d28d9?style=for-the-badge&logo=icloud&logoColor=white)](https://www.xalgorix.com/)
-[![GitHub stars](https://img.shields.io/github/stars/xalgord/xalgorix?style=for-the-badge&logo=github&color=yellow)](https://github.com/xalgord/xalgorix/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/xalgord/xalgorix?style=for-the-badge&logo=github&color=blue)](https://github.com/xalgord/xalgorix/network/members)
-[![GitHub release](https://img.shields.io/github/v/release/xalgord/xalgorix?style=for-the-badge&logo=github&color=green)](https://github.com/xalgord/xalgorix/releases)
+[![GitHub stars](https://img.shields.io/github/stars/xalgorix/xalgorix?style=for-the-badge&logo=github&color=yellow)](https://github.com/xalgorix/xalgorix/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/xalgorix/xalgorix?style=for-the-badge&logo=github&color=blue)](https://github.com/xalgorix/xalgorix/network/members)
+[![GitHub release](https://img.shields.io/github/v/release/xalgorix/xalgorix?style=for-the-badge&logo=github&color=green)](https://github.com/xalgorix/xalgorix/releases)
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/xalgord/xalgorix)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/xalgorix/xalgorix)
 
-<a href="https://trendshift.io/repositories/35278?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-35278" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/35278/daily?language=Go" alt="xalgord/xalgorix | Trendshift" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/35278?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-35278" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/35278/daily?language=Go" alt="xalgorix/xalgorix | Trendshift" width="250" height="55"/></a>
 
 </div>
 
@@ -69,7 +69,7 @@ Open `http://localhost:9137`. You **don't need an LLM key to start** — the das
 **Easiest — Docker Compose** (maps the port + a persistent volume for you):
 
 ```bash
-curl -sSLO https://raw.githubusercontent.com/xalgord/xalgorix/main/docker-compose.yml
+curl -sSLO https://raw.githubusercontent.com/xalgorix/xalgorix/main/docker-compose.yml
 docker compose up -d
 docker compose logs -f   # shows the generated admin password on first start
 ```
@@ -79,7 +79,7 @@ The image ships an extensive offensive-security toolset preinstalled (nmap, nucl
 **Or build from source** (needs Go 1.25+ and Node.js):
 
 ```bash
-git clone https://github.com/xalgord/xalgorix.git
+git clone https://github.com/xalgorix/xalgorix.git
 cd xalgorix
 make build
 sudo install -m 755 build/xalgorix /usr/local/bin/xalgorix
@@ -153,7 +153,7 @@ Most scanners **detect**. Xalgorix **proves**. An autonomous agent works through
 
 > Directional comparison — Nuclei and ZAP are excellent at what they do. Xalgorix adds the reasoning-heavy discovery and exploit-verification layer on top.
 
-If Xalgorix saves you a triage cycle, please **[⭐ star the repo](https://github.com/xalgord/xalgorix)** — it genuinely helps others find it.
+If Xalgorix saves you a triage cycle, please **[⭐ star the repo](https://github.com/xalgorix/xalgorix)** — it genuinely helps others find it.
 
 ## 🎯 Use Cases
 
@@ -228,7 +228,7 @@ The image is **batteries-included**: an extensive offensive-security toolset is 
 
 The container runs as root by design (the engine only enables runtime auto-install for uid 0, and apt/go/cargo installs need system write access). Treat it as a disposable, network-isolated scanning sandbox. It's published for `amd64`; use the one-line installer for arm64 hosts.
 
-On first run, if you don't set dashboard auth the container **generates a random admin password and prints it to the logs** (the image binds `0.0.0.0`, which the engine won't do without auth). Set `XALGORIX_USERNAME` + `XALGORIX_PASSWORD` (or `XALGORIX_PASSWORD_HASH`) to use your own. The binary never self-updates inside the container (`XALGORIX_NO_AUTO_UPDATE=1`) — pull a new image tag to upgrade.
+On first run, if you don't set dashboard auth the container **generates a random admin password and prints it to the logs** (the image binds `0.0.0.0`, which the engine won't do without auth). Set `XALGORIX_USERNAME` + `XALGORIX_PASSWORD` (or `XALGORIX_PASSWORD_HASH`) to use your own. The binary never self-updates inside the container (`XALGORIX_NO_AUTO_UPDATE=1`) — pull a new image tag to upgrade. The **nuclei** engine and its vuln templates are refreshed to the latest on every image build (the release CI and `redeploy.sh` force this); pass `--build-arg NUCLEI_VERSION=vX.Y.Z` to pin the engine, or `NUCLEI_REFRESH=0 ./redeploy.sh` to reuse Docker's cache.
 
 ### 📋 Requirements (build from source)
 
@@ -248,7 +248,7 @@ go version
 ### 🔨 Build From Source
 
 ```bash
-git clone https://github.com/xalgord/xalgorix.git
+git clone https://github.com/xalgorix/xalgorix.git
 cd xalgorix
 make build
 sudo install -m 755 build/xalgorix /usr/local/bin/xalgorix
@@ -618,10 +618,13 @@ Some settings require a restart because they affect process startup or server bi
 | `XALGORIX_API_KEY`                   | none             | Required LLM provider API key.                         |
 | `XALGORIX_API_BASE`                  | provider default | Custom OpenAI-compatible API base URL.                 |
 | `XALGORIX_REASONING_EFFORT`          | `high`           | Reasoning effort: `none`, `low`, `medium`, `high`, or `xhigh` (`xhigh` maps to `high` for Ollama). |
+| `XALGORIX_LANGUAGE`                   | `en`             | Output language for AI-generated prose (agent reasoning, notes, findings, report content, post-scan chat). `en` or `zh-CN`. Technical tokens (payloads, commands, URLs, CVE/CWE IDs) always stay in their original form. Non-Latin languages render in the dashboard and HTML report automatically. |
+| `XALGORIX_PDF_CJK_FONT`               | none             | Absolute path to a TrueType (`.ttf`) font with CJK glyphs, used to render non-Latin languages (e.g. Simplified Chinese) in the exported **PDF** report. Only `.ttf` is supported (not `.ttc`/`.otf`). Without it, the PDF falls back to core fonts and non-Latin glyphs will not render (the HTML report is unaffected). |
 | `XALGORIX_OLLAMA_COMPATIBLE`         | `false`          | Apply Ollama reasoning semantics to a custom endpoint on a non-standard port. Port `11434` is detected automatically. |
 | `XALGORIX_LLM_MAX_RETRIES`           | `5`              | Retry count for transient LLM failures.                |
 | `XALGORIX_MEMORY_COMPRESSOR_TIMEOUT` | `30`             | Timeout in seconds for context compression.            |
 | `XALGORIX_MAX_ITERATIONS`            | `0`              | Agent iteration cap. `0` means unlimited.              |
+| `XALGORIX_PPROF_ADDR`                | none             | Opt-in Go profiler. When set (e.g. `127.0.0.1:6060`), starts a standalone pprof server at `/debug/pprof/` on that address for CPU/heap diagnosis. Disabled by default. Exposes process internals — bind loopback and reach it via an SSH tunnel; never expose publicly. |
 | `GEMINI_API_KEY`                     | none             | Optional Gemini key for web-search enrichment.         |
 
 ### 🔒 Web and Security
@@ -779,5 +782,5 @@ Xalgorix is released under the Apache License 2.0. See [LICENSE](LICENSE).
 | ------------- | -------------------------------------------------------------------------------- |
 | ☁️ Hosted (Cloud) | [www.xalgorix.com](https://www.xalgorix.com/)                                   |
 | 📖 Documentation | [docs.xalgorix.com](https://docs.xalgorix.com)                                   |
-| 🐛 Issues        | [github.com/xalgord/xalgorix/issues](https://github.com/xalgord/xalgorix/issues) |
+| 🐛 Issues        | [github.com/xalgorix/xalgorix/issues](https://github.com/xalgorix/xalgorix/issues) |
 | ☕ Support       | [buymeacoffee.com/xalgord](https://buymeacoffee.com/xalgord)                     |

@@ -8,8 +8,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/states";
 import { useDeleteScan, useScansList } from "@/api/queries";
 import { timeAgo } from "@/lib/utils";
+import { useI18n } from "@/i18n";
 
 export default function ReportsPage() {
+  const { t } = useI18n();
   const { data: scans, isLoading } = useScansList();
   const del = useDeleteScan();
   const [query, setQuery] = useState("");
@@ -28,11 +30,8 @@ export default function ReportsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Reports</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          PDF reports for every completed scan. Generated on demand by the
-          server.
-        </p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t("reports.title")}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{t("reports.subtitle")}</p>
       </div>
 
       <Card>
@@ -42,7 +41,7 @@ export default function ReportsPage() {
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search reports by target or scan ID…"
+              placeholder={t("reports.searchPlaceholder")}
               className="pl-8"
             />
           </div>
@@ -59,8 +58,8 @@ export default function ReportsPage() {
         ) : list.length === 0 ? (
           <EmptyState
             icon={<FileText className="h-6 w-6" />}
-            title="No reports yet"
-            description="Run a scan and a PDF report will be available here."
+            title={t("reports.emptyTitle")}
+            description={t("reports.emptyDescription")}
           />
         ) : (
           <ul className="divide-y divide-border">
@@ -80,15 +79,15 @@ export default function ReportsPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-                  <span className="mono">{s.vuln_count ?? 0} findings</span>
+                  <span className="mono">{s.vuln_count ?? 0} {t("common.findings")}</span>
                   <span className="mono">
-                    {Math.round((s.total_tokens ?? 0) / 1000)}k tokens
+                    {Math.round((s.total_tokens ?? 0) / 1000)}k {t("common.tokens")}
                   </span>
                 </div>
                 <div className="flex items-center gap-1">
                   <Button asChild size="sm" variant="outline">
                     <Link to={`/scans/${s.id}`}>
-                      <ExternalLink className="h-3.5 w-3.5" /> Open
+                      <ExternalLink className="h-3.5 w-3.5" /> {t("common.open")}
                     </Link>
                   </Button>
                   <Button asChild size="sm">
@@ -106,12 +105,12 @@ export default function ReportsPage() {
                     className="text-red-400 hover:text-red-300"
                     disabled={del.isPending}
                     onClick={() => {
-                      if (window.confirm("Permanently delete this report and scan record?")) {
+                      if (window.confirm(t("reports.confirmDelete"))) {
                         del.mutate(s.id);
                       }
                     }}
                   >
-                    <Trash2 className="h-3.5 w-3.5" /> Delete
+                    <Trash2 className="h-3.5 w-3.5" /> {t("common.delete")}
                   </Button>
                 </div>
               </li>

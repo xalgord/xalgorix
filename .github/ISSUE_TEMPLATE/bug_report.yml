@@ -9,7 +9,7 @@ body:
         Thanks for taking the time to file a bug! Please search existing issues first to avoid duplicates.
 
         ⚠️ **Do not report security vulnerabilities here.** Follow the process in
-        [SECURITY.md](https://github.com/xalgord/xalgorix/security/policy).
+        [SECURITY.md](https://github.com/xalgorix/xalgorix/security/policy).
   - type: textarea
     id: what-happened
     attributes:

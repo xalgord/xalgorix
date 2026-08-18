@@ -705,6 +705,12 @@ func (a *Agent) executeToolAsync(toolName string, toolArgs map[string]string) (r
 
 // Run starts the agent loop with the given targets and instructions.
 func (a *Agent) Run(targets []string, instruction string) {
+	// Stop-before-Run is a valid lifecycle outcome when exact cancellation wins
+	// the session admission race. Do not clone source, initialize browsers, or
+	// touch the target after that stop has become authoritative.
+	if a.stopped.Load() {
+		return
+	}
 	a.scanStart = time.Now()
 	// Wire per-scan auth + whitebox source here (in the scan goroutine) so a
 	// slow git clone never blocks scan creation or the HTTP handler.

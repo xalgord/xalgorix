@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -15,6 +16,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { useI18n } from "@/i18n";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -79,9 +81,10 @@ import {
 } from "lucide-react";
 import { LiveFeed, type FeedFilter } from "@/components/live-feed";
 import { Pagination, DEFAULT_PAGE_SIZE } from "@/components/Pagination";
-import type { SubScanSummary, VulnSummary } from "@/types/api";
+import type { SubScanSummary, VulnSummary, WSEvent } from "@/types/api";
 
 export default function ScanDetailPage() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const { scanId } = useParams<{ scanId: string }>();
   const id = scanId ?? "";
@@ -96,11 +99,48 @@ export default function ScanDetailPage() {
   const liveEvents = useWSStore((s) => s.events);
   const subscriptionId = scan?.instance_id || scan?.id || id;
 
+  // Lazy-paged older events. The detail response only carries a tail of the
+  // event log (scan.events_truncated); these are the earlier events fetched on
+  // demand via api.scanEvents, held in ascending order starting at
+  // `earliestLoaded`.
+  const [olderEvents, setOlderEvents] = useState<WSEvent[]>([]);
+  const [earliestLoaded, setEarliestLoaded] = useState<number | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+
   useEffect(() => {
     if (!subscriptionId) return;
     subscribe(subscriptionId);
     return () => unsubscribe();
   }, [subscriptionId, subscribe, unsubscribe]);
+
+  // Reset paged events whenever we navigate to a different scan.
+  useEffect(() => {
+    setOlderEvents([]);
+    setEarliestLoaded(null);
+    setLoadingOlder(false);
+  }, [id]);
+
+  const loadEarlierEvents = useCallback(async () => {
+    if (!scan) return;
+    const inlineCount = (scan.events ?? []).length;
+    const total = scan.events_total ?? inlineCount;
+    const tailStart = Math.max(0, total - inlineCount);
+    const base = earliestLoaded ?? tailStart;
+    if (base <= 0 || loadingOlder) return;
+    const pageSize = 300;
+    const offset = Math.max(0, base - pageSize);
+    const limit = base - offset;
+    setLoadingOlder(true);
+    try {
+      const page = await api.scanEvents(scan.id, offset, limit);
+      setOlderEvents((prev) => [...(page.events ?? []), ...prev]);
+      setEarliestLoaded(offset);
+    } catch {
+      /* surfaced via the disabled state resetting; user can retry */
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [scan, earliestLoaded, loadingOlder]);
 
   if (error)
     return (
@@ -144,13 +184,29 @@ export default function ScanDetailPage() {
     status === "finished";
 
   // Combine persisted events from the scan record with the live websocket
-  // feed for this instance, deduped by content.
+  // feed for this instance, deduped by content. `olderEvents` are the
+  // lazily-paged earlier events; concatenated with the inline tail they form a
+  // contiguous run whose first global index is `effectiveEarliest`.
   const eventInstanceId = scan.instance_id || scan.id || id;
   const wsForScan = filterEventsForInstance(liveEvents, eventInstanceId);
-  const persistedAsFeed: FeedEvent[] = (scan.events ?? []).map((e, i) =>
-    toFeedEvent(e, `scan:${eventInstanceId}`, i),
+  const inlineEvents = scan.events ?? [];
+  const eventsTotal = scan.events_total ?? inlineEvents.length;
+  const tailStart = Math.max(0, eventsTotal - inlineEvents.length);
+  const effectiveEarliest = earliestLoaded ?? tailStart;
+  const persistedCombined = [...olderEvents, ...inlineEvents];
+  const persistedAsFeed: FeedEvent[] = persistedCombined.map((e, i) =>
+    toFeedEvent(e, `scan:${eventInstanceId}`, effectiveEarliest + i),
   );
   const mergedEvents = mergeFeedEvents(persistedAsFeed, wsForScan);
+
+  // Older-event paging is only offered for terminal scans: a live scan's tail
+  // updates every poll and streams via WS, so mixing in backward paging would
+  // race. `remainingOlder` drives the "Load earlier" affordance.
+  const isLiveScan =
+    status === "running" || status === "pending" || status === "paused";
+  const canLoadEarlier =
+    !isLiveScan && !!scan.events_truncated && effectiveEarliest > 0;
+  const remainingOlder = effectiveEarliest;
 
   return (
     <div className="space-y-6">
@@ -276,7 +332,7 @@ export default function ScanDetailPage() {
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle className="text-sm">Phase progress</CardTitle>
+            <CardTitle className="text-sm">{t("scanDetail.phaseProgress")}</CardTitle>
             <CardDescription>
               Xalgorix runs a {PHASES.length}-phase autonomous methodology.
               Currently:{" "}
@@ -319,7 +375,7 @@ export default function ScanDetailPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Risk overview</CardTitle>
+            <CardTitle className="text-sm">{t("scanDetail.riskOverview")}</CardTitle>
             <CardDescription>
               {(scan.vulns ?? []).length} findings
             </CardDescription>
@@ -332,7 +388,7 @@ export default function ScanDetailPage() {
         {!!scan.sub_scan_total && (
           <Card className="lg:col-span-3">
             <CardHeader>
-              <CardTitle className="text-sm">Wildcard coverage</CardTitle>
+              <CardTitle className="text-sm">{t("scanDetail.wildcardCoverage")}</CardTitle>
               <CardDescription>
                 {scan.sub_scan_completed ?? 0} scanned ·{" "}
                 {scan.sub_scan_running ?? 0} running ·{" "}
@@ -355,21 +411,21 @@ export default function ScanDetailPage() {
         <TabsList>
           <TabsTrigger value="findings">
             <ShieldAlert className="mr-1.5 h-3.5 w-3.5" />
-            Findings
+            {t("scanDetail.tab.findings")}
           </TabsTrigger>
           <TabsTrigger value="events">
             <Terminal className="mr-1.5 h-3.5 w-3.5" />
-            Events
+            {t("scanDetail.tab.events")}
           </TabsTrigger>
           {!!scan.sub_scan_total && (
             <TabsTrigger value="subdomains">
               <ListChecks className="mr-1.5 h-3.5 w-3.5" />
-              Subdomains
+              {t("scanDetail.tab.subdomains")}
             </TabsTrigger>
           )}
           <TabsTrigger value="config">
             <ListChecks className="mr-1.5 h-3.5 w-3.5" />
-            Config
+            {t("scanDetail.tab.config")}
           </TabsTrigger>
         </TabsList>
 
@@ -383,6 +439,10 @@ export default function ScanDetailPage() {
             instanceId={eventInstanceId}
             status={status}
             target={scan.target}
+            canLoadEarlier={canLoadEarlier}
+            remainingOlder={remainingOlder}
+            loadingOlder={loadingOlder}
+            onLoadEarlier={loadEarlierEvents}
           />
         </TabsContent>
         {!!scan.sub_scan_total && (
@@ -1091,16 +1151,38 @@ function EventsTab({
   instanceId,
   status,
   target,
+  canLoadEarlier,
+  remainingOlder,
+  loadingOlder,
+  onLoadEarlier,
 }: {
   events: FeedEvent[];
   scanId: string;
   instanceId: string;
   status: string;
   target: string;
+  canLoadEarlier: boolean;
+  remainingOlder: number;
+  loadingOlder: boolean;
+  onLoadEarlier: () => void;
 }) {
   const [filter, setFilter] = useState<FeedFilter>("all");
   return (
     <div className="space-y-3">
+      {canLoadEarlier && (
+        <div className="flex items-center justify-center">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onLoadEarlier}
+            disabled={loadingOlder}
+          >
+            {loadingOlder
+              ? "Loading earlier events…"
+              : `Load earlier events (${remainingOlder.toLocaleString()} older)`}
+          </Button>
+        </div>
+      )}
       <LiveFeed
         events={events}
         filter={filter}
@@ -1125,6 +1207,7 @@ const GUIDANCE_SUGGESTIONS = [
 ];
 
 function ScanGuidanceComposer({ instanceId }: { instanceId: string }) {
+  const { t } = useI18n();
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [feedback, setFeedback] = useState<{
@@ -1158,7 +1241,7 @@ function ScanGuidanceComposer({ instanceId }: { instanceId: string }) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-sm">Guide this scan</CardTitle>
+        <CardTitle className="text-sm">{t("scanDetail.guideScan")}</CardTitle>
         <CardDescription>
           Send a priority or correction to this agent. It will pick it up on
           its next iteration without interrupting the scan.

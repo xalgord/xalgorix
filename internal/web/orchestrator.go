@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -27,6 +28,18 @@ import (
 )
 
 // ────────────────────────────────────────────────────────
+
+// isReplaceableResumePlaceholder accepts only the inert marker created by
+// restart reconstruction. Auto-resume must never overwrite a newly reserved,
+// queued, or live exact generation that happens to use the same ID.
+func isReplaceableResumePlaceholder(inst *ScanInstance) bool {
+	if inst == nil {
+		return false
+	}
+	inst.mu.RLock()
+	defer inst.mu.RUnlock()
+	return inst.Status == "pending" && inst.agent == nil && inst.cancel == nil && inst.StopReason == "server_restart_resuming"
+}
 
 // runMultiScan processes targets sequentially, one at a time.
 // Each target is scanned in a fully isolated scanSession.
@@ -73,6 +86,26 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 		instanceID = randomSlug()
 	}
 
+	// Hold a stable advisory lock for the entire registration/resume/run
+	// lifetime. The lockfile inode is never renamed, so another scanner process
+	// sharing dataDir cannot execute the same queue instance concurrently.
+	ownership := req.queueOwnership
+	req.queueOwnership = nil
+	if ownership == nil {
+		var owned bool
+		var err error
+		ownership, owned, err = s.acquireQueueOwnership(instanceID)
+		if err != nil {
+			log.Printf("[queue] refusing instance %s: could not acquire ownership: %v", instanceID, err)
+			return
+		}
+		if !owned {
+			log.Printf("[queue] refusing instance %s: queue is owned by another process", instanceID)
+			return
+		}
+	}
+	defer ownership.release()
+
 	// Register instance as pending initially
 	instance := &ScanInstance{
 		ID:                  instanceID,
@@ -94,25 +127,73 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 		TargetAuthSecondary: req.TargetAuthSecondary,
 		SourceRepo:          req.SourceRepo,
 		ScanContext:         req.ScanContext,
+		SubScans:            make([]SubScanSummary, 0),
+		snapshotFinalizing:  true,
 	}
 	s.seedResumeInstanceFromRecord(instance, req)
-	s.instancesMu.Lock()
-	if req.IsResume {
-		if req.ResumeScanID != "" && req.ResumeScanID != instanceID {
-			delete(s.instances, req.ResumeScanID)
-		}
-		if req.ResumeSubScanID != "" && req.ResumeSubScanID != instanceID {
-			delete(s.instances, req.ResumeSubScanID)
-		}
-		// Remove pre-resume pending placeholders created by rebuildInstancesFromDisk for the same target
-		for id, inst := range s.instances {
-			if id != instanceID && inst.Status == "pending" && len(req.Targets) > 0 && (strings.Contains(inst.Targets, req.Targets[0]) || strings.Contains(req.Targets[0], inst.Targets)) {
-				delete(s.instances, id)
-			}
+	// Disk discovery is intentionally outside the global instance-map lock.
+	// The dispatch mutex below is the serialization point that revalidates the
+	// durable tombstone before any map entry can be installed.
+	legacyClaimed := false
+	if !req.IsResume {
+		if _, err := s.loadExactDispatchSnapshot(instanceID); errors.Is(err, errDispatchSnapshotNotFound) {
+			_, legacyClaimed = s.persistedInstanceIDClaim(instanceID)
 		}
 	}
+	s.dispatchMu.Lock()
+	durable, durErr := s.loadExactDispatchSnapshot(instanceID)
+	if durErr == nil &&
+		(isTerminalScanStatus(durable.Status) || strings.EqualFold(durable.Status, "stopping")) {
+		// A durable terminal snapshot normally tombstones this id so a stale
+		// dispatch can't resurrect a stopped scan. BUT a graceful shutdown
+		// persists interrupted scans as "stopped" + "signal_..." while
+		// deliberately PRESERVING their queue_state for resume. Those must be
+		// allowed to auto-resume — otherwise the exact-snapshot tombstone
+		// silently blocks every restart resume and the scans sit at "pending"
+		// forever (they were dispatched but refused here).
+		//
+		// Only an auto-resume (req.IsResume, set exclusively by the boot
+		// queue-state resumer) of a RECOVERABLE interruption may pass. A
+		// user/terminal stop clears queue_state (so it's never auto-resumed)
+		// and its stop reason is not signal_/panic_/restart, so it stays
+		// refused on both counts.
+		if req.IsResume && isInterruptedRecoverableRecord(durable.Status, durable.StopReason) {
+			log.Printf("[scan] resume dispatch %q proceeding past durable %q/%q (recoverable interruption)",
+				instanceID, durable.Status, durable.StopReason)
+		} else {
+			delete(s.dispatchReservations, instanceID)
+			s.dispatchMu.Unlock()
+			log.Printf("[scan] refusing dispatch %q after durable exact stop/status %q", instanceID, durable.Status)
+			return
+		}
+	} else if durErr != nil && !errors.Is(durErr, errDispatchSnapshotNotFound) {
+		delete(s.dispatchReservations, instanceID)
+		s.dispatchMu.Unlock()
+		log.Printf("[scan] refusing dispatch %q with unreadable durable state: %v", instanceID, durErr)
+		return
+	}
+	s.instancesMu.Lock()
+	if existing := s.instances[instanceID]; existing != nil {
+		replaceableResumePlaceholder := req.IsResume && isReplaceableResumePlaceholder(existing)
+		if !replaceableResumePlaceholder {
+			s.instancesMu.Unlock()
+			delete(s.dispatchReservations, instanceID)
+			s.dispatchMu.Unlock()
+			log.Printf("[scan] refusing live instance id collision for %q", instanceID)
+			return
+		}
+	}
+	if !req.IsResume && legacyClaimed {
+		s.instancesMu.Unlock()
+		delete(s.dispatchReservations, instanceID)
+		s.dispatchMu.Unlock()
+		log.Printf("[scan] refusing legacy persisted instance id collision for %q", instanceID)
+		return
+	}
 	s.instances[instanceID] = instance
+	delete(s.dispatchReservations, instanceID)
 	s.instancesMu.Unlock()
+	s.dispatchMu.Unlock()
 
 	// Persist the queue state immediately, BEFORE the admission wait loop.
 	// Previously the first saveQueueState ran only after admission (well past
@@ -151,42 +232,25 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 			}
 		}
 		instance.FinishedAt = time.Now().Format(time.RFC3339)
+		normalizeTerminalWildcardInstanceLocked(instance)
 		instance.agent = nil
 		instance.cancel = nil
 		instance.sctx = nil
 		instance.mu.Unlock()
 
-		// Full post-scan cleanup only when the scan actually ran.
-		// Pending→stopped instances skip queue/agent teardown since
-		// they never acquired resources.
-		if ranScan {
-			// Only clear queue state when the scan really finished. Paused,
-			// panicked, and signal-stopped scans keep it for resume.
-			preserveQueue := false
-			instance.mu.RLock()
-			preserveQueue = shouldPreserveQueueStateOnExit(instance.Status, instance.StopReason, panicRecovered)
-			instance.mu.RUnlock()
-			if !preserveQueue {
-				s.clearQueueState(instanceID)
-			} else {
-				log.Printf("[AUTO-RESUME] Preserving queue state after interrupted scan")
-			}
-		} else {
-			// The instance exited pending WITHOUT ever running. A queue_state
-			// file was written at creation so the scan could survive a restart;
-			// decide its fate here.
-			//   - server_shutdown: preserve → the auto-resume goroutine re-queues
-			//     it after restart (the whole point of persisting pending scans).
-			//   - user_stopped / any other reason: clear → a canceled scan must
-			//     NOT be resurrected on the next boot.
-			instance.mu.RLock()
-			reason := instance.StopReason
-			instance.mu.RUnlock()
-			if reason == "server_shutdown" {
-				log.Printf("[AUTO-RESUME] Preserving pending queue state (server_shutdown) for %s", instanceID)
-			} else {
-				s.clearQueueState(instanceID)
-			}
+		// Decide queue retention now, but do not unlink anything until the exact
+		// terminal aggregate has been durably committed below. A failed snapshot
+		// must leave enough state for a later GET retry or process restart.
+		instance.mu.RLock()
+		finalStatus := instance.Status
+		finalStopReason := instance.StopReason
+		instance.mu.RUnlock()
+		preserveQueue := shouldPreserveQueueStateOnExit(finalStatus, finalStopReason, panicRecovered)
+		if !ranScan {
+			preserveQueue = finalStopReason == "server_shutdown" || panicRecovered
+		}
+		if preserveQueue {
+			log.Printf("[AUTO-RESUME] Preserving queue state after interrupted scan %s", instanceID)
 		}
 
 		// Always clean up server references (safe even if never set)
@@ -197,10 +261,6 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 		}
 		s.mu.Unlock()
 
-		instance.mu.RLock()
-		finalStatus := instance.Status
-		finalStopReason := instance.StopReason
-		instance.mu.RUnlock()
 		if finalStatus == "paused" {
 			s.markQueueStatePaused(instanceID)
 		}
@@ -219,7 +279,39 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 				queueDoneEvt.CurrentPhase = 22
 			}
 		}
-		s.broadcastToInstance(instanceID, queueDoneEvt)
+		if finalStatus != "stopped" || !instanceHasExactStopEvent(instance) {
+			s.broadcastToInstance(instanceID, queueDoneEvt)
+		}
+		// The final event is buffered and every session cleanup has run, so a
+		// later exact-stop request may safely retry terminal persistence if the
+		// writes below encounter a transient disk failure.
+		instance.mu.Lock()
+		instance.snapshotReady = true
+		instance.mu.Unlock()
+		// Persist the coherent terminal aggregate before exposing it through the live API.
+		// A transient disk error keeps snapshotFinalizing true and is retried;
+		// terminal visibility never outruns durable findings/events.
+		var snapshotErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			snapshotErr = s.persistExactInstanceSnapshot(instance)
+			if snapshotErr == nil {
+				break
+			}
+			log.Printf("[scan] failed to persist exact terminal snapshot for %s (attempt %d/3): %v", instanceID, attempt+1, snapshotErr)
+			time.Sleep(time.Duration(attempt+1) * 50 * time.Millisecond)
+		}
+		if snapshotErr == nil {
+			instance.mu.Lock()
+			instance.snapshotFinalizing = false
+			instance.mu.Unlock()
+			if !preserveQueue {
+				if err := s.clearQueueStateDurable(instanceID); err != nil {
+					log.Printf("[queue] exact snapshot for %s is durable but queue deletion failed: %v", instanceID, err)
+				}
+			}
+		} else {
+			log.Printf("[queue] preserving queue state for %s because exact terminal persistence failed", instanceID)
+		}
 		s.broadcastDashboard(WSEvent{Type: "instance_updated", Content: instanceID})
 		time.Sleep(500 * time.Millisecond)
 
@@ -297,12 +389,14 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 			inst.mu.RUnlock()
 		}
 		canAdmit, reason := resources.CanAdmitScan(runningCount)
+		instance.mu.Lock()
 		if canAdmit && instance.Status == "pending" {
 			instance.Status = "running"
 			instance.StartedAt = time.Now().Format(time.RFC3339)
 			gotSlot = true
 			log.Printf("[ADMIT] Scan %s started (running: %d) — %s", instanceID, runningCount+1, reason)
 		}
+		instance.mu.Unlock()
 		s.instancesMu.Unlock()
 
 		if gotSlot {
@@ -352,8 +446,9 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 	// process exits during admission/startup.
 	req.InstanceID = instanceID // (re)thread instance ID; also set before the admission wait
 	s.running.Store(true)
-	if req.DiscordWebhook != "" {
-		s.discordWebhook = req.DiscordWebhook
+	scanDiscordWebhook := strings.TrimSpace(req.DiscordWebhook)
+	if scanDiscordWebhook == "" {
+		scanDiscordWebhook = s.discordWebhook
 	}
 
 	if req.IsResume {
@@ -387,7 +482,7 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 	})
 
 	// Discord: scan started
-	s.sendDiscord(0x00ff88, "🚀 Scan Started", fmt.Sprintf("**Targets:** %s\n**Mode:** %s\n**Total:** %d target(s)", strings.Join(req.Targets, ", "), req.ScanMode, totalTargets))
+	s.sendDiscordTo(scanDiscordWebhook, 0x00ff88, "🚀 Scan Started", fmt.Sprintf("**Targets:** %s\n**Mode:** %s\n**Total:** %d target(s)", strings.Join(req.Targets, ", "), req.ScanMode, totalTargets))
 	// Telegram: scan started
 	if s.telegramConfigured() {
 		s.sendTelegram(0x00ff88, "🚀 Scan Started", fmt.Sprintf("**Targets:** %s\n**Mode:** %s\n**Total:** %d target(s)", strings.Join(req.Targets, ", "), req.ScanMode, totalTargets))
@@ -405,7 +500,7 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 			interruptedQueue = true
 			if instStatus == "paused" {
 				s.broadcastToInstance(instanceID, WSEvent{Type: "paused", Content: "Scan queue paused"})
-			} else {
+			} else if !instanceHasExactStopEvent(instance) {
 				s.broadcastToInstance(instanceID, WSEvent{Type: "stopped", Content: "Scan queue stopped by user"})
 			}
 			break
@@ -468,12 +563,12 @@ func (s *Server) runMultiScan(req ScanRequest, scanCfg *config.Config, instanceI
 	s.instancesMu.RUnlock()
 	if vulnCount > 0 {
 		desc := fmt.Sprintf("**Targets:** %d completed\n**Vulnerabilities:** %d found\n**Completed at:** %s", totalTargets, vulnCount, time.Now().Format("15:04:05 MST"))
-		s.sendDiscord(0x3b82f6, "✅ Scan Finished - Vulnerabilities Found", desc)
+		s.sendDiscordTo(scanDiscordWebhook, 0x3b82f6, "✅ Scan Finished - Vulnerabilities Found", desc)
 		if s.telegramConfigured() {
 			s.sendTelegram(0x3b82f6, "✅ Scan Finished - Vulnerabilities Found", desc)
 		}
 	} else {
-		s.sendDiscord(0x3b82f6, "✅ Scan Finished", fmt.Sprintf("**Targets:** %d completed\n**Vulnerabilities:** 0 found\n**Completed at:** %s", totalTargets, time.Now().Format("15:04:05 MST")))
+		s.sendDiscordTo(scanDiscordWebhook, 0x3b82f6, "✅ Scan Finished", fmt.Sprintf("**Targets:** %d completed\n**Vulnerabilities:** 0 found\n**Completed at:** %s", totalTargets, time.Now().Format("15:04:05 MST")))
 		if s.telegramConfigured() {
 			s.sendTelegram(0x3b82f6, "✅ Scan Finished", fmt.Sprintf("**Targets:** %d completed\n**Vulnerabilities:** 0 found\n**Completed at:** %s", totalTargets, time.Now().Format("15:04:05 MST")))
 		}
@@ -598,7 +693,7 @@ func subdomainTargetsFromRecord(rec *ScanRecord) []string {
 }
 
 // runSingleTarget handles a single-site mode scan for one target.
-func (s *Server) runSingleTarget(_ context.Context, scanCfg *config.Config, req ScanRequest, target string, idx, total int) {
+func (s *Server) runSingleTarget(ctx context.Context, scanCfg *config.Config, req ScanRequest, target string, idx, total int) {
 	scanDir, resumed := s.scanDirForResume(req, target)
 	s.saveQueueState(idx, req, queueProgress{
 		ActiveTarget:  target,
@@ -642,6 +737,7 @@ func (s *Server) runSingleTarget(_ context.Context, scanCfg *config.Config, req 
 		genReport:          true,
 		resetState:         !resumed,
 		instanceID:         req.InstanceID,
+		parentCtx:          ctx,
 		scanMode:           "single",
 		companyName:        req.CompanyName,
 		logoPath:           req.LogoPath,
@@ -669,7 +765,7 @@ func (s *Server) runSingleTarget(_ context.Context, scanCfg *config.Config, req 
 }
 
 // runDASTTarget handles a DAST mode scan for one target URL.
-func (s *Server) runDASTTarget(_ context.Context, scanCfg *config.Config, req ScanRequest, target string, idx, total int) {
+func (s *Server) runDASTTarget(ctx context.Context, scanCfg *config.Config, req ScanRequest, target string, idx, total int) {
 	scanDir, resumed := s.scanDirForResume(req, target)
 	s.saveQueueState(idx, req, queueProgress{
 		ActiveTarget:  target,
@@ -714,6 +810,7 @@ func (s *Server) runDASTTarget(_ context.Context, scanCfg *config.Config, req Sc
 		genReport:          true,
 		resetState:         !resumed,
 		instanceID:         req.InstanceID,
+		parentCtx:          ctx,
 		scanMode:           "dast",
 		companyName:        req.CompanyName,
 		logoPath:           req.LogoPath,
@@ -740,8 +837,41 @@ func (s *Server) runDASTTarget(_ context.Context, scanCfg *config.Config, req Sc
 	})
 }
 
+// beginWildcardSubScan is the serialization point between per-host dispatch
+// and an exact stop. If dispatch wins, the stop snapshot includes immutable
+// positive evidence (ID + started_at). If stop wins, no new child can start.
+func (s *Server) beginWildcardSubScan(instanceID string, index int, target, childID string) bool {
+	s.instancesMu.RLock()
+	inst := s.instances[instanceID]
+	s.instancesMu.RUnlock()
+	if inst == nil {
+		return false
+	}
+
+	inst.mu.Lock()
+	defer inst.mu.Unlock()
+	if inst.Status != "running" || index < 0 || index >= len(inst.SubScans) {
+		return false
+	}
+	child := inst.SubScans[index]
+	child.Target = target
+	child.Status = "running"
+	child.ID = childID
+	if child.StartedAt == "" {
+		child.StartedAt = time.Now().Format(time.RFC3339Nano)
+	}
+	inst.SubScans[index] = child
+	inst.SubScanRunning = 1
+	remaining := inst.SubScanTotal - inst.SubScanCompleted - 1
+	if remaining < 0 {
+		remaining = 0
+	}
+	inst.SubScanRemaining = remaining
+	return true
+}
+
 // runWildcardTarget handles wildcard mode: Phase 1 subdomain discovery, then Phase 2 per-subdomain scanning.
-func (s *Server) runWildcardTarget(_ context.Context, scanCfg *config.Config, req ScanRequest, target string, idx, total int) {
+func (s *Server) runWildcardTarget(ctx context.Context, scanCfg *config.Config, req ScanRequest, target string, idx, total int) {
 	// ── Stable parent reporting context for vuln accumulation ──
 	// All subdomain sessions merge their vulns into this context.
 	// It persists across the entire wildcard scan and is cleaned up at the end.
@@ -825,6 +955,7 @@ func (s *Server) runWildcardTarget(_ context.Context, scanCfg *config.Config, re
 			genReport:          false,
 			resetState:         true,
 			instanceID:         req.InstanceID,
+			parentCtx:          ctx,
 			scanMode:           "wildcard",
 			skipNotesCleanup:   true, // preserve notes for subdomain collection
 			companyName:        req.CompanyName,
@@ -925,6 +1056,7 @@ func (s *Server) runWildcardTarget(_ context.Context, scanCfg *config.Config, re
 		parentRecord.SubScanRemaining = len(subdomains) - resumeFromSubIndex
 		parentRecord.Status = "running"
 		s.saveScanRecordTo(parentRecord, scanDir)
+		s.mirrorWildcardProgress(req.InstanceID, parentRecord)
 	}
 	s.saveQueueState(idx, req, queueProgress{
 		ActiveTarget:          target,
@@ -994,6 +1126,7 @@ func (s *Server) runWildcardTarget(_ context.Context, scanCfg *config.Config, re
 			parentRecord.SubScanRemaining = len(subdomains) - completed - running
 			parentRecord.Status = "running"
 			s.saveScanRecordTo(parentRecord, scanDir)
+			s.mirrorWildcardProgress(req.InstanceID, parentRecord)
 		}
 		activeSubScanID := ""
 		if activeSubScanDir != "" {
@@ -1020,7 +1153,9 @@ func (s *Server) runWildcardTarget(_ context.Context, scanCfg *config.Config, re
 		// flip the instance status, which instanceInterrupted observes).
 		if s.instanceInterrupted(req.InstanceID) {
 			log.Printf("[INFO] Subdomain loop stopped by user at %d/%d for %s", j+1, len(subdomains), target)
-			s.broadcastToInstance(req.InstanceID, WSEvent{Type: "stopped", Content: "Scan queue stopped by user"})
+			if !serverInstanceHasExactStopEvent(s, req.InstanceID) {
+				s.broadcastToInstance(req.InstanceID, WSEvent{Type: "stopped", Content: "Scan queue stopped by user"})
+			}
 			wildcardStopped = true
 			break
 		}
@@ -1038,6 +1173,11 @@ func (s *Server) runWildcardTarget(_ context.Context, scanCfg *config.Config, re
 		subScanDir, subResumed := s.scanDirForWildcardSubdomainResume(req, subdomain, j)
 		if subResumed {
 			log.Printf("[AUTO-RESUME] Reusing interrupted subdomain scan dir for %s: %s", subdomain, subScanDir)
+		}
+		if !s.beginWildcardSubScan(req.InstanceID, j, subdomain, filepath.Base(subScanDir)) {
+			log.Printf("[INFO] Subdomain dispatch stopped before %d/%d for %s", j+1, len(subdomains), target)
+			wildcardStopped = true
+			break
 		}
 		log.Printf("[INFO] Starting subdomain %d/%d: %s (parent: %s)", j+1, len(subdomains), subdomain, target)
 		saveWildcardProgress(j, j, subdomain, subScanDir)
@@ -1092,6 +1232,7 @@ func (s *Server) runWildcardTarget(_ context.Context, scanCfg *config.Config, re
 				genReport:            false,
 				resetState:           false, // accumulate vulns across subdomains
 				instanceID:           req.InstanceID,
+				parentCtx:            ctx,
 				scanMode:             "wildcard",
 				parentReportingCtxID: parentReportingCtxID, // merge vulns into parent on cleanup
 				companyName:          req.CompanyName,
@@ -1199,7 +1340,9 @@ func (s *Server) runWildcardTarget(_ context.Context, scanCfg *config.Config, re
 			parentRecord.Status = "finished"
 		}
 		parentRecord.FinishedAt = time.Now().Format(time.RFC3339)
+		normalizeTerminalWildcardProgress(parentRecord)
 		s.saveScanRecordTo(parentRecord, scanDir)
+		s.mirrorWildcardProgress(req.InstanceID, parentRecord)
 	}
 
 	log.Printf("[INFO] Wildcard scan complete for %s: scanned %d subdomains", target, len(subdomains))

@@ -105,6 +105,11 @@ export interface ScanRecord {
   recon_mode?: "active" | "passive";
   scan_intensity?: "active" | "passive";
   events: WSEvent[];
+  // GET /api/scans/{id} returns only the most recent events inline. When the
+  // scan's log is longer, events_truncated is true and events_total is the
+  // full count; older events are paged via GET /api/scans/{id}/events.
+  events_total?: number;
+  events_truncated?: boolean;
   vulns: VulnSummary[];
   total_tokens: number;
   iterations: number;
@@ -118,6 +123,14 @@ export interface ScanRecord {
   sub_scan_completed?: number;
   sub_scan_running?: number;
   sub_scan_remaining?: number;
+}
+
+/** One page of a scan's event log, from GET /api/scans/{id}/events. */
+export interface ScanEventsPage {
+  events: WSEvent[];
+  total: number;
+  offset: number;
+  limit: number;
 }
 
 export interface ScanListItem {

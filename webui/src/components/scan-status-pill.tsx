@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/i18n";
 
 const STYLES: Record<string, { className: string; label: string }> = {
   running: {
@@ -42,11 +43,14 @@ export function ScanStatusPill({
   status?: string;
   className?: string;
 }) {
+  const { t } = useI18n();
   const key = (status || "").toLowerCase();
   const meta = STYLES[key] || {
     className: "bg-neutral-500/10 text-neutral-300 border-neutral-500/30",
     label: status || "Unknown",
   };
+  // Localize known statuses; fall back to the built-in English label.
+  const localizedLabel = STYLES[key] ? t(`status.${key}`) : meta.label;
   const dotPulse =
     key === "running" || key === "pending" ? "pulse-dot" : "";
   return (
@@ -61,7 +65,7 @@ export function ScanStatusPill({
         className={cn("h-1.5 w-1.5 rounded-full bg-current", dotPulse)}
         aria-hidden
       />
-      {meta.label}
+      {localizedLabel}
     </span>
   );
 }

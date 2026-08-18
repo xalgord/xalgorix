@@ -1,18 +1,33 @@
 package web
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
-// saveQueueState saves the current queue state to disk.
+// saveQueueState records best-effort progress updates after acceptance. The
+// acceptance path uses saveQueueStateDurable directly and rejects the request
+// if the initial resumable state cannot be committed.
 func (s *Server) saveQueueState(idx int, req ScanRequest, progress ...queueProgress) {
+	if err := s.saveQueueStateDurable(idx, req, progress...); err != nil {
+		log.Printf("Error: failed to save queue state: %v", err)
+	}
+}
+
+// saveQueueStateDurable atomically saves the current queue state to disk.
+// Callers on the HTTP acceptance path must check the error: an accepted
+// dispatch without this request would be stranded after a process crash.
+func (s *Server) saveQueueStateDurable(idx int, req ScanRequest, progress ...queueProgress) error {
 	normalizeScanRequestActivity(&req)
 	state := QueueState{
 		InstanceID:     req.InstanceID,
@@ -55,13 +70,45 @@ func (s *Server) saveQueueState(idx int, req ScanRequest, progress ...queueProgr
 	}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
-		log.Printf("Error: failed to marshal queue state: %v", err)
-		return
+		return fmt.Errorf("marshal queue state: %w", err)
 	}
 	path := s.queueStatePathForInstance(req.InstanceID)
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		log.Printf("Error: failed to save queue state: %v", err)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create queue state directory: %w", err)
 	}
+	tmp, err := os.CreateTemp(dir, ".queue-state-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create queue state temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			log.Printf("Warning: failed to remove queue state temp file %s: %v", tmpPath, removeErr)
+		}
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("secure queue state temp file: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write queue state: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync queue state: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close queue state: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("publish queue state: %w", err)
+	}
+	if err := fsyncParentDir(path); err != nil {
+		return fmt.Errorf("commit queue state rename: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) queueStatePath() string {
@@ -431,26 +478,94 @@ func (s *Server) markQueueStatePaused(instanceID string) {
 // clearQueueState removes queue state. With an instance ID it clears only that
 // scan's resume file; with no ID it clears every resumable queue.
 func (s *Server) clearQueueState(instanceIDs ...string) {
-	if len(instanceIDs) > 0 {
-		for _, instanceID := range instanceIDs {
-			if strings.TrimSpace(instanceID) == "" {
-				s.clearQueueStatePath(s.queueStatePath())
-				continue
-			}
-			s.clearQueueStatePath(s.queueStatePathForInstance(instanceID))
-		}
-		return
-	}
-	for _, path := range s.queueStatePaths() {
-		s.clearQueueStatePath(path)
+	if err := s.clearQueueStateDurable(instanceIDs...); err != nil {
+		log.Printf("Warning: failed to durably clear queue state: %v", err)
 	}
 }
 
+func (s *Server) clearQueueStateDurable(instanceIDs ...string) error {
+	var paths []string
+	if len(instanceIDs) > 0 {
+		for _, instanceID := range instanceIDs {
+			if strings.TrimSpace(instanceID) == "" {
+				paths = append(paths, s.queueStatePath())
+			} else {
+				paths = append(paths, s.queueStatePathForInstance(instanceID))
+			}
+		}
+	} else {
+		paths = s.queueStatePaths()
+	}
+	var errs []error
+	for _, path := range paths {
+		if err := s.clearQueueStatePathDurable(path); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func (s *Server) clearQueueStatePath(path string) {
+	if err := s.clearQueueStatePathDurable(path); err != nil {
+		log.Printf("Warning: failed to durably remove queue state file %s: %v", path, err)
+	}
+}
+
+func (s *Server) clearQueueStatePathDurable(path string) error {
 	if path == "" {
+		return nil
+	}
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("remove queue state %s: %w", path, err)
+	}
+	if err := fsyncParentDir(path); err != nil {
+		return fmt.Errorf("commit queue state deletion %s: %w", path, err)
+	}
+	return nil
+}
+
+type queueOwnership struct {
+	file *os.File
+	path string
+}
+
+func (s *Server) acquireQueueOwnership(instanceID string) (*queueOwnership, bool, error) {
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
+		instanceID = "legacy"
+	}
+	sum := sha256.Sum256([]byte(instanceID))
+	dir := filepath.Join(s.dataDir, ".queue-locks")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, false, fmt.Errorf("create queue lock directory: %w", err)
+	}
+	path := filepath.Join(dir, hex.EncodeToString(sum[:])+".lock")
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, false, fmt.Errorf("open queue ownership lock: %w", err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("lock queue ownership: %w", err)
+	}
+	return &queueOwnership{file: f, path: path}, true, nil
+}
+
+func (ownership *queueOwnership) release() {
+	if ownership == nil || ownership.file == nil {
 		return
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		log.Printf("Warning: failed to remove queue state file %s: %v", path, err)
+	if err := syscall.Flock(int(ownership.file.Fd()), syscall.LOCK_UN); err != nil {
+		log.Printf("Warning: failed to unlock queue ownership %s: %v", ownership.path, err)
 	}
+	if err := ownership.file.Close(); err != nil {
+		log.Printf("Warning: failed to close queue ownership %s: %v", ownership.path, err)
+	}
+	ownership.file = nil
 }

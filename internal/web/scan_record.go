@@ -55,6 +55,7 @@ func (s *Server) freshScanRecordForSession(sess *scanSession, startedAt string) 
 		LogoPath:                 sess.logoPath,
 		Phases:                   append([]int(nil), sess.phases...),
 		CurrentPhase:             firstSelectedPhase(sess.phases),
+		WorkStarted:              true,
 	}
 }
 
@@ -82,6 +83,7 @@ func (s *Server) refreshResumedScanRecord(rec *ScanRecord, sess *scanSession, fa
 		rec.StartedAt = fallbackStartedAt
 	}
 	rec.Status = "running"
+	rec.WorkStarted = true
 	rec.FinishedAt = ""
 	rec.StopReason = ""
 	if rec.Events == nil {
@@ -119,6 +121,28 @@ func mergeReportedVulnerabilitiesIntoRecord(rec *ScanRecord, reported []reportin
 		summary.SourceScanID = rec.ID
 		appendVulnSummaryUnique(&rec.Vulns, summary)
 	}
+}
+
+// mirrorPersistedSessionVulnerabilities copies the session findings that have
+// already been saved to scan.json into the exact parent instance snapshot.
+// Wildcard children use the shared parent instance ID, so this also builds the
+// complete parent finding set without a disk walk. The copy happens before a
+// terminal instance can become observable.
+func (s *Server) mirrorPersistedSessionVulnerabilities(instanceID string, vulns []VulnSummary) {
+	if instanceID == "" || len(vulns) == 0 {
+		return
+	}
+	s.instancesMu.RLock()
+	inst := s.instances[instanceID]
+	if inst != nil {
+		inst.mu.Lock()
+		for _, vuln := range vulns {
+			appendVulnSummaryUnique(&inst.Vulns, vuln)
+		}
+		inst.VulnCount = len(inst.Vulns)
+		inst.mu.Unlock()
+	}
+	s.instancesMu.RUnlock()
 }
 
 // effectiveVulnCount returns the most stable counter source for an instance.
@@ -266,6 +290,13 @@ func (s *Server) seedResumeInstanceFromRecord(inst *ScanInstance, req ScanReques
 	inst.ToolCalls = rec.ToolCalls
 	inst.TotalTokens = rec.TotalTokens
 	inst.Vulns = append([]VulnSummary(nil), rec.Vulns...)
+	if rec.SubScans != nil {
+		inst.SubScans = cloneSubScanSummaries(rec.SubScans)
+	}
+	inst.SubScanTotal = rec.SubScanTotal
+	inst.SubScanCompleted = rec.SubScanCompleted
+	inst.SubScanRunning = rec.SubScanRunning
+	inst.SubScanRemaining = rec.SubScanRemaining
 	// Resume path: scan is being seeded from on-disk record, no live session
 	// exists yet, so effectiveVulnCount falls back to len(inst.Vulns).
 	inst.VulnCount = s.effectiveVulnCount(inst, nil)

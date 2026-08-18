@@ -20,12 +20,19 @@ import (
 // Config holds all Xalgorix configuration.
 type Config struct {
 	// LLM settings
-	LLM              string   // XALGORIX_LLM — provider-native model ID (for example, "gpt-5.6" or "zai-org/glm-4.5")
-	LLMProvider      string   // XALGORIX_LLM_PROVIDER — explicit provider ID; keeps provider routing separate from the model name
-	APIBase          string   // XALGORIX_API_BASE — API endpoint
-	APIKey           string   // XALGORIX_API_KEY — API key
-	LLMProfile       string   // XALGORIX_LLM_PROFILE — active credential pointer "<provider>:<profileId>" (v4.4.22+)
-	ReasoningEffort  string   // XALGORIX_REASONING_EFFORT — "none", "low", "medium", "high", or "xhigh"
+	LLM             string // XALGORIX_LLM — provider-native model ID (for example, "gpt-5.6" or "zai-org/glm-4.5")
+	LLMProvider     string // XALGORIX_LLM_PROVIDER — explicit provider ID; keeps provider routing separate from the model name
+	APIBase         string // XALGORIX_API_BASE — API endpoint
+	APIKey          string // XALGORIX_API_KEY — API key
+	LLMProfile      string // XALGORIX_LLM_PROFILE — active credential pointer "<provider>:<profileId>" (v4.4.22+)
+	ReasoningEffort string // XALGORIX_REASONING_EFFORT — "none", "low", "medium", "high", or "xhigh"
+
+	// Language is the output language for human-readable AI content — agent
+	// reasoning, notes, vulnerability findings, and post-scan chat. It does
+	// NOT change tool call structure or technical tokens (payloads, commands,
+	// URLs, CVE/CWE IDs). XALGORIX_LANGUAGE, canonical code (e.g. "en",
+	// "zh-CN"); default "en" (English) so existing scans are unchanged.
+	Language         string
 	OllamaCompatible bool     // XALGORIX_OLLAMA_COMPATIBLE — force Ollama request semantics for a custom endpoint
 	Temperature      *float64 // XALGORIX_TEMPERATURE — LLM temperature (0.0-2.0), default 0.2; pointer to distinguish unset from 0.0
 	LLMMaxRetries    int      // XALGORIX_LLM_MAX_RETRIES
@@ -40,6 +47,22 @@ type Config struct {
 	// tool call, so a small provider default truncates large calls like report_vulnerability mid-stream. Set an explicit, generous
 	// budget so the full call fits. XALGORIX_MAX_OUTPUT_TOKENS, default 8192.
 	MaxOutputTokens int
+
+	// GeminiSafetyThreshold sets the HarmBlockThreshold applied to every
+	// adjustable safety category (harassment, hate speech, sexually explicit,
+	// dangerous content) on the NATIVE Gemini API path
+	// (generativelanguage.googleapis.com). Xalgorix is an authorized
+	// security-testing tool: Gemini's default filter classifies legitimate
+	// exploit payloads and offensive-security methodology as
+	// HARM_CATEGORY_DANGEROUS_CONTENT and blocks the response, which surfaces
+	// as an empty candidate (finishReason SAFETY) and a failed agent turn.
+	// XALGORIX_GEMINI_SAFETY. Accepted values (case-insensitive): BLOCK_NONE
+	// (default), OFF, BLOCK_ONLY_HIGH, BLOCK_MEDIUM_AND_ABOVE,
+	// BLOCK_LOW_AND_ABOVE, or DEFAULT/"" to send no safetySettings and use
+	// Google's server-side defaults. This ONLY affects Gemini content
+	// filtering — it does not touch scope enforcement, target authorization,
+	// the destructive-command guard, logging, or audit trails.
+	GeminiSafetyThreshold string
 
 	// ContextCompactTokens is an OPTIONAL absolute override for the compaction
 	// trigger. When > 0, the agent auto-compacts older turns into a structured
@@ -327,6 +350,7 @@ func load() *Config {
 		APIKey:               envOr("XALGORIX_API_KEY", ""),
 		LLMProfile:           envOr("XALGORIX_LLM_PROFILE", ""),
 		ReasoningEffort:      envOr("XALGORIX_REASONING_EFFORT", "high"),
+		Language:             NormalizeLanguage(envOr("XALGORIX_LANGUAGE", DefaultLanguage)),
 		OllamaCompatible:     envOrBool("XALGORIX_OLLAMA_COMPATIBLE", false),
 		Temperature:          envOrFloatPtr("XALGORIX_TEMPERATURE", 0.2),
 		LLMMaxRetries:        envOrInt("XALGORIX_LLM_MAX_RETRIES", 5),
@@ -336,6 +360,11 @@ func load() *Config {
 		LLMContextWindow:     envOrInt("XALGORIX_LLM_CONTEXT_WINDOW", 128000),
 		ContextCompactRatio:  envOrFloat("XALGORIX_CONTEXT_COMPACT_RATIO", 0.75),
 		MemCompTimeout:       envOrInt("XALGORIX_MEMORY_COMPRESSOR_TIMEOUT", 30),
+
+		// Gemini content-filter posture (native Gemini API path only). Default
+		// BLOCK_NONE so authorized security-testing output is not refused;
+		// DEFAULT / "" restores Google's server-side defaults.
+		GeminiSafetyThreshold: envOr("XALGORIX_GEMINI_SAFETY", "BLOCK_NONE"),
 
 		// Runtime
 		RuntimeBackend:        "native", // Always native in Go version

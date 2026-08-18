@@ -7,6 +7,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xalgord/xalgorix/v4/internal/agent"
 	"github.com/xalgord/xalgorix/v4/internal/scanctx"
@@ -14,6 +15,75 @@ import (
 	"github.com/xalgord/xalgorix/v4/internal/tools/notes"
 	"github.com/xalgord/xalgorix/v4/internal/tools/reporting"
 )
+
+// vulnNotificationDetails renders the Markdown body pushed to Telegram/Discord
+// for a reported vulnerability. It includes the concrete exploitation evidence
+// (proof + verification method + verified/manual-review status) that
+// report_vulnerability's gates guarantee for actionable findings — without it
+// every alert reads like an unsubstantiated claim and gets treated as a false
+// positive (issue #429). Fields are written only when present, mirroring the
+// PDF report's evidence section.
+func vulnNotificationDetails(vs VulnSummary) string {
+	var details strings.Builder
+	details.WriteString(fmt.Sprintf("**%s**\n\n", vs.Title))
+	if vs.Description != "" {
+		details.WriteString(fmt.Sprintf("📝 **Description:**\n%s\n\n", vs.Description))
+	}
+	if vs.Endpoint != "" {
+		details.WriteString(fmt.Sprintf("🔗 **Endpoint:** `%s`\n", vs.Endpoint))
+	}
+	if vs.Method != "" {
+		details.WriteString(fmt.Sprintf("📡 **Method:** `%s`\n", vs.Method))
+	}
+	if vs.CVE != "" {
+		details.WriteString(fmt.Sprintf("🏷️ **CVE:** `%s`\n", vs.CVE))
+	}
+	details.WriteString(fmt.Sprintf("📊 **CVSS:** `%.1f` | **Severity:** `%s`\n\n", vs.CVSS, strings.ToUpper(vs.Severity)))
+	if vs.Impact != "" {
+		details.WriteString(fmt.Sprintf("💥 **Impact:**\n%s\n\n", vs.Impact))
+	}
+	if vs.TechnicalAnalysis != "" {
+		details.WriteString(fmt.Sprintf("🔬 **Technical Analysis:**\n%s\n\n", vs.TechnicalAnalysis))
+	}
+	if vs.PoCDescription != "" {
+		details.WriteString(fmt.Sprintf("🧪 **PoC:**\n%s\n", vs.PoCDescription))
+	}
+	if vs.PoCScript != "" {
+		details.WriteString(fmt.Sprintf("```\n%s\n```\n\n", truncateForNotification(vs.PoCScript, 800)))
+	}
+	// Exploitation evidence — the concrete proof (extracted data, command
+	// output like `uid=0(root)`, reflected payload) that distinguishes a real
+	// finding from an unsubstantiated claim. This is the fix for issue #429.
+	if vs.ExploitationProof != "" {
+		details.WriteString(fmt.Sprintf("🔓 **Exploitation Proof:**\n```\n%s\n```\n\n", truncateForNotification(vs.ExploitationProof, 800)))
+	}
+	if vs.VerificationMethod != "" {
+		status := "unverified — needs manual review"
+		if vs.Verified {
+			status = "verified — independently reproduced"
+		}
+		details.WriteString(fmt.Sprintf("✅ **Verified via:** `%s` (%s)\n\n", vs.VerificationMethod, status))
+	}
+	if vs.Remediation != "" {
+		details.WriteString(fmt.Sprintf("🛡️ **Remediation:**\n%s", vs.Remediation))
+	}
+	return details.String()
+}
+
+// truncateForNotification caps a code/proof block at maxBytes without splitting
+// a multi-byte UTF-8 rune (so the notification never carries invalid bytes),
+// appending a truncation marker when it trims.
+func truncateForNotification(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	cut := maxBytes
+	// Back up to a rune boundary.
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "\n... (truncated)"
+}
 
 // shouldFailInstanceOnAbort reports whether an LLM-abort (no-tool / empty /
 // repeated-error / rate-limit) in THIS session may mark the whole scan
@@ -37,6 +107,72 @@ func shouldFailInstanceOnAbort(scanMode, parentTarget string, discoveryMode bool
 	if strings.TrimSpace(parentTarget) != "" {
 		return false
 	}
+	return true
+}
+
+// registerSessionAgent is the single admission transition shared with exact
+// stop. If registration wins, stop sees and stops this agent. If stop wins,
+// status is already terminal and no session can be published or run afterward.
+func (s *Server) registerSessionAgent(sess *scanSession, sctx *scanctx.ScanContext, agnt *agent.Agent) bool {
+	if sess.instanceID != "" {
+		// Exact stop and work admission share dispatchMu. If admission wins, its
+		// positive evidence is durable before any target work starts. If stop
+		// wins, the terminal status is visible before this session can publish.
+		s.dispatchMu.Lock()
+		s.instancesMu.RLock()
+		inst := s.instances[sess.instanceID]
+		if inst == nil {
+			s.instancesMu.RUnlock()
+			s.dispatchMu.Unlock()
+			return false
+		}
+		inst.mu.Lock()
+		canceled := false
+		if sess.parentCtx != nil {
+			select {
+			case <-sess.parentCtx.Done():
+				canceled = true
+			default:
+			}
+		}
+		if inst.Status != "running" || canceled {
+			inst.mu.Unlock()
+			s.instancesMu.RUnlock()
+			s.dispatchMu.Unlock()
+			return false
+		}
+		inst.sctx = sctx
+		inst.agent = agnt
+		inst.scanDir = sess.scanDir
+		inst.lastSessionTokens = 0
+		inst.WorkStarted = true
+		inst.mu.Unlock()
+		s.instancesMu.RUnlock()
+
+		// Positive work admission must survive a process restart before any
+		// source preparation or target activity begins. dispatchMu remains held,
+		// so exact stop cannot be overwritten by this running snapshot.
+		if err := s.persistExactInstanceSnapshotLocked(inst); err != nil {
+			inst.mu.Lock()
+			if inst.Status == "running" {
+				inst.Status = "failed"
+				inst.StopReason = "dispatch_evidence_persist_failed"
+				inst.FinishedAt = time.Now().Format(time.RFC3339Nano)
+				inst.WorkStarted = false
+			}
+			inst.mu.Unlock()
+			s.dispatchMu.Unlock()
+			log.Printf("[scan] refusing session %s: could not persist work admission: %v", sess.id, err)
+			return false
+		}
+		s.dispatchMu.Unlock()
+	}
+
+	s.mu.Lock()
+	s.currentScanDir = sess.scanDir
+	s.currentScanID = sess.id
+	s.currentAgents[sess.id] = agnt
+	s.mu.Unlock()
 	return true
 }
 
@@ -71,16 +207,8 @@ func (s *Server) executeScanSession(sess *scanSession) {
 		reporting.SetParentContext(sctx.ID, sess.parentReportingCtxID)
 	}
 
-	// Propagate ScanContext to parent instance (if multi-instance mode)
-	if sess.instanceID != "" {
-		s.instancesMu.RLock()
-		if inst, ok := s.instances[sess.instanceID]; ok {
-			inst.mu.Lock()
-			inst.sctx = sctx
-			inst.mu.Unlock()
-		}
-		s.instancesMu.RUnlock()
-	}
+	// Parent instance publication happens atomically with agent admission below;
+	// publishing the context earlier would reopen a stop-before-agent race.
 
 	// 1. Reset per-context state if requested (context-aware)
 	if sess.resetState {
@@ -148,25 +276,12 @@ func (s *Server) executeScanSession(sess *scanSession) {
 		agnt.SetCodeScanMode(sess.codeScanMode)
 	}
 	sess.agent = agnt
-
-	// Store agent ref on server for handleStop/handleChat (under lock)
-	s.mu.Lock()
-	s.currentScanDir = sess.scanDir
-	s.currentScanID = sess.id
-	s.currentAgents[sess.id] = agnt
-	s.mu.Unlock()
-
-	// Register agent with parent instance if applicable
-	if sess.instanceID != "" {
-		s.instancesMu.RLock()
-		if inst, ok := s.instances[sess.instanceID]; ok {
-			inst.mu.Lock()
-			inst.agent = agnt
-			inst.scanDir = sess.scanDir
-			inst.lastSessionTokens = 0 // reset token delta for this new session/phase
-			inst.mu.Unlock()
-		}
-		s.instancesMu.RUnlock()
+	if !s.registerSessionAgent(sess, sctx, agnt) {
+		// Exact stop, deletion, or parent cancellation won before admission.
+		// Stop-before-Run is safe because Agent.Run checks the stopped flag before
+		// preparing source or touching the target.
+		agnt.Stop()
+		return
 	}
 
 	// 4. Initialize scan record. Resume paths preserve previously persisted
@@ -203,7 +318,12 @@ func (s *Server) executeScanSession(sess *scanSession) {
 		instruction = buildSeverityPrefix(sess.severityFilter) + "\n\n" + instruction
 	}
 
-	// 7. Run agent (blocks until finished or stopped)
+	// 7. Run agent (blocks until finished or stopped). Recheck the parent after
+	// record setup; a stop racing this point either makes this check fail or
+	// observes the registered agent and sets its stopped flag before Run works.
+	if status, _ := s.instanceRunStatus(sess.instanceID); sess.instanceID != "" && status != "running" {
+		agnt.Stop()
+	}
 	agnt.Run([]string{sess.target}, instruction)
 
 	// 8. Close events channel and wait for event processor to drain
@@ -281,6 +401,7 @@ func (s *Server) executeScanSession(sess *scanSession) {
 						inst.Status = "failed"
 						inst.StopReason = sess.abortReason
 						inst.FinishedAt = finishedAt
+						normalizeTerminalWildcardInstanceLocked(inst)
 					}
 					inst.mu.Unlock()
 				}
@@ -313,14 +434,12 @@ func (s *Server) executeScanSession(sess *scanSession) {
 			if vulnCount > 0 {
 				desc := fmt.Sprintf("**Target:** %s\n**Vulnerabilities:** %d found\n**Completed at:** %s",
 					sess.target, vulnCount, time.Now().Format("15:04:05 MST"))
-				s.sendDiscordWithFile(0x3b82f6, "✅ Scan Finished - Report Ready", desc, p)
 				if s.telegramConfigured() {
 					s.sendTelegramWithFile(0x3b82f6, "✅ Scan Finished - Report Ready", desc, p)
 				}
 			} else {
 				desc := fmt.Sprintf("**Target:** %s\n**Result:** No vulnerabilities found (clean scan)\n**Completed at:** %s",
 					sess.target, time.Now().Format("15:04:05 MST"))
-				s.sendDiscordWithFile(0x2dd4bf, "✅ Scan Finished - Clean Report", desc, p)
 				if s.telegramConfigured() {
 					s.sendTelegramWithFile(0x2dd4bf, "✅ Scan Finished - Clean Report", desc, p)
 				}
@@ -409,49 +528,16 @@ func (s *Server) processEvent(evt agent.Event, sess *scanSession) {
 							case "low", "info":
 								sevColor = 0x3b82f6
 							}
-							var details strings.Builder
-							details.WriteString(fmt.Sprintf("**%s**\n\n", vs.Title))
-							if vs.Description != "" {
-								details.WriteString(fmt.Sprintf("📝 **Description:**\n%s\n\n", vs.Description))
-							}
-							if vs.Endpoint != "" {
-								details.WriteString(fmt.Sprintf("🔗 **Endpoint:** `%s`\n", vs.Endpoint))
-							}
-							if vs.Method != "" {
-								details.WriteString(fmt.Sprintf("📡 **Method:** `%s`\n", vs.Method))
-							}
-							if vs.CVE != "" {
-								details.WriteString(fmt.Sprintf("🏷️ **CVE:** `%s`\n", vs.CVE))
-							}
-							details.WriteString(fmt.Sprintf("📊 **CVSS:** `%.1f` | **Severity:** `%s`\n\n", vs.CVSS, strings.ToUpper(vs.Severity)))
-							if vs.Impact != "" {
-								details.WriteString(fmt.Sprintf("💥 **Impact:**\n%s\n\n", vs.Impact))
-							}
-							if vs.TechnicalAnalysis != "" {
-								details.WriteString(fmt.Sprintf("🔬 **Technical Analysis:**\n%s\n\n", vs.TechnicalAnalysis))
-							}
-							if vs.PoCDescription != "" {
-								details.WriteString(fmt.Sprintf("🧪 **PoC:**\n%s\n", vs.PoCDescription))
-							}
-							if vs.PoCScript != "" {
-								poc := vs.PoCScript
-								if len(poc) > 800 {
-									poc = poc[:800] + "\n... (truncated)"
-								}
-								details.WriteString(fmt.Sprintf("```\n%s\n```\n\n", poc))
-							}
-							if vs.Remediation != "" {
-								details.WriteString(fmt.Sprintf("🛡️ **Remediation:**\n%s", vs.Remediation))
-							}
+							details := vulnNotificationDetails(vs)
 							// Apply Discord minimum severity filter
 							if severityMeetsThreshold(vs.Severity, s.discordMinSeverity) {
-								s.sendDiscord(sevColor, fmt.Sprintf("🐛 %s Vulnerability Found", strings.ToUpper(vs.Severity)), details.String())
+								s.sendDiscordTo(s.discordWebhookForScan(sess.discordWebhook), sevColor, fmt.Sprintf("🐛 %s Vulnerability Found", strings.ToUpper(vs.Severity)), details)
 							} else {
 								log.Printf("[DISCORD] Skipping %s vuln notification (min severity: %s)", vs.Severity, s.discordMinSeverity)
 							}
 							// Apply Telegram minimum severity filter (independent of Discord)
 							if s.telegramConfigured() && severityMeetsThreshold(vs.Severity, s.telegramMinSeverity) {
-								s.sendTelegram(sevColor, fmt.Sprintf("🐛 %s Vulnerability Found", strings.ToUpper(vs.Severity)), details.String())
+								s.sendTelegram(sevColor, fmt.Sprintf("🐛 %s Vulnerability Found", strings.ToUpper(vs.Severity)), details)
 							} else if s.telegramConfigured() {
 								log.Printf("[TELEGRAM] Skipping %s vuln notification (min severity: %s)", vs.Severity, s.telegramMinSeverity)
 							}

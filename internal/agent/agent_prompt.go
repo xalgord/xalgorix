@@ -369,7 +369,21 @@ You have access to **expert-level vulnerability skills** via the read_skill and 
 		rateInt, rateDelay,
 		toolSchema, strings.Join(targets, "\n"), checklist, a.buildClosingInstruction(instruction))
 
-	return prompt + "\n\n## CANONICAL TOOL REFERENCE — FOLLOW EXACTLY\n" + embeddedToolReference
+	prompt = prompt + "\n\n## CANONICAL TOOL REFERENCE — FOLLOW EXACTLY\n" + embeddedToolReference
+
+	// Localize human-readable output when the operator selected a non-English
+	// language. The directive is prepended so it carries maximum weight, and
+	// it explicitly preserves tool structure / technical tokens so scans stay
+	// correct. Empty for English, so English prompts are unchanged.
+	lang := ""
+	if a.cfg != nil {
+		lang = a.cfg.Language
+	}
+	if directive := config.OutputLanguageDirective(lang); directive != "" {
+		prompt = directive + "\n\n" + prompt
+	}
+
+	return prompt
 }
 
 const defaultChecklist = `

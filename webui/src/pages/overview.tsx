@@ -1,4 +1,5 @@
 import { useMemo, type ReactNode } from "react";
+import { useI18n } from "@/i18n";
 import { Link } from "react-router-dom";
 import { keepPreviousData, useQueries, useQuery } from "@tanstack/react-query";
 import type {
@@ -44,6 +45,7 @@ import {
 } from "@/lib/utils";
 
 export default function OverviewPage() {
+  const { t } = useI18n();
   const { data: status } = useStatus();
   const { data: instances, isLoading: instancesLoading, error: instancesError } =
     useInstances();
@@ -226,7 +228,7 @@ export default function OverviewPage() {
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Overview</h1>
+          <h1 className="text-xl font-semibold tracking-tight">{t("overview.title")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Command center for scans, findings, and live activity.
           </p>
@@ -302,7 +304,7 @@ export default function OverviewPage() {
         <div className="space-y-4 lg:col-span-2">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between py-4">
-              <CardTitle>Recent Scans</CardTitle>
+              <CardTitle>{t("overview.recentScans")}</CardTitle>
               <Button asChild size="sm" variant="ghost">
                 <Link to="/scans">
                   View all <ArrowRight className="h-3.5 w-3.5" />
@@ -359,7 +361,7 @@ export default function OverviewPage() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between py-4">
-              <CardTitle>Live Activity</CardTitle>
+              <CardTitle>{t("overview.liveActivity")}</CardTitle>
               <Button asChild size="sm" variant="ghost">
                 <Link to="/live">
                   Open feed <ArrowRight className="h-3.5 w-3.5" />
@@ -383,7 +385,7 @@ export default function OverviewPage() {
         <div className="space-y-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between py-4">
-              <CardTitle>System Health</CardTitle>
+              <CardTitle>{t("overview.systemHealth")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-xs">
               <Row
@@ -436,7 +438,7 @@ export default function OverviewPage() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between py-4">
-              <CardTitle>Critical Findings</CardTitle>
+              <CardTitle>{t("overview.criticalFindings")}</CardTitle>
               <Button asChild size="sm" variant="ghost">
                 <Link to="/findings">
                   All findings <ArrowRight className="h-3.5 w-3.5" />
@@ -479,7 +481,7 @@ export default function OverviewPage() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between py-4">
-              <CardTitle>Finding Mix</CardTitle>
+              <CardTitle>{t("overview.findingMix")}</CardTitle>
               <BarChart3 className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent className="space-y-3">
@@ -505,7 +507,7 @@ export default function OverviewPage() {
 
           <Card>
             <CardHeader className="py-4">
-              <CardTitle>Operations</CardTitle>
+              <CardTitle>{t("overview.operations")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-xs">
               <Row
@@ -537,7 +539,7 @@ export default function OverviewPage() {
               <SeparatorLine />
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-muted-foreground">Latest scan</p>
+                  <p className="text-muted-foreground">{t("overview.latestScan")}</p>
                   <p className="mt-0.5 truncate text-sm text-foreground">
                     {latestScan?.name ||
                       latestScan?.targets.split(",")[0] ||
