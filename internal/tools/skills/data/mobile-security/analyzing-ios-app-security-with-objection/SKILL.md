@@ -9,7 +9,7 @@ description: 'Performs runtime mobile security exploration of iOS applications u
   '
 domain: cybersecurity
 subdomain: mobile-security
-author: mahipal
+author: Krishna Kumar (xalgord)
 tags:
 - mobile-security
 - ios

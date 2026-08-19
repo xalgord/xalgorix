@@ -19,7 +19,7 @@ tags:
 - data-classification
 - compliance
 version: 1.0.0
-author: mukul975
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 nist_csf:
 - PR.DS-01

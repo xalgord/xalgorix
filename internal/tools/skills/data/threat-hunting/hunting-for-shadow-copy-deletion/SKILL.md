@@ -13,7 +13,7 @@ tags:
 - t1490
 - proactive-detection
 version: '1.0'
-author: mahipal
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 d3fend_techniques:
 - Platform Hardening

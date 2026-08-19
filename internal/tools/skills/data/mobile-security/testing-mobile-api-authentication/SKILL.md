@@ -9,7 +9,7 @@ description: 'Tests authentication and authorization mechanisms in mobile applic
   '
 domain: cybersecurity
 subdomain: mobile-security
-author: mahipal
+author: Krishna Kumar (xalgord)
 tags:
 - mobile-security
 - android

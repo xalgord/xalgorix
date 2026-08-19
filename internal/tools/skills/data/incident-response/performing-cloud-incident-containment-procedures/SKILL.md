@@ -20,7 +20,7 @@ mitre_attack:
 - T1525
 - T1098
 version: '1.0'
-author: mahipal
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 d3fend_techniques:
 - Restore Access

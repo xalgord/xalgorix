@@ -18,7 +18,7 @@ tags:
 - STIX
 - NIST-CSF
 version: 1.0.0
-author: mahipal
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 atlas_techniques:
 - AML.T0052

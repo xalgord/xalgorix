@@ -17,7 +17,7 @@ tags:
 - spiderfoot
 - maltego
 version: '1.0'
-author: juliosuas
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 atlas_techniques:
 - AML.T0051

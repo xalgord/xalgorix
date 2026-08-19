@@ -6,7 +6,7 @@ subdomain: compliance-governance
 tags: [compliance, governance, pci-dss, payment-security, cardholder-data]
 nist_csf: [GV.PO-01, PR.DS-01, PR.AA-01, DE.CM-01, ID.RA-01]
 version: "1.0"
-author: mahipal
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 ---
 # Implementing PCI DSS Compliance Controls

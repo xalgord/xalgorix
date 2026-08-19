@@ -16,7 +16,7 @@ tags:
 - third-party-risk
 - token-audit
 version: '1.0'
-author: mahipal
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 nist_csf:
 - PR.AA-01

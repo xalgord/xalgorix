@@ -11,7 +11,7 @@ tags:
 - macos
 - security-controls-bypass
 version: '1.0'
-author: xalgorix
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 ---
 

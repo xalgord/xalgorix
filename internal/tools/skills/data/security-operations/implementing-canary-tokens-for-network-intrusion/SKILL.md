@@ -16,7 +16,7 @@ tags:
 - honeytokens
 - breach-detection
 version: '1.0'
-author: mukul975
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 nist_csf:
 - DE.CM-01

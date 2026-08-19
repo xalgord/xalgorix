@@ -15,7 +15,7 @@ tags:
 - cwpp
 - security-recommendations
 version: '1.0'
-author: mahipal
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 nist_ai_rmf:
 - MEASURE-2.7

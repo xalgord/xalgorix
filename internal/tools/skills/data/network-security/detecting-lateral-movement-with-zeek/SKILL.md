@@ -15,7 +15,7 @@ tags:
 - ntlm-spray
 - network-forensics
 version: '1.0'
-author: mahipal
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 nist_csf:
 - PR.IR-01

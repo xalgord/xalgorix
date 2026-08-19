@@ -12,7 +12,7 @@ tags:
 - mitre-t1558-001
 - credential-abuse
 version: '1.0'
-author: mahipal
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 nist_csf:
 - DE.CM-01

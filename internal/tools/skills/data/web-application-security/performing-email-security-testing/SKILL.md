@@ -12,7 +12,7 @@ tags:
 - email-spoofing
 - header-injection
 version: '1.0'
-author: xalgord
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 ---
 

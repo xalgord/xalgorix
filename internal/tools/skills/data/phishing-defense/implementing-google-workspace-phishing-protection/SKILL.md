@@ -13,7 +13,7 @@ tags:
 - anti-spoofing
 - admin-console
 version: '1.0'
-author: mahipal
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 nist_csf:
 - PR.AT-01

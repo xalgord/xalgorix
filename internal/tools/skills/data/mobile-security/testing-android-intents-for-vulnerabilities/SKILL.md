@@ -8,7 +8,7 @@ description: 'Tests Android inter-process communication (IPC) through intents fo
   '
 domain: cybersecurity
 subdomain: mobile-security
-author: mahipal
+author: Krishna Kumar (xalgord)
 tags:
 - mobile-security
 - android

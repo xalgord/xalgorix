@@ -9,7 +9,7 @@ description: 'Implements Mobile Application Management (MAM) policies to protect
   '
 domain: cybersecurity
 subdomain: mobile-security
-author: mahipal
+author: Krishna Kumar (xalgord)
 tags:
 - mobile-security
 - android

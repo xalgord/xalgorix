@@ -13,7 +13,7 @@ tags:
 - socks-proxy
 - lateral-movement
 version: '1.0'
-author: xalgorix
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 ---
 

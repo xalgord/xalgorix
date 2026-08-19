@@ -6,7 +6,7 @@ subdomain: compliance-governance
 tags: [compliance, governance, iso27001, isms, risk-management, certification]
 nist_csf: [GV.OC-01, GV.RM-01, GV.PO-01, ID.RA-01, PR.DS-01]
 version: "1.0"
-author: mahipal
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 ---
 # Implementing ISO 27001 Information Security Management

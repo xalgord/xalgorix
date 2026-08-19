@@ -9,7 +9,7 @@ description: 'Reverse engineers iOS applications using Frida dynamic instrumenta
   '
 domain: cybersecurity
 subdomain: mobile-security
-author: mahipal
+author: Krishna Kumar (xalgord)
 tags:
 - mobile-security
 - ios

@@ -8,7 +8,7 @@ description: 'Bypasses SSL/TLS certificate pinning implementations in Android an
   '
 domain: cybersecurity
 subdomain: mobile-security
-author: mahipal
+author: Krishna Kumar (xalgord)
 tags:
 - mobile-security
 - android

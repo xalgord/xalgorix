@@ -18,7 +18,7 @@ nist_csf:
 - PR.AA-01
 - ID.AM-02
 version: '1.0'
-author: mahipal
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 nist_ai_rmf:
 - MEASURE-2.7

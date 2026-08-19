@@ -8,7 +8,7 @@ tags:
 - privilege-escalation
 - restricted-shell
 version: '1.0'
-author: xalgorix
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 ---
 

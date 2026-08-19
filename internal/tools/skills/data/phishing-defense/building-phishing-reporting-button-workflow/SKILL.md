@@ -17,7 +17,7 @@ mitre_attack:
 - T1204
 - T1534
 version: '1.0'
-author: mahipal
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 nist_csf:
 - PR.AT-01

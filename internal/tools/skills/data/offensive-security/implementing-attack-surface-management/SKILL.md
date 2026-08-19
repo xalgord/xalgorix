@@ -17,7 +17,7 @@ tags:
 - nuclei
 - asset-discovery
 version: '1.0'
-author: mukul975
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 nist_csf:
 - ID.RA-01

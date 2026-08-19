@@ -20,7 +20,7 @@ mitre_attack:
 - T1620
 - T1574
 version: 1.0.0
-author: mahipal
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 nist_csf:
 - RS.MA-01

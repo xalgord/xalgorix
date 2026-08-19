@@ -20,7 +20,7 @@ tags:
 - CTI
 - NIST-CSF
 version: 1.0.0
-author: team-cybersecurity
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 nist_csf:
 - ID.RA-01

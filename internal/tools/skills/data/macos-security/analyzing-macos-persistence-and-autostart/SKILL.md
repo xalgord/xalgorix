@@ -11,7 +11,7 @@ tags:
 - macos
 - persistence
 version: '1.0'
-author: xalgorix
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 ---
 

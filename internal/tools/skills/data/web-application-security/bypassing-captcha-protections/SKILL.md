@@ -13,7 +13,7 @@ tags:
 - bruteforce
 - web-security
 version: '1.0'
-author: xalgorix
+author: Krishna Kumar (xalgord)
 license: Apache-2.0
 nist_csf:
 - PR.PS-01
