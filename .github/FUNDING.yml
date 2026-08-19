@@ -1,0 +1,5 @@
+# Configures the "Sponsor" button shown on github.com/xalgorix/xalgorix.
+# Docs: https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+
+github: [xalgord]
+buy_me_a_coffee: xalgord
