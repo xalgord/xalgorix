@@ -35,6 +35,20 @@
 
 ---
 
+## 📸 Screenshots
+
+**🖥️ Self-hosted dashboard** — runs locally on `127.0.0.1:9137`
+
+| Overview dashboard                                      | Scan detail                                      | Findings                                      |
+| ------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------- |
+| ![Xalgorix overview dashboard](assets/screenshot-1.png) | ![Xalgorix scan detail](assets/screenshot-2.png) | ![Xalgorix findings](assets/screenshot-3.png) |
+
+**☁️ Hosted cloud dashboard** — the fully managed version at [www.xalgorix.com](https://www.xalgorix.com/)
+
+<img src="assets/SaaS-dashboard.png" alt="Xalgorix hosted cloud dashboard showing scan credits, plan status, issue counts, and recent scans" width="860" />
+
+---
+
 ## 🚀 Quick Start
 
 **Install (one line):**
@@ -110,11 +124,11 @@ For merge gating and full exploit-verified pentests in CI, use the [hosted scann
 
 | | | |
 | --- | --- | --- |
-| 🚀 [Quick Start](#-quick-start) | 🔩 [Configuration](#-configuration) | 🧾 [Environment Variables](#-environment-variables) |
-| 🔎 [Overview](#-overview) | 🆙 [Upgrading](#-upgrading-from-previous-versions) | 🔤 [Provider Prefixes](#-provider-prefixes) |
-| 💡 [Why Xalgorix](#-why-xalgorix) | 🏃 [Running](#-running) | 💻 [CLI Reference](#-cli-reference) |
-| 🎯 [Use Cases](#-use-cases) | 🧰 [Service Mode](#-service-mode) | 📡 [API Summary](#-api-summary) |
-| 📸 [Screenshots](#-screenshots) | 🔁 [Web UI Workflow](#-web-ui-workflow) | 💾 [Data Storage](#-data-storage) |
+| 📸 [Screenshots](#-screenshots) | 🔩 [Configuration](#-configuration) | 🧾 [Environment Variables](#-environment-variables) |
+| 🚀 [Quick Start](#-quick-start) | 🆙 [Upgrading](#-upgrading-from-previous-versions) | 🔤 [Provider Prefixes](#-provider-prefixes) |
+| 🔎 [Overview](#-overview) | 🏃 [Running](#-running) | 💻 [CLI Reference](#-cli-reference) |
+| 💡 [Why Xalgorix](#-why-xalgorix) | 🧰 [Service Mode](#-service-mode) | 📡 [API Summary](#-api-summary) |
+| 🎯 [Use Cases](#-use-cases) | 🔁 [Web UI Workflow](#-web-ui-workflow) | 💾 [Data Storage](#-data-storage) |
 | ✨ [Features](#-features) | 🔀 [Scan Modes](#-scan-modes) | 🧪 [Development](#-development) |
 | 📥 [Installation](#-installation) | 📂 [Scan Your Code](#-scan-your-code-no-target-needed) | 🚨 [Safety Notes](#-safety-notes) |
 | 🧭 [Methodology](#-methodology) | 📄 [Reports](#-reports) | 📜 [License](#-license) |
@@ -165,18 +179,6 @@ If Xalgorix saves you a triage cycle, please **[⭐ star the repo](https://githu
 | **Security research** | The novel-vulnerability-discovery phase pushes the agent beyond known template matching. Bring your own LLM (OpenAI, Anthropic, DeepSeek, Gemini, Ollama, MiniMax) to control reasoning depth and cost. |
 | **Continuous security testing** | Run as a system service with `xalgorix --start`. Scan on a schedule, stream findings to Discord or Telegram, and generate branded PDF reports for stakeholders. |
 | **DAST automation** | Browser-driven testing for web applications — auth flows, forms, JavaScript-rendered content, and runtime behavior. Integrates with Caido for proxy traffic inspection. |
-
-## 📸 Screenshots
-
-**🖥️ Self-hosted dashboard** — runs locally on `127.0.0.1:9137`
-
-| Overview dashboard                                      | Scan detail                                      | Findings                                      |
-| ------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------- |
-| ![Xalgorix overview dashboard](assets/screenshot-1.png) | ![Xalgorix scan detail](assets/screenshot-2.png) | ![Xalgorix findings](assets/screenshot-3.png) |
-
-**☁️ Hosted cloud dashboard** — the fully managed version at [www.xalgorix.com](https://www.xalgorix.com/)
-
-<img src="assets/SaaS-dashboard.png" alt="Xalgorix hosted cloud dashboard showing scan credits, plan status, issue counts, and recent scans" width="860" />
 
 ## ✨ Features
 
