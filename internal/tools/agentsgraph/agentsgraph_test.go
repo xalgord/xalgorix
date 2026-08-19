@@ -24,10 +24,10 @@ func TestSpawnCheckWaitAgentSnapshots(t *testing.T) {
 	t.Cleanup(Reset)
 
 	release := make(chan struct{})
-	runner = func(name string, targets []string, task string) (string, error) {
+	setRunner(func(name string, targets []string, task string) (string, error) {
 		<-release
 		return "completed " + name + " on " + strings.Join(targets, ","), nil
-	}
+	})
 
 	res, err := spawnAgent(map[string]string{
 		"name":   "worker",
@@ -65,12 +65,12 @@ func TestResetWhileAgentRunsIsRaceFree(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	done := make(chan struct{})
-	runner = func(name string, targets []string, task string) (string, error) {
+	setRunner(func(name string, targets []string, task string) (string, error) {
 		defer close(done)
 		close(started)
 		<-release
 		return "late result", nil
-	}
+	})
 
 	res, err := spawnAgent(map[string]string{"name": "slow", "task": "wait"})
 	if err != nil {

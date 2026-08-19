@@ -38,7 +38,11 @@ type subAgentState struct {
 }
 
 var (
-	runner AgentRunner
+	// runnerPtr holds the injected AgentRunner behind an atomic pointer.
+	// Register is called from agent.NewAgent, and multi-instance scans
+	// construct agents concurrently, so the runner must be installed and
+	// read atomically rather than through a plain shared var.
+	runnerPtr atomic.Pointer[AgentRunner]
 
 	// Async sub-agent tracking
 	agentsMu     sync.Mutex
@@ -52,6 +56,19 @@ var (
 	agentsStopped atomic.Bool
 )
 
+// setRunner atomically installs the injected sub-agent runner.
+func setRunner(fn AgentRunner) { runnerPtr.Store(&fn) }
+
+// currentRunner returns the installed sub-agent runner, or nil if none has
+// been registered yet. The atomic load pairs with setRunner's store so a
+// tool callback fetching the runner never races a concurrent Register.
+func currentRunner() AgentRunner {
+	if p := runnerPtr.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
 // Register adds multi-agent tools to the registry.
 // The agentRunner function is injected to break the import cycle.
 //
@@ -59,7 +76,7 @@ var (
 // check_agent, wait_agent) are disabled — they cause zombie goroutines and
 // semaphore leaks that prevent the watchdog from detecting stuck scans.
 func Register(r *tools.Registry, agentRunner AgentRunner) {
-	runner = agentRunner
+	setRunner(agentRunner)
 
 	// Synchronous sub-agent — blocks until completion
 	r.Register(&tools.Tool{
@@ -121,12 +138,13 @@ func createAgent(args map[string]string) (tools.Result, error) {
 		targets = append(targets, target)
 	}
 
-	if runner == nil {
+	run := currentRunner()
+	if run == nil {
 		return tools.Result{}, fmt.Errorf("agent runner not initialized")
 	}
 
 	start := time.Now()
-	summary, err := runner(name, targets, task)
+	summary, err := run(name, targets, task)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -158,7 +176,8 @@ func spawnAgent(args map[string]string) (tools.Result, error) {
 		return tools.Result{}, fmt.Errorf("name and task are required")
 	}
 
-	if runner == nil {
+	run := currentRunner()
+	if run == nil {
 		return tools.Result{}, fmt.Errorf("agent runner not initialized")
 	}
 
@@ -253,7 +272,7 @@ func spawnAgent(args map[string]string) (tools.Result, error) {
 			return
 		}
 
-		summary, err := runner(name, targets, task)
+		summary, err := run(name, targets, task)
 
 		agentsMu.Lock()
 		defer agentsMu.Unlock()

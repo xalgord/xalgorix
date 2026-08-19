@@ -38,6 +38,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 // Config carries the operator's listener identity. Callers set
@@ -122,12 +123,44 @@ func schemeDefaultPort(scheme string) string {
 	}
 }
 
-// LookupHost is the package-level resolver indirection. Tests
-// overwrite this var to feed deterministic resolutions; production
-// uses net.LookupHost. Single var, single call site (inside
-// IsLocalOrListener), mirroring the per-package lookupHost
-// indirection that previously lived in internal/web/server.go.
-var LookupHost = net.LookupHost
+// lookupHostSig is the resolver indirection signature: it mirrors
+// net.LookupHost so production and test stubs are interchangeable.
+type lookupHostSig = func(host string) ([]string, error)
+
+// activeLookupHost holds the resolver behind an atomic pointer. The read
+// side (lookupHost, called from IsLocalOrListener) and the write side
+// (SetLookupHost, used by tests) both go through atomic load/swap, so an
+// in-flight scan goroutine classifying a target never data-races a test
+// swapping the resolver. Production installs net.LookupHost once at init
+// and never changes it.
+var activeLookupHost atomic.Pointer[lookupHostSig]
+
+func init() {
+	def := net.LookupHost
+	activeLookupHost.Store(&def)
+}
+
+// lookupHost resolves host using the currently installed resolver. Single
+// call site (inside IsLocalOrListener).
+func lookupHost(host string) ([]string, error) {
+	return (*activeLookupHost.Load())(host)
+}
+
+// SetLookupHost atomically installs fn as the resolver used by
+// IsLocalOrListener and returns the resolver it replaced, so callers can
+// restore it (the swap/restore pattern tests rely on). A nil fn resets to
+// net.LookupHost. The atomic swap pairs with the atomic load in lookupHost,
+// so installing a stub never races a concurrent classification.
+func SetLookupHost(fn func(host string) ([]string, error)) func(host string) ([]string, error) {
+	if fn == nil {
+		fn = net.LookupHost
+	}
+	prev := activeLookupHost.Swap(&fn)
+	if prev == nil {
+		return net.LookupHost
+	}
+	return *prev
+}
 
 // IsLocalOrListener returns true when target — a bare host,
 // host:port, scheme://host[:port][/path], or [ipv6][:port] —
@@ -208,7 +241,7 @@ func IsLocalOrListener(cfg Config, target string) bool {
 	if ip := net.ParseIP(host); ip != nil {
 		resolvedIPs = []net.IP{ip}
 	} else {
-		addrs, err := LookupHost(host)
+		addrs, err := lookupHost(host)
 		if err != nil || len(addrs) == 0 {
 			return false // can't resolve — let it through, will fail naturally
 		}

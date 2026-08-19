@@ -14,9 +14,8 @@ import (
 // state.
 func withStubLookupHost(t *testing.T, stub func(string) ([]string, error)) {
 	t.Helper()
-	prev := LookupHost
-	LookupHost = stub
-	t.Cleanup(func() { LookupHost = prev })
+	prev := SetLookupHost(stub)
+	t.Cleanup(func() { SetLookupHost(prev) })
 }
 
 // isLocalOrListenerRow is one row in the table-driven test surface.

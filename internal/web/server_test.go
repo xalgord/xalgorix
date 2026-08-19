@@ -2345,9 +2345,8 @@ func TestInstanceAction_GetAndStopSpecificInstance(t *testing.T) {
 // package-level state.
 func withStubLookupHost(t *testing.T, stub func(string) ([]string, error)) {
 	t.Helper()
-	prev := scopeguard.LookupHost
-	scopeguard.LookupHost = stub
-	t.Cleanup(func() { scopeguard.LookupHost = prev })
+	prev := scopeguard.SetLookupHost(stub)
+	t.Cleanup(func() { scopeguard.SetLookupHost(prev) })
 }
 
 // TestIsBlockedTarget_SingleLookup asserts that isBlockedTarget invokes

@@ -1504,9 +1504,8 @@ func TestPreservation_AgentOracleStableAcrossLookupSwap(t *testing.T) {
 // scopeguard.LookupHost is package-level state.
 func withScopeguardLookupHost(t *testing.T, stub func(string) ([]string, error)) {
 	t.Helper()
-	prev := scopeguard.LookupHost
-	scopeguard.LookupHost = stub
-	t.Cleanup(func() { scopeguard.LookupHost = prev })
+	prev := scopeguard.SetLookupHost(stub)
+	t.Cleanup(func() { scopeguard.SetLookupHost(prev) })
 }
 
 // firstLocalInterfaceIP returns the first IP address bound to one of
