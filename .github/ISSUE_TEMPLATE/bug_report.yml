@@ -41,7 +41,7 @@ body:
     attributes:
       label: Xalgorix version
       description: Output of `xalgorix --version` (or the Docker tag).
-      placeholder: v4.5.56
+      placeholder: v4.5.153
     validations:
       required: true
   - type: dropdown
