@@ -45,7 +45,7 @@
 
 **☁️ Hosted cloud dashboard** — the fully managed version at [www.xalgorix.com](https://www.xalgorix.com/)
 
-<img src="assets/SaaS-dashboard.png" alt="Xalgorix hosted cloud dashboard showing scan credits, plan status, issue counts, and recent scans" width="860" />
+<img src="assets/SaaS-dashboard.png?v=4.5.154" alt="Xalgorix hosted cloud dashboard showing security score, vulnerability trends, remediation metrics, and open issues by category" width="860" />
 
 ---
 
