@@ -56,13 +56,13 @@ export function ErrorState({
         className,
       )}
     >
-      <AlertCircle className="h-4 w-4 text-red-400 mt-0.5" />
+      <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400 mt-0.5" />
       <div className="flex-1">
-        <p className="text-sm font-medium text-red-300">
+        <p className="text-sm font-medium text-red-700 dark:text-red-300">
           {title || t("common.somethingWrong")}
         </p>
         {description && (
-          <p className="mt-1 text-xs text-red-200/70">{description}</p>
+          <p className="mt-1 text-xs text-red-700/70 dark:text-red-200/70">{description}</p>
         )}
         {action && <div className="mt-2">{action}</div>}
       </div>

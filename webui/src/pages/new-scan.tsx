@@ -352,7 +352,7 @@ export default function NewScanPage() {
                 }}
               />
               {contextPath && (
-                <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-400">
+                <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
                   <FileText className="h-3.5 w-3.5" />
                   {contextInfo}
                 </span>

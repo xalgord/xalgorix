@@ -168,7 +168,7 @@ function IntegrationCard({ integration }: { integration: Integration }) {
             className={cn(
               "flex h-10 w-10 shrink-0 items-center justify-center rounded-md border",
               integration.isConfigured
-                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
                 : "border-border bg-muted text-muted-foreground",
             )}
           >
@@ -180,7 +180,7 @@ function IntegrationCard({ integration }: { integration: Integration }) {
                 {integration.name}
               </h3>
               {integration.isConfigured ? (
-                <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px]">
+                <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[10px]">
                   <CheckCircle2 className="h-3 w-3" /> {t("integrations.connected")}
                 </Badge>
               ) : (

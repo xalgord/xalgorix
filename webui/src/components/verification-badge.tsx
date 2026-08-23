@@ -34,7 +34,7 @@ export function VerificationBadge({
       <span
         className={cn(
           "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-          "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+          "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
           className,
         )}
         title="Independently reproduced by the Verifier"
@@ -49,7 +49,7 @@ export function VerificationBadge({
       <span
         className={cn(
           "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-          "bg-amber-500/10 text-amber-400 border-amber-500/30",
+          "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30",
           className,
         )}
         title="Preserved but not independently confirmed — verify manually before relying on it"

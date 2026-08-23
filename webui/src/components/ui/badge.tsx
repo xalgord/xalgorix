@@ -11,11 +11,11 @@ const badgeVariants = cva(
         outline: "border-border text-foreground bg-transparent",
         muted: "border-transparent bg-muted text-muted-foreground",
         success:
-          "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+          "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
         warning:
-          "border-amber-500/30 bg-amber-500/10 text-amber-400",
+          "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400",
         destructive:
-          "border-red-500/30 bg-red-500/10 text-red-400",
+          "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400",
       },
     },
     defaultVariants: { variant: "default" },

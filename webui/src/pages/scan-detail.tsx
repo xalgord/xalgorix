@@ -358,7 +358,7 @@ export default function ScanDetailPage() {
                   className={cn(
                     "flex items-baseline gap-1.5 rounded-md border border-border bg-muted/20 px-2 py-1.5 text-[11px]",
                     scan.current_phase === p.id &&
-                      "border-amber-400/50 text-amber-300",
+                      "border-amber-400/50 text-amber-700 dark:text-amber-300",
                   )}
                 >
                   <span className="mono shrink-0 text-muted-foreground">
@@ -841,7 +841,7 @@ function FindingsTab({
                         {f.cwe_id && (
                           <Badge
                             variant="outline"
-                            className="mono text-emerald-400 border-emerald-400/30"
+                            className="mono text-emerald-600 dark:text-emerald-400 border-emerald-400/30"
                           >
                             {f.cwe_id}
                           </Badge>
@@ -849,7 +849,7 @@ function FindingsTab({
                         {f.owasp && (
                           <Badge
                             variant="outline"
-                            className="mono text-amber-400 border-amber-400/30"
+                            className="mono text-amber-700 dark:text-amber-400 border-amber-400/30"
                           >
                             {f.owasp}
                           </Badge>
@@ -922,7 +922,7 @@ function BulkActionMenu({
           </DropdownMenu.Label>
           <DropdownMenu.Separator className="-mx-1 my-1 h-px bg-border" />
           <DropdownMenu.Item
-            className={cn(menuItemClass, "text-red-400 focus:text-red-300")}
+            className={cn(menuItemClass, "text-red-600 focus:text-red-700 dark:text-red-400 dark:focus:text-red-300")}
             onSelect={(event) => {
               event.preventDefault();
               onDelete();
@@ -973,7 +973,7 @@ function FindingRowMenu({
             disabled={deleting}
             className={cn(
               menuItemClass,
-              "text-red-400 focus:text-red-300 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+              "text-red-600 focus:text-red-700 dark:text-red-400 dark:focus:text-red-300 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
             )}
             onSelect={(event) => {
               event.preventDefault();
@@ -1017,7 +1017,7 @@ function FindingDetailsDialog({
                 {finding.cwe_id && (
                   <Badge
                     variant="outline"
-                    className="mono text-emerald-400 border-emerald-400/30"
+                    className="mono text-emerald-600 dark:text-emerald-400 border-emerald-400/30"
                   >
                     {finding.cwe_id}
                   </Badge>
@@ -1025,7 +1025,7 @@ function FindingDetailsDialog({
                 {finding.owasp && (
                   <Badge
                     variant="outline"
-                    className="mono text-amber-400 border-amber-400/30"
+                    className="mono text-amber-700 dark:text-amber-400 border-amber-400/30"
                   >
                     {finding.owasp}
                   </Badge>
@@ -1135,7 +1135,7 @@ function DetailSection({
         {title}
       </h4>
       {code ? (
-        <pre className="max-h-64 min-w-0 max-w-full overflow-auto whitespace-pre-wrap rounded-md border border-border bg-black/40 p-3 text-xs leading-relaxed text-foreground [overflow-wrap:anywhere]">
+        <pre className="max-h-64 min-w-0 max-w-full overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted p-3 text-xs leading-relaxed text-foreground [overflow-wrap:anywhere]">
           <code>{value}</code>
         </pre>
       ) : (
@@ -1303,8 +1303,8 @@ function ScanGuidanceComposer({ instanceId }: { instanceId: string }) {
           <span
             aria-live="polite"
             className={cn(
-              feedback?.kind === "success" && "text-emerald-400",
-              feedback?.kind === "error" && "text-red-400",
+              feedback?.kind === "success" && "text-emerald-600 dark:text-emerald-400",
+              feedback?.kind === "error" && "text-red-600 dark:text-red-400",
             )}
           >
             {feedback?.text || "Enter to send · Shift+Enter for a new line"}

@@ -92,7 +92,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           </svg>
           <span>{t("sidebar.github")}</span>
           <Star
-            className="h-4 w-4 text-amber-400 transition-transform group-hover:scale-110"
+            className="h-4 w-4 text-amber-500 dark:text-amber-400 transition-transform group-hover:scale-110"
             aria-hidden
           />
         </a>

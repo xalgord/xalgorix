@@ -21,11 +21,11 @@ export function MetricCard({
 }) {
   const accentClass =
     accent === "critical"
-      ? "text-red-400"
+      ? "text-red-600 dark:text-red-400"
       : accent === "warning"
-        ? "text-amber-400"
+        ? "text-amber-600 dark:text-amber-400"
         : accent === "success"
-          ? "text-emerald-400"
+          ? "text-emerald-600 dark:text-emerald-400"
           : "text-foreground";
 
   const body = (

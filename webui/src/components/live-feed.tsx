@@ -86,31 +86,34 @@ function isInternalLLMInstruction(text?: string | null): boolean {
   );
 }
 
+// Event-type label colors. Base shades are darkened so the mono uppercase tags
+// stay legible on the light surface; dark: variants restore the original bright
+// shades tuned for the dark feed.
 const TYPE_COLOR: Record<string, string> = {
-  error: "text-red-400",
-  vuln: "text-orange-400",
-  vuln_found: "text-orange-400",
-  vulns: "text-orange-400",
-  tool_call: "text-blue-300",
-  tool_result: "text-emerald-400",
-  tool_error: "text-red-400",
-  tool_output: "text-neutral-300",
+  error: "text-red-600 dark:text-red-400",
+  vuln: "text-orange-600 dark:text-orange-400",
+  vuln_found: "text-orange-600 dark:text-orange-400",
+  vulns: "text-orange-600 dark:text-orange-400",
+  tool_call: "text-blue-600 dark:text-blue-300",
+  tool_result: "text-emerald-600 dark:text-emerald-400",
+  tool_error: "text-red-600 dark:text-red-400",
+  tool_output: "text-neutral-600 dark:text-neutral-300",
   agent: "text-foreground",
-  thought: "text-violet-300",
-  decision: "text-violet-300",
-  phase: "text-amber-300",
-  llm: "text-cyan-300",
-  http: "text-sky-300",
-  target_started: "text-emerald-400",
-  target_completed: "text-emerald-400",
-  queue_started: "text-emerald-400",
-  queue_finished: "text-emerald-400",
-  stopped: "text-red-300",
-  report_ready: "text-emerald-400",
-  paused: "text-amber-300",
-  resumed: "text-emerald-300",
-  instance_started: "text-emerald-300",
-  instance_updated: "text-neutral-400",
+  thought: "text-violet-600 dark:text-violet-300",
+  decision: "text-violet-600 dark:text-violet-300",
+  phase: "text-amber-700 dark:text-amber-300",
+  llm: "text-cyan-700 dark:text-cyan-300",
+  http: "text-sky-600 dark:text-sky-300",
+  target_started: "text-emerald-600 dark:text-emerald-400",
+  target_completed: "text-emerald-600 dark:text-emerald-400",
+  queue_started: "text-emerald-600 dark:text-emerald-400",
+  queue_finished: "text-emerald-600 dark:text-emerald-400",
+  stopped: "text-red-600 dark:text-red-300",
+  report_ready: "text-emerald-600 dark:text-emerald-400",
+  paused: "text-amber-700 dark:text-amber-300",
+  resumed: "text-emerald-600 dark:text-emerald-300",
+  instance_started: "text-emerald-600 dark:text-emerald-300",
+  instance_updated: "text-neutral-600 dark:text-neutral-400",
 };
 
 export function LiveEventRow({ event }: { event: FeedEvent }) {
@@ -124,7 +127,7 @@ export function LiveEventRow({ event }: { event: FeedEvent }) {
   const ts = event.timestamp
     ? new Date(event.timestamp).toLocaleTimeString()
     : new Date(event._receivedAt).toLocaleTimeString();
-  const colorCls = TYPE_COLOR[event.type] || "text-neutral-300";
+  const colorCls = TYPE_COLOR[event.type] || "text-neutral-600 dark:text-neutral-300";
 
   return (
     <div className="group border-b border-border last:border-0">
@@ -167,7 +170,7 @@ export function LiveEventRow({ event }: { event: FeedEvent }) {
       {open && hasDetails && (
         <div className="px-3 pb-3 -mt-1 ml-[7.5rem] space-y-2">
           {event.error && (
-            <pre className="rounded border border-red-500/30 bg-red-500/5 p-2 text-[11px] mono text-red-300 whitespace-pre-wrap break-words">
+            <pre className="rounded border border-red-500/30 bg-red-500/5 p-2 text-[11px] mono text-red-700 dark:text-red-300 whitespace-pre-wrap break-words">
               {event.error}
             </pre>
           )}

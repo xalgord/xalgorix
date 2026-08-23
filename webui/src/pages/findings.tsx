@@ -370,12 +370,12 @@ export default function FindingsPage() {
                           </Badge>
                         )}
                         {f.cwe_id && (
-                          <Badge variant="outline" className="mono text-[10px] text-emerald-400 border-emerald-400/30">
+                          <Badge variant="outline" className="mono text-[10px] text-emerald-600 dark:text-emerald-400 border-emerald-400/30">
                             {f.cwe_id}
                           </Badge>
                         )}
                         {f.owasp && (
-                          <Badge variant="outline" className="mono text-[10px] text-amber-400 border-amber-400/30">
+                          <Badge variant="outline" className="mono text-[10px] text-amber-700 dark:text-amber-400 border-amber-400/30">
                             {f.owasp}
                           </Badge>
                         )}
@@ -437,7 +437,7 @@ function BulkActionMenu({
           </DropdownMenu.Label>
           <DropdownMenu.Separator className="-mx-1 my-1 h-px bg-border" />
           <DropdownMenu.Item
-            className={cn(menuItemClass, "text-red-400 focus:text-red-300")}
+            className={cn(menuItemClass, "text-red-600 focus:text-red-700 dark:text-red-400 dark:focus:text-red-300")}
             onSelect={(event) => {
               event.preventDefault();
               onDelete();
@@ -486,7 +486,7 @@ function RowActionMenu({
             disabled={deleting}
             className={cn(
               menuItemClass,
-              "text-red-400 focus:text-red-300 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+              "text-red-600 focus:text-red-700 dark:text-red-400 dark:focus:text-red-300 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
             )}
             onSelect={(event) => {
               event.preventDefault();

@@ -198,10 +198,10 @@ function ResourcesBar({ resources }: { resources: InstancesResponse["resources"]
   const level = (resources.level || "").toLowerCase()
   const levelColor =
     level === "critical"
-      ? "bg-red-500/10 border-red-500/30 text-red-300"
+      ? "bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-300"
       : level === "caution" || level === "warning" || level === "warn"
-        ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
-        : "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+        ? "bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300"
+        : "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300"
 
   return (
     <Card>
@@ -402,7 +402,7 @@ function InstanceCard({ instance }: { instance: ScanInstance }) {
           <Button
             size="sm"
             variant="ghost"
-            className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
+            className="text-red-600 hover:bg-red-500/10 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
             disabled={del.isPending}
             onClick={handleDelete}
           >

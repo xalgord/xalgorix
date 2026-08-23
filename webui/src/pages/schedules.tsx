@@ -967,7 +967,7 @@ function ScheduleActionMenu({
       <DropdownMenu.Portal>
         <DropdownMenu.Content align="end" className={menuContentClass}>
           <DropdownMenu.Item className={menuItemClass} onSelect={onTrigger}>
-            <Play className="h-3.5 w-3.5 text-green-400" />
+            <Play className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
             {t("schedules.runNow")}
           </DropdownMenu.Item>
           <DropdownMenu.Item className={menuItemClass} onSelect={onEdit}>
@@ -976,7 +976,7 @@ function ScheduleActionMenu({
           </DropdownMenu.Item>
           <DropdownMenu.Separator className="-mx-1 my-1 h-px bg-border" />
           <DropdownMenu.Item
-            className={cn(menuItemClass, "text-red-400 focus:text-red-300")}
+            className={cn(menuItemClass, "text-red-600 focus:text-red-700 dark:text-red-400 dark:focus:text-red-300")}
             onSelect={onDelete}
           >
             <Trash2 className="h-3.5 w-3.5" />

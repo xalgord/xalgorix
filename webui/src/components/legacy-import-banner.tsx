@@ -29,7 +29,7 @@ export function LegacyImportBanner() {
   return (
     <div
       role="status"
-      className="border-b border-emerald-500/30 bg-emerald-500/10 px-6 py-2 text-xs text-emerald-200"
+      className="border-b border-emerald-500/30 bg-emerald-500/10 px-6 py-2 text-xs text-emerald-700 dark:text-emerald-200"
     >
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2">
         <span>
@@ -41,7 +41,7 @@ export function LegacyImportBanner() {
           .{" "}
           <Link
             to="/findings"
-            className="underline underline-offset-2 hover:text-emerald-100"
+            className="underline underline-offset-2 hover:text-emerald-800 dark:hover:text-emerald-100"
           >
             Click to review
           </Link>{" "}
@@ -51,7 +51,7 @@ export function LegacyImportBanner() {
           type="button"
           onClick={() => dismiss.mutate()}
           disabled={dismiss.isPending}
-          className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-emerald-100 hover:bg-emerald-500/20 disabled:opacity-60"
+          className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-emerald-700 dark:text-emerald-100 hover:bg-emerald-500/20 disabled:opacity-60"
           aria-label="Dismiss legacy import banner"
         >
           {dismiss.isPending ? "Dismissing…" : "Dismiss"}

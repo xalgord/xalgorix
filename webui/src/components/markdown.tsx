@@ -151,7 +151,7 @@ export function Markdown({ source }: { source?: string | null }) {
           return [
             <pre
               key={`c${i}`}
-              className="max-h-72 min-w-0 max-w-full overflow-auto whitespace-pre-wrap rounded-md border border-border bg-black/40 p-3 mono text-[11px] leading-relaxed [overflow-wrap:anywhere]"
+              className="max-h-72 min-w-0 max-w-full overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted p-3 mono text-[11px] leading-relaxed [overflow-wrap:anywhere]"
             >
               <code>{seg.content}</code>
             </pre>,

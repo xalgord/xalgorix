@@ -3,6 +3,7 @@ import { Loader2, Menu, Plus, Search, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConnectionStatus } from "@/components/connection-status";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { useStatus, useInstances, useStopAll } from "@/api/queries";
 import { useCommandPalette } from "@/components/command-palette";
 import { useI18n } from "@/i18n";
@@ -47,7 +48,7 @@ export function Topbar({ onMenuToggle }: { onMenuToggle?: () => void }) {
       {activeInst ? (
         <Link
           to={`/scans/${activeInst.id}`}
-          className="hidden lg:flex min-w-0 items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2.5 py-1 text-xs text-emerald-300 hover:bg-emerald-500/10 transition-colors"
+          className="hidden lg:flex min-w-0 items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2.5 py-1 text-xs text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 transition-colors"
         >
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500 pulse-dot" />
           <span className="mono truncate max-w-[14ch] xl:max-w-[24ch]">
@@ -56,7 +57,7 @@ export function Topbar({ onMenuToggle }: { onMenuToggle?: () => void }) {
         </Link>
       ) : (
         running > 0 && (
-          <span className="hidden lg:inline-flex shrink-0 items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-1 text-xs text-amber-300">
+          <span className="hidden lg:inline-flex shrink-0 items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-1 text-xs text-amber-700 dark:text-amber-300">
             <Loader2 className="h-3 w-3 animate-spin" /> {running}{" "}
             {running > 1 ? t("topbar.activeScans") : t("topbar.activeScan")}
           </span>
@@ -64,6 +65,7 @@ export function Topbar({ onMenuToggle }: { onMenuToggle?: () => void }) {
       )}
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
+        <ThemeToggle />
         <LanguageSwitcher />
         <ConnectionStatus />
         {running > 0 && (
@@ -72,7 +74,7 @@ export function Topbar({ onMenuToggle }: { onMenuToggle?: () => void }) {
             size="sm"
             onClick={() => stopAll.mutate()}
             disabled={stopAll.isPending}
-            className="hidden sm:inline-flex shrink-0 text-red-400 hover:text-red-300"
+            className="hidden sm:inline-flex shrink-0 text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
           >
             <StopCircle className="h-3.5 w-3.5" />
             <span className="hidden md:inline">{t("topbar.stopAll")}</span>

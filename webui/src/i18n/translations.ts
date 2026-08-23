@@ -74,6 +74,10 @@ const en: Dict = {
   "topbar.activeScan": "active scan",
   "topbar.activeScans": "active scans",
   "topbar.language": "Language",
+  "topbar.theme": "Theme",
+  "theme.light": "Light",
+  "theme.dark": "Dark",
+  "theme.system": "System",
 
   // Severity labels (shared across findings, badges, tables)
   "severity.critical": "Critical",
@@ -280,6 +284,10 @@ const zhCN: Dict = {
   "topbar.activeScan": "个进行中的扫描",
   "topbar.activeScans": "个进行中的扫描",
   "topbar.language": "语言",
+  "topbar.theme": "主题",
+  "theme.light": "浅色",
+  "theme.dark": "深色",
+  "theme.system": "跟随系统",
 
   // Severity labels
   "severity.critical": "严重",

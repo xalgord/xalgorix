@@ -1,53 +1,171 @@
 @import "tailwindcss";
 
-/* Geist + Vercel-inspired dark design tokens for Xalgorix. */
-@theme {
-  --color-background: #050505;
-  --color-foreground: #fafafa;
+/* Class-based dark mode: `dark:` utilities and the token overrides in `.dark`
+   below apply when <html> carries the `dark` class (toggled at runtime by the
+   theme store), instead of the OS `prefers-color-scheme` media query. */
+@custom-variant dark (&:where(.dark, .dark *));
 
-  --color-card: #0a0a0a;
-  --color-card-foreground: #fafafa;
+/* Geist + Vercel-inspired design tokens for Xalgorix. Values live on :root
+   (light) and .dark (dark); the @theme inline block below maps them to
+   Tailwind color utilities so background, text and border classes resolve
+   against the active theme. The crimson brand accent is intentionally
+   identical to the Xalgorix SaaS tokens so the dashboard and hosted product
+   share one accent — the brand oklch values are the same in both themes;
+   change them together. */
+:root {
+  --background: #ffffff;
+  --foreground: #0a0a0a;
 
-  --color-popover: #0a0a0a;
-  --color-popover-foreground: #fafafa;
+  --card: #ffffff;
+  --card-foreground: #0a0a0a;
+  --card-hover: #f7f7f8;
+  --card-hover-border: #d4d4d8;
 
-  /* Restrained crimson brand accent. These oklch values are intentionally
-     identical to the Xalgorix SaaS tokens (src/styles.css) so the dashboard and
-     the hosted product share one accent — change them together. */
-  --color-brand: oklch(0.56 0.22 20);
-  --color-brand-foreground: oklch(0.985 0 0);
-  --color-brand-hover: oklch(0.52 0.22 20);
-  --color-brand-subtle: oklch(0.2 0.035 20);
-  --color-brand-border: oklch(0.4 0.12 20);
+  --popover: #ffffff;
+  --popover-foreground: #0a0a0a;
 
-  --color-primary: var(--color-brand);
-  --color-primary-foreground: var(--color-brand-foreground);
+  --brand: oklch(0.56 0.22 20);
+  --brand-foreground: oklch(0.985 0 0);
+  --brand-hover: oklch(0.52 0.22 20);
+  --brand-subtle: oklch(0.95 0.03 20);
+  --brand-border: oklch(0.85 0.07 20);
 
-  --color-secondary: #111111;
-  --color-secondary-foreground: #fafafa;
+  --primary: var(--brand);
+  --primary-foreground: var(--brand-foreground);
 
-  --color-muted: #111111;
-  --color-muted-foreground: #a1a1aa;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
 
-  --color-accent: var(--color-brand-subtle);
-  --color-accent-foreground: oklch(0.985 0 0);
+  --muted: #f4f4f5;
+  --muted-foreground: #52525b;
 
-  --color-border: #262626;
-  --color-input: #1a1a1a;
-  --color-ring: oklch(0.65 0.22 20);
+  --accent: var(--brand-subtle);
+  --accent-foreground: oklch(0.45 0.19 20);
 
-  --color-destructive: #ef4444;
-  --color-destructive-foreground: #fafafa;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: oklch(0.65 0.22 20);
 
-  /* Severity palette */
-  --color-severity-critical: #dc2626;
-  --color-severity-high: #ea580c;
-  --color-severity-medium: #ca8a04;
-  --color-severity-low: #2563eb;
-  --color-severity-info: #525252;
+  --destructive: #dc2626;
+  --destructive-foreground: #fafafa;
 
-  --color-success: #10b981;
-  --color-warning: #f59e0b;
+  --severity-critical: #dc2626;
+  --severity-high: #ea580c;
+  --severity-medium: #ca8a04;
+  --severity-low: #2563eb;
+  --severity-info: #525252;
+
+  --success: #059669;
+  --warning: #d97706;
+
+  --selection-bg: #0a0a0a;
+  --selection-fg: #ffffff;
+  --scrollbar-thumb: #d4d4d8;
+  --scrollbar-thumb-hover: #b4b4bb;
+
+  color-scheme: light;
+}
+
+.dark {
+  --background: #050505;
+  --foreground: #fafafa;
+
+  --card: #0a0a0a;
+  --card-foreground: #fafafa;
+  --card-hover: #0d0d0d;
+  --card-hover-border: #2f2f2f;
+
+  --popover: #0a0a0a;
+  --popover-foreground: #fafafa;
+
+  --brand: oklch(0.56 0.22 20);
+  --brand-foreground: oklch(0.985 0 0);
+  --brand-hover: oklch(0.52 0.22 20);
+  --brand-subtle: oklch(0.2 0.035 20);
+  --brand-border: oklch(0.4 0.12 20);
+
+  --primary: var(--brand);
+  --primary-foreground: var(--brand-foreground);
+
+  --secondary: #111111;
+  --secondary-foreground: #fafafa;
+
+  --muted: #111111;
+  --muted-foreground: #a1a1aa;
+
+  --accent: var(--brand-subtle);
+  --accent-foreground: oklch(0.985 0 0);
+
+  --border: #262626;
+  --input: #1a1a1a;
+  --ring: oklch(0.65 0.22 20);
+
+  --destructive: #ef4444;
+  --destructive-foreground: #fafafa;
+
+  --severity-critical: #dc2626;
+  --severity-high: #ea580c;
+  --severity-medium: #ca8a04;
+  --severity-low: #2563eb;
+  --severity-info: #525252;
+
+  --success: #10b981;
+  --warning: #f59e0b;
+
+  --selection-bg: #ffffff;
+  --selection-fg: #000000;
+  --scrollbar-thumb: #1a1a1a;
+  --scrollbar-thumb-hover: #2a2a2a;
+
+  color-scheme: dark;
+}
+
+/* Map the runtime tokens above to Tailwind color utilities. `inline` keeps the
+   generated utilities as var() references so a `.dark` override takes effect
+   without rebuilding. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-subtle: var(--brand-subtle);
+  --color-brand-border: var(--brand-border);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  --color-severity-critical: var(--severity-critical);
+  --color-severity-high: var(--severity-high);
+  --color-severity-medium: var(--severity-medium);
+  --color-severity-low: var(--severity-low);
+  --color-severity-info: var(--severity-info);
+
+  --color-success: var(--success);
+  --color-warning: var(--warning);
 
   --radius-sm: 6px;
   --radius-md: 10px;
@@ -62,10 +180,6 @@
 }
 
 @layer base {
-  :root {
-    color-scheme: dark;
-  }
-
   html,
   body,
   #root {
@@ -138,8 +252,8 @@
   }
 
   ::selection {
-    background: #ffffff;
-    color: #000000;
+    background: var(--selection-bg);
+    color: var(--selection-fg);
   }
 
   /* Subtle scrollbar that matches the Vercel feel */
@@ -151,12 +265,12 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: #1a1a1a;
+    background: var(--scrollbar-thumb);
     border-radius: 6px;
     border: 2px solid var(--color-background);
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #2a2a2a;
+    background: var(--scrollbar-thumb-hover);
   }
 }
 
@@ -167,8 +281,8 @@
     border-color 0.15s ease;
 }
 .card-hover:hover {
-  background-color: #0d0d0d;
-  border-color: #2f2f2f;
+  background-color: var(--card-hover);
+  border-color: var(--card-hover-border);
 }
 
 /* Animated connection dot */

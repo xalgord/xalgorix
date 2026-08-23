@@ -318,7 +318,7 @@ function ScanTable({
                       <ShieldAlert
                         className={
                           s.vuln_count > 0
-                            ? "h-3 w-3 text-amber-400"
+                            ? "h-3 w-3 text-amber-500 dark:text-amber-400"
                             : "h-3 w-3 text-muted-foreground"
                         }
                       />
@@ -424,7 +424,7 @@ function BulkActionMenu({
           </DropdownMenu.Label>
           <DropdownMenu.Separator className="-mx-1 my-1 h-px bg-border" />
           <DropdownMenu.Item
-            className={cn(menuItemClass, "text-red-400 focus:text-red-300")}
+            className={cn(menuItemClass, "text-red-600 focus:text-red-700 dark:text-red-400 dark:focus:text-red-300")}
             onSelect={(event) => {
               event.preventDefault();
               onDelete();
@@ -478,7 +478,7 @@ function RowActionMenu({
             disabled={deleting}
             className={cn(
               menuItemClass,
-              "text-red-400 focus:text-red-300 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+              "text-red-600 focus:text-red-700 dark:text-red-400 dark:focus:text-red-300 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
             )}
             onSelect={(event) => {
               event.preventDefault();

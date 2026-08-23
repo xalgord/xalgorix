@@ -1,12 +1,15 @@
 import { cn, normalizeSeverity, type Severity } from "@/lib/utils";
 import { useI18n } from "@/i18n";
 
+// Base text shades are darkened for light mode; the dark: variants restore the
+// original brighter shades that read well on the dark surface. The translucent
+// bg/border tints work on both themes.
 const STYLES: Record<Severity, string> = {
-  critical: "bg-red-500/10 text-red-400 border-red-500/30",
-  high: "bg-orange-500/10 text-orange-400 border-orange-500/30",
-  medium: "bg-amber-500/10 text-amber-400 border-amber-500/30",
-  low: "bg-blue-500/10 text-blue-400 border-blue-500/30",
-  info: "bg-neutral-500/10 text-neutral-400 border-neutral-500/30",
+  critical: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30",
+  high: "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/30",
+  medium: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30",
+  low: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30",
+  info: "bg-neutral-500/10 text-neutral-600 dark:text-neutral-400 border-neutral-500/30",
 };
 
 export function SeverityBadge({

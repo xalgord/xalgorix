@@ -4,10 +4,28 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#050505" />
     <title>Xalgorix — Security Scanner</title>
     <meta name="description" content="Xalgorix autonomous security scanner dashboard." />
+    <!-- Apply the saved theme before first paint to avoid a flash of the wrong
+         theme. Mirrors src/store/theme.ts: default dark; "system" follows the OS.
+         The <html> class="dark" above is the no-JS/default; this corrects it. -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("xalgorix.theme");
+          var dark;
+          if (stored === "light") dark = false;
+          else if (stored === "system")
+            dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          else dark = true; // "dark" or unset → dark (historical default)
+          document.documentElement.classList.toggle("dark", dark);
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute("content", dark ? "#050505" : "#ffffff");
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
