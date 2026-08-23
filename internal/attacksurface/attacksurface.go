@@ -97,6 +97,9 @@ func LoadFromPath(path string) (*Result, error) {
 	}
 
 	merged := &Result{AuthHeaders: map[string]string{}}
+	// In directory mode, harvest Postman environment/globals variables up front
+	// so a collection's {{placeholders}} resolve against a sibling env file.
+	var postmanVars map[string]string
 	parseInto := func(p string) {
 		// ZIP-based Android artifacts are streamed from disk: reading a
 		// multi-hundred-MB APK into memory just to hand it to a zip reader
@@ -116,12 +119,13 @@ func LoadFromPath(path string) (*Result, error) {
 		if err != nil || len(data) == 0 {
 			return
 		}
-		if r := ParseBytes(data, filepath.Base(p)); r != nil {
+		if r := parseBytes(data, filepath.Base(p), postmanVars); r != nil {
 			merged.merge(r)
 		}
 	}
 
 	if info.IsDir() {
+		postmanVars = collectPostmanVars(path)
 		entries, _ := os.ReadDir(path)
 		for _, e := range entries {
 			if e.IsDir() {
@@ -147,6 +151,13 @@ func LoadFromPath(path string) (*Result, error) {
 // ParseBytes autodetects the artifact format and parses it. Returns nil when
 // the format is unrecognized or the content is unusable.
 func ParseBytes(data []byte, name string) *Result {
+	return parseBytes(data, name, nil)
+}
+
+// parseBytes is ParseBytes with optional Postman variables gathered from
+// sibling environment/globals files in a directory upload, used to resolve
+// {{placeholders}} when the artifact is a Postman collection.
+func parseBytes(data []byte, name string, postmanVars map[string]string) *Result {
 	trimmed := strings.TrimSpace(string(data))
 	if trimmed == "" {
 		return nil
@@ -165,7 +176,7 @@ func ParseBytes(data []byte, name string) *Result {
 			case hasKey(probe, "log"):
 				return parseHAR(data)
 			case hasKey(probe, "item") && hasKey(probe, "info"):
-				return parsePostman(data)
+				return parsePostman(data, postmanVars)
 			case hasKey(probe, "paths"):
 				return parseOpenAPIJSON(data)
 			}
@@ -357,16 +368,19 @@ func parseHAR(data []byte) *Result {
 	return res
 }
 
-// ── Postman collection (v2.x) ───────────────────────────────────────────────
+// ── Postman collection (v2.x) + environment ─────────────────────────────────
 
 type postmanColl struct {
-	Item []postmanItem `json:"item"`
+	Item     []postmanItem `json:"item"`
+	Variable []postmanVar  `json:"variable"` // collection-level variables
+	Auth     *postmanAuth  `json:"auth"`     // collection-level default auth
 }
 
 type postmanItem struct {
 	Name    string          `json:"name"`
 	Item    []postmanItem   `json:"item"` // folders nest items
 	Request *postmanRequest `json:"request"`
+	Auth    *postmanAuth    `json:"auth"` // folder-level auth (cascades to children)
 }
 
 type postmanRequest struct {
@@ -376,45 +390,242 @@ type postmanRequest struct {
 		Value string `json:"value"`
 	} `json:"header"`
 	URL  json.RawMessage `json:"url"` // string OR object
+	Auth *postmanAuth    `json:"auth"`
 	Body struct {
 		Raw string `json:"raw"`
 	} `json:"body"`
 }
 
-func parsePostman(data []byte) *Result {
+// postmanVar is one variable from a collection's variable[] list or an
+// environment/globals export's values[] list. Postman disables collection
+// variables with "disabled":true and environment values with "enabled":false —
+// both are honored so we don't resolve against a value the operator turned off.
+type postmanVar struct {
+	Key      string `json:"key"`
+	Value    string `json:"value"`
+	Disabled bool   `json:"disabled"`
+	Enabled  *bool  `json:"enabled"`
+}
+
+func (v postmanVar) active() bool {
+	if v.Disabled || strings.TrimSpace(v.Key) == "" {
+		return false
+	}
+	return v.Enabled == nil || *v.Enabled
+}
+
+// postmanAuth is a Postman auth block, which can sit at collection, folder, or
+// request level. Only the fields for the selected Type are populated.
+type postmanAuth struct {
+	Type   string          `json:"type"`
+	Bearer []postmanAuthKV `json:"bearer"`
+	Basic  []postmanAuthKV `json:"basic"`
+	APIKey []postmanAuthKV `json:"apikey"`
+}
+
+type postmanAuthKV struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+func authKVGet(kvs []postmanAuthKV, key string) string {
+	for _, kv := range kvs {
+		if strings.EqualFold(strings.TrimSpace(kv.Key), key) {
+			return kv.Value
+		}
+	}
+	return ""
+}
+
+// parsePostman parses a Postman v2.x collection. extraVars carries variables
+// from sibling environment/globals files (a multi-file upload), which are
+// overlaid on the collection's own variables so {{placeholders}} in URLs,
+// headers, bodies, and auth blocks resolve to real values.
+func parsePostman(data []byte, extraVars map[string]string) *Result {
 	var coll postmanColl
 	if err := json.Unmarshal(data, &coll); err != nil {
 		return nil
 	}
+	// Collection variables are defaults; an attached environment overrides them.
+	vars := map[string]string{}
+	for _, v := range coll.Variable {
+		if v.active() {
+			vars[v.Key] = v.Value
+		}
+	}
+	for k, val := range extraVars {
+		vars[k] = val
+	}
+
 	res := &Result{AuthHeaders: map[string]string{}, Formats: []string{"postman"}}
-	var walk func(items []postmanItem)
-	walk = func(items []postmanItem) {
+	// Collection-level auth applies to every request that doesn't override it.
+	if name, val := postmanAuthHeader(coll.Auth, vars); name != "" {
+		res.AuthHeaders[canonicalHeader(name)] = val
+	}
+
+	var walk func(items []postmanItem, inherited *postmanAuth)
+	walk = func(items []postmanItem, inherited *postmanAuth) {
 		for _, it := range items {
+			eff := inherited
+			if it.Auth != nil { // folder-level auth cascades to nested items
+				eff = it.Auth
+			}
 			if len(it.Item) > 0 {
-				walk(it.Item)
+				walk(it.Item, eff)
 			}
 			if it.Request == nil {
 				continue
 			}
-			url := postmanURL(it.Request.URL)
-			if url == "" {
+			rawURL := resolvePostmanVars(postmanURL(it.Request.URL), vars)
+			if rawURL == "" {
 				continue
 			}
 			res.Endpoints = append(res.Endpoints, Endpoint{
 				Method: strings.ToUpper(it.Request.Method),
-				Path:   stripQuery(url),
-				Body:   truncate(it.Request.Body.Raw, maxBodyChars),
+				Path:   stripQuery(rawURL),
+				Body:   truncate(resolvePostmanVars(it.Request.Body.Raw, vars), maxBodyChars),
 				Source: "postman",
 			})
 			for _, h := range it.Request.Header {
-				if isAuthHeader(h.Key) && strings.TrimSpace(h.Value) != "" {
-					res.AuthHeaders[canonicalHeader(h.Key)] = h.Value
+				val := resolvePostmanVars(h.Value, vars)
+				if isAuthHeader(h.Key) && strings.TrimSpace(val) != "" {
+					res.AuthHeaders[canonicalHeader(h.Key)] = val
 				}
+			}
+			// Request-level auth block (e.g. bearer token {{access_token}}),
+			// falling back to the inherited folder/collection auth.
+			ra := it.Request.Auth
+			if ra == nil {
+				ra = eff
+			}
+			if name, val := postmanAuthHeader(ra, vars); name != "" {
+				res.AuthHeaders[canonicalHeader(name)] = val
 			}
 		}
 	}
-	walk(coll.Item)
+	walk(coll.Item, coll.Auth)
 	return res
+}
+
+// postmanAuthHeader renders a Postman auth block as a single HTTP header,
+// resolving {{variables}}. Returns ("","") for empty, query-param, or
+// unsupported auth. This is how Postman most commonly stores credentials — the
+// token itself typically lives in an environment file as {{access_token}}.
+func postmanAuthHeader(auth *postmanAuth, vars map[string]string) (string, string) {
+	if auth == nil {
+		return "", ""
+	}
+	switch strings.ToLower(strings.TrimSpace(auth.Type)) {
+	case "bearer":
+		tok := strings.TrimSpace(resolvePostmanVars(authKVGet(auth.Bearer, "token"), vars))
+		if tok == "" {
+			return "", ""
+		}
+		return "Authorization", "Bearer " + tok
+	case "basic":
+		user := resolvePostmanVars(authKVGet(auth.Basic, "username"), vars)
+		pass := resolvePostmanVars(authKVGet(auth.Basic, "password"), vars)
+		if strings.TrimSpace(user) == "" && strings.TrimSpace(pass) == "" {
+			return "", ""
+		}
+		return "Authorization", "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+pass))
+	case "apikey":
+		val := strings.TrimSpace(resolvePostmanVars(authKVGet(auth.APIKey, "value"), vars))
+		if val == "" {
+			return "", ""
+		}
+		if strings.EqualFold(strings.TrimSpace(authKVGet(auth.APIKey, "in")), "query") {
+			return "", "" // query-param keys aren't request headers
+		}
+		name := strings.TrimSpace(resolvePostmanVars(authKVGet(auth.APIKey, "key"), vars))
+		if name == "" {
+			name = "X-Api-Key" // Postman's default when the key name is blank
+		}
+		return name, val
+	}
+	return "", ""
+}
+
+var postmanVarRe = regexp.MustCompile(`\{\{([^{}]+)\}\}`)
+
+// resolvePostmanVars replaces {{variable}} placeholders using vars. Unknown
+// placeholders are left intact — a partially-resolved URL still seeds a more
+// useful surface than a raw {{host}} that no HTTP client could reach.
+func resolvePostmanVars(s string, vars map[string]string) string {
+	if s == "" || len(vars) == 0 || !strings.Contains(s, "{{") {
+		return s
+	}
+	return postmanVarRe.ReplaceAllStringFunc(s, func(m string) string {
+		if v, ok := vars[strings.TrimSpace(m[2:len(m)-2])]; ok {
+			return v
+		}
+		return m
+	})
+}
+
+// postmanEnv is a Postman environment or globals export.
+type postmanEnv struct {
+	Values []postmanVar `json:"values"`
+}
+
+// parsePostmanEnv extracts variables from a Postman environment/globals export
+// (shape: {"values":[{key,value,enabled}], …} with no "item"). Returns nil when
+// the bytes are not such a file, so it's safe to try on every uploaded file.
+func parsePostmanEnv(data []byte) map[string]string {
+	if !strings.HasPrefix(strings.TrimSpace(string(data)), "{") {
+		return nil
+	}
+	var probe map[string]json.RawMessage
+	if json.Unmarshal(data, &probe) != nil {
+		return nil
+	}
+	// An environment/globals file has "values" but is neither a collection
+	// ("item") nor an OpenAPI spec ("paths"/"swagger"/"openapi").
+	if !hasKey(probe, "values") || hasKey(probe, "item") ||
+		hasKey(probe, "paths") || hasKey(probe, "swagger") || hasKey(probe, "openapi") {
+		return nil
+	}
+	var env postmanEnv
+	if json.Unmarshal(data, &env) != nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, v := range env.Values {
+		if v.active() {
+			out[v.Key] = v.Value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// collectPostmanVars scans a directory for Postman environment/globals exports
+// and merges their variables so sibling collections can resolve {{placeholders}}
+// (tokens, base URLs, ids) — the core of multi-file Postman support.
+func collectPostmanVars(dir string) map[string]string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	vars := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		for k, v := range parsePostmanEnv(data) {
+			vars[k] = v
+		}
+	}
+	if len(vars) == 0 {
+		return nil
+	}
+	return vars
 }
 
 func postmanURL(raw json.RawMessage) string {

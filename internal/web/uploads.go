@@ -154,11 +154,13 @@ func (s *Server) handleUploadLogo(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleUploadContext accepts a scan-context artifact (OpenAPI/Swagger spec,
-// HAR capture, or Postman collection) and saves it under the data dir. It
-// returns the ABSOLUTE filesystem path, which the caller passes back as
-// ScanRequest.scan_context so the engine can parse it into a seeded attack
-// surface at scan start.
+// handleUploadContext accepts one or more scan-context artifacts (OpenAPI/
+// Swagger spec, HAR capture, Postman collection + environment, Burp export, or
+// an Android app) and saves them into a per-upload directory under the data
+// dir. It returns that directory path, which the caller passes back as
+// ScanRequest.scan_context; the engine parses every file in it and merges them
+// into a seeded attack surface at scan start — resolving Postman {{variables}}
+// and captured auth across the collection and its environment.
 func (s *Server) handleUploadContext(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -174,67 +176,104 @@ func (s *Server) handleUploadContext(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to parse multipart form (max 160MB): "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	file, header, err := r.FormFile("file")
-	if err != nil {
+	// Multiple artifacts can be uploaded together under the "file" field — most
+	// importantly a Postman collection plus its environment file, so the engine
+	// resolves {{variables}} and captured auth across them. A single file (the
+	// common case) is just a list of length one.
+	files := r.MultipartForm.File["file"]
+	if len(files) == 0 {
 		http.Error(w, "file required", http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
-
-	originalName := filepath.Base(header.Filename)
-	ext := strings.ToLower(filepath.Ext(originalName))
+	const maxFiles = 20
+	if len(files) > maxFiles {
+		http.Error(w, fmt.Sprintf("too many files (max %d)", maxFiles), http.StatusBadRequest)
+		return
+	}
 	// .apks/.xapk are split-APK bundles and .aab is an app bundle — all ZIP
 	// containers holding one or more inner .apk files, which the parser
 	// descends into.
 	allowedExts := map[string]bool{".json": true, ".yaml": true, ".yml": true, ".har": true, ".xml": true, ".apk": true, ".apks": true, ".xapk": true, ".aab": true, ".txt": true}
-	if !allowedExts[ext] {
-		http.Error(w, "unsupported context format: "+ext+" (allowed: json, yaml, yml, har, xml, apk, apks, xapk, aab, txt — OpenAPI/Swagger, HAR, Postman, Burp, or an Android app)", http.StatusBadRequest)
-		return
+	for _, fh := range files {
+		ext := strings.ToLower(filepath.Ext(filepath.Base(fh.Filename)))
+		if !allowedExts[ext] {
+			http.Error(w, "unsupported context format: "+ext+" (allowed: json, yaml, yml, har, xml, apk, apks, xapk, aab, txt — OpenAPI/Swagger, HAR, Postman, Burp, or an Android app)", http.StatusBadRequest)
+			return
+		}
 	}
 
-	contextDir := filepath.Join(s.dataDir, "context")
-	if err := os.MkdirAll(contextDir, 0700); err != nil {
+	contextRoot := filepath.Join(s.dataDir, "context")
+	if err := os.MkdirAll(contextRoot, 0700); err != nil {
 		log.Printf("[ERROR] Failed to create context directory: %v", err)
 		http.Error(w, "server error", http.StatusInternalServerError)
 		return
 	}
-
-	nameOnly := strings.TrimSuffix(originalName, filepath.Ext(originalName))
-	safeName := regexp.MustCompile(`[^a-zA-Z0-9._-]+`).ReplaceAllString(nameOnly, "_")
-	safeName = strings.Trim(safeName, "._-")
-	if safeName == "" {
-		safeName = "context"
-	}
-	fileName := fmt.Sprintf("%d_%s%s", time.Now().UnixMilli(), safeName, ext)
-	dstPath := filepath.Join(contextDir, fileName)
-
-	dst, err := os.Create(dstPath)
+	// Each upload gets its own directory: LoadFromPath parses every file in it
+	// and merges the results, and a unique dir keeps concurrent uploads from
+	// colliding. MkdirTemp appends a random suffix to guarantee uniqueness.
+	uploadDir, err := os.MkdirTemp(contextRoot, fmt.Sprintf("%d_", time.Now().UnixMilli()))
 	if err != nil {
-		log.Printf("[ERROR] Failed to create context file: %v", err)
+		log.Printf("[ERROR] Failed to create context upload dir: %v", err)
 		http.Error(w, "server error", http.StatusInternalServerError)
 		return
 	}
-	defer dst.Close()
-	if _, err := io.Copy(dst, file); err != nil {
-		log.Printf("[ERROR] Failed to write context file: %v", err)
-		http.Error(w, "server error", http.StatusInternalServerError)
-		return
+
+	sanitize := regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
+	usedNames := map[string]bool{}
+	savedNames := make([]string, 0, len(files))
+	for _, fh := range files {
+		originalName := filepath.Base(fh.Filename)
+		ext := strings.ToLower(filepath.Ext(originalName))
+		nameOnly := strings.TrimSuffix(originalName, filepath.Ext(originalName))
+		safeName := strings.Trim(sanitize.ReplaceAllString(nameOnly, "_"), "._-")
+		if safeName == "" {
+			safeName = "context"
+		}
+		fileName := safeName + ext
+		for i := 1; usedNames[strings.ToLower(fileName)]; i++ {
+			fileName = fmt.Sprintf("%s_%d%s", safeName, i, ext)
+		}
+		usedNames[strings.ToLower(fileName)] = true
+
+		// Scoped closure so each file's handles are closed before the next.
+		save := func() error {
+			src, err := fh.Open()
+			if err != nil {
+				return err
+			}
+			defer src.Close()
+			dst, err := os.Create(filepath.Join(uploadDir, fileName))
+			if err != nil {
+				return err
+			}
+			defer dst.Close()
+			_, err = io.Copy(dst, src)
+			return err
+		}
+		if err := save(); err != nil {
+			_ = os.RemoveAll(uploadDir)
+			log.Printf("[ERROR] Failed to write context file: %v", err)
+			http.Error(w, "server error", http.StatusInternalServerError)
+			return
+		}
+		savedNames = append(savedNames, originalName)
 	}
 
 	// Best-effort parse so we can report how many endpoints were seeded and
-	// reject an unusable file early with a clear message.
-	res, perr := attacksurface.LoadFromPath(dstPath)
+	// reject an unusable upload early with a clear message.
+	res, perr := attacksurface.LoadFromPath(uploadDir)
 	if perr != nil {
-		_ = os.Remove(dstPath)
+		_ = os.RemoveAll(uploadDir)
 		http.Error(w, "could not parse context: "+perr.Error(), http.StatusBadRequest)
 		return
 	}
-	log.Printf("Scan context uploaded: %s → %s (%d endpoints)", header.Filename, dstPath, len(res.Endpoints))
+	log.Printf("Scan context uploaded: %d file(s) [%s] → %s (%d endpoints)", len(savedNames), strings.Join(savedNames, ", "), uploadDir, len(res.Endpoints))
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"path":      dstPath,
-		"filename":  originalName,
+		"path":      uploadDir,
+		"filename":  strings.Join(savedNames, ", "),
+		"files":     len(savedNames),
 		"endpoints": len(res.Endpoints),
 		"formats":   res.Formats,
 		"has_auth":  len(res.AuthHeaders) > 0,

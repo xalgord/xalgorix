@@ -282,12 +282,16 @@ export const api = {
       timeoutMs: 120_000,
     });
   },
-  uploadContext: (file: File) => {
+  uploadContext: (files: File[]) => {
     const body = new FormData();
-    body.append("file", file);
+    // Multiple artifacts (e.g. a Postman collection + its environment) are sent
+    // under the same "file" field; the server saves them into one directory and
+    // parses them together.
+    for (const f of files) body.append("file", f);
     return http<{
       path: string;
       filename: string;
+      files?: number;
       endpoints: number;
       formats: string[];
       has_auth: boolean;

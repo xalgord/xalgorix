@@ -167,20 +167,25 @@ export default function NewScanPage() {
     }
   }
 
-  async function uploadScanContext(file?: File) {
-    if (!file) return;
+  async function uploadScanContext(fileList?: FileList | null) {
+    const files = fileList ? Array.from(fileList) : [];
+    if (!files.length) return;
     setError(null);
-    if (!/\.(json|ya?ml|har|xml|apk|apks|xapk|aab|txt)$/i.test(file.name)) {
-      setError("Context must be an OpenAPI/Swagger spec, HAR, Postman collection, Burp export, or Android app (.json, .yaml, .yml, .har, .xml, .apk, .apks, .xapk, .aab).");
+    const bad = files.find(
+      (f) => !/\.(json|ya?ml|har|xml|apk|apks|xapk|aab|txt)$/i.test(f.name),
+    );
+    if (bad) {
+      setError("Context must be an OpenAPI/Swagger spec, HAR, Postman collection (+ environment), Burp export, or Android app (.json, .yaml, .yml, .har, .xml, .apk, .apks, .xapk, .aab).");
       return;
     }
     setContextUploading(true);
     try {
-      const res = await api.uploadContext(file);
+      const res = await api.uploadContext(files);
       setContextPath(res.path);
       const fmts = (res.formats || []).join(", ") || "context";
+      const label = files.length === 1 ? files[0].name : `${files.length} files`;
       setContextInfo(
-        `${file.name} — ${res.endpoints} endpoint${res.endpoints === 1 ? "" : "s"} seeded (${fmts})${res.has_auth ? " · auth captured" : ""}`,
+        `${label} — ${res.endpoints} endpoint${res.endpoints === 1 ? "" : "s"} seeded (${fmts})${res.has_auth ? " · auth captured" : ""}`,
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload context");
@@ -314,7 +319,10 @@ export default function NewScanPage() {
               <span className="font-medium text-foreground">Android APK</span>. Xalgorix
               seeds the scan with the target&apos;s real endpoints and parameters (and any captured
               session), so it tests the actual attack surface instead of relying on crawling. This
-              is the single biggest boost to black-box coverage.
+              is the single biggest boost to black-box coverage. You can attach{" "}
+              <span className="font-medium text-foreground">multiple files at once</span> — e.g. a
+              Postman collection plus its environment — and Xalgorix resolves{" "}
+              <code className="text-foreground">{"{{variables}}"}</code> and auth across them.
             </p>
             <div className="flex items-center gap-3">
               <label
@@ -334,11 +342,12 @@ export default function NewScanPage() {
               <Input
                 id="scanContext"
                 type="file"
+                multiple
                 accept=".json,.yaml,.yml,.har,.xml,.apk,.apks,.xapk,.aab,.txt"
                 disabled={contextUploading}
                 className="hidden"
                 onChange={(e) => {
-                  void uploadScanContext(e.currentTarget.files?.[0]);
+                  void uploadScanContext(e.currentTarget.files);
                   e.currentTarget.value = "";
                 }}
               />

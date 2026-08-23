@@ -307,3 +307,105 @@ func contains(ss []string, want string) bool {
 	}
 	return false
 }
+
+// TestPostmanResolvesEnvironmentVariables covers the multi-file Postman upload:
+// a collection whose URLs/headers/auth use {{placeholders}} plus a sibling
+// environment file that supplies them. LoadFromPath must merge them so the
+// seeded surface has real hosts and captured auth.
+func TestPostmanResolvesEnvironmentVariables(t *testing.T) {
+	dir := t.TempDir()
+	env := `{
+	  "name": "Prod",
+	  "_postman_variable_scope": "environment",
+	  "values": [
+	    {"key": "base_url", "value": "https://api.example.com", "enabled": true},
+	    {"key": "access_token", "value": "tok-abc-123", "enabled": true},
+	    {"key": "api_key", "value": "key-xyz-789", "enabled": true},
+	    {"key": "off", "value": "SHOULD_NOT_RESOLVE", "enabled": false}
+	  ]
+	}`
+	coll := `{
+	  "info": {"name": "My API"},
+	  "auth": {"type": "bearer", "bearer": [{"key": "token", "value": "{{access_token}}"}]},
+	  "variable": [{"key": "ver", "value": "v2"}],
+	  "item": [
+	    {"name": "get user", "request": {
+	      "method": "GET",
+	      "url": {"raw": "{{base_url}}/{{ver}}/users/1"},
+	      "header": [{"key": "X-Api-Key", "value": "{{api_key}}"}]
+	    }},
+	    {"name": "secret", "request": {
+	      "method": "GET",
+	      "url": "{{base_url}}/{{off}}"
+	    }}
+	  ]
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "collection.json"), []byte(coll), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prod.postman_environment.json"), []byte(env), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := LoadFromPath(dir)
+	if err != nil {
+		t.Fatalf("LoadFromPath: %v", err)
+	}
+	// Environment {{base_url}} and collection-level {{ver}} both resolved.
+	if findEndpoint(res, "GET", "https://api.example.com/v2/users/1") == nil {
+		t.Fatalf("env/collection variables not resolved into URL: %+v", res.Endpoints)
+	}
+	// A collection-level bearer token sourced from the environment becomes an
+	// Authorization header.
+	if got := res.AuthHeaders["Authorization"]; got != "Bearer tok-abc-123" {
+		t.Fatalf("bearer token not resolved from env: %q (%v)", got, res.AuthHeaders)
+	}
+	// An API-key header value resolved from the environment.
+	if got := res.AuthHeaders["X-Api-Key"]; got != "key-xyz-789" {
+		t.Fatalf("api key not resolved from env: %q (%v)", got, res.AuthHeaders)
+	}
+	// A disabled environment value must NOT resolve — the placeholder stays.
+	if findEndpoint(res, "GET", "{{off}}") == nil {
+		t.Fatalf("disabled env var should not resolve: %+v", res.Endpoints)
+	}
+}
+
+// TestPostmanCollectionVariablesResolveWithoutEnv confirms a collection's own
+// variable[] defaults resolve even for a single-file upload (no environment).
+func TestPostmanCollectionVariablesResolveWithoutEnv(t *testing.T) {
+	coll := `{
+	  "info": {"name": "API"},
+	  "variable": [{"key": "host", "value": "https://svc.local"}],
+	  "item": [
+	    {"name": "ping", "request": {"method": "GET", "url": "{{host}}/ping"}}
+	  ]
+	}`
+	res := ParseBytes([]byte(coll), "collection.json")
+	if res == nil {
+		t.Fatal("expected postman result")
+	}
+	if findEndpoint(res, "GET", "https://svc.local/ping") == nil {
+		t.Fatalf("collection variable not resolved: %+v", res.Endpoints)
+	}
+}
+
+// TestPostmanEnvironmentDetectionAndAuthRendering verifies a standalone
+// environment file is not mistaken for an endpoint source, that its variables
+// are still harvested, and that basic auth renders a resolved header.
+func TestPostmanEnvironmentDetectionAndAuthRendering(t *testing.T) {
+	env := `{"name":"E","values":[{"key":"u","value":"admin"},{"key":"p","value":"s3cr3t"}]}`
+	if ParseBytes([]byte(env), "env.json") != nil {
+		t.Fatal("environment file must not parse as an endpoint source")
+	}
+	vars := parsePostmanEnv([]byte(env))
+	if vars["u"] != "admin" || vars["p"] != "s3cr3t" {
+		t.Fatalf("env vars not extracted: %v", vars)
+	}
+	name, val := postmanAuthHeader(&postmanAuth{
+		Type:  "basic",
+		Basic: []postmanAuthKV{{Key: "username", Value: "{{u}}"}, {Key: "password", Value: "{{p}}"}},
+	}, vars)
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("admin:s3cr3t"))
+	if name != "Authorization" || val != want {
+		t.Fatalf("basic auth not rendered: %q %q (want %q)", name, val, want)
+	}
+}
