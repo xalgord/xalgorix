@@ -264,6 +264,10 @@ func TestStopReqGlobalFlagDoesNotInterruptPendingScan(t *testing.T) {
 // desync whenever the worker was at its concurrency cap.
 func TestHandleScanAckIsPendingNotStarted(t *testing.T) {
 	s := newTestServer(t, nil)
+	// handleScan runs the scan in a detached goroutine that keeps writing under
+	// s.dataDir after this test returns; use a best-effort-cleaned data dir so
+	// that late write can't fail t.TempDir's strict cleanup.
+	bestEffortDataDir(t, s)
 
 	body := `{"targets":["https://example.com"],"scan_mode":"quick"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/scan", strings.NewReader(body))

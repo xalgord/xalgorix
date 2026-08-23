@@ -72,6 +72,23 @@ func newTestServer(t *testing.T, cfg *config.Config) *Server {
 	return s
 }
 
+// bestEffortDataDir points s.dataDir at a temp dir cleaned up best-effort
+// (errors ignored), for tests that POST /api/scan. handleScan acks immediately
+// and runs the scan in a *detached* goroutine that keeps writing scan records
+// under s.dataDir after the test returns. A plain t.TempDir() cleans up with a
+// strict os.RemoveAll that races that late write and flakes with
+// "directory not empty" (observed on TestHandleScanAckIsPendingNotStarted).
+// A best-effort cleanup tolerates the leftover files instead.
+func bestEffortDataDir(t *testing.T, s *Server) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "xalgorix-scan-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	s.dataDir = dir
+}
+
 func resetAuthSessionsForTest() {
 	authSessionsMu.Lock()
 	defer authSessionsMu.Unlock()
