@@ -333,17 +333,33 @@ func reportVulnWithContextID(contextID string, args map[string]string) (tools.Re
 	}
 	store.mu.RUnlock()
 
+	// ── Gate 0.5: Reject fabricated / target-unreachable non-findings ──
+	// The shape-based gates below only check that a proof is present and
+	// well-formed, so two classes of NON-vulnerability slip through as
+	// medium+/critical and even reach Telegram/Discord: (1) simulated /
+	// placeholder / "workaround to satisfy the engine" findings the agent
+	// invents to complete a task, and (2) a target reported as unreachable
+	// (host down / unresolvable) dressed up as a vuln. Reject both here,
+	// before auto-inference or the expensive verifier run, so the evidence
+	// operators receive always reflects a real, reproducible finding.
+	if rejection := checkFabricatedFinding(title, endpoint, args["description"], proof, severity); rejection != "" {
+		log.Printf("[reporting] fabricated/unreachable gate rejected finding: severity=%s title=%q", severity, title)
+		return tools.Result{Output: rejection}, nil
+	}
+
 	// ── Auto-inference for missing/incomplete fields ──
+	// A prose field is promoted to exploitation_proof ONLY when it itself
+	// already contains a concrete exploitation outcome (i.e. the agent pasted
+	// real output into the wrong field). Generic prose must never masquerade as
+	// proof: doing so silently defeats Gate 2 and yields "evidence" that merely
+	// restates the description, so notifications/reports carry no real proof.
 	if proof == "" {
-		if desc := strings.TrimSpace(args["description"]); len(desc) >= 20 {
-			proof = desc
-			args["exploitation_proof"] = proof
-		} else if tech := strings.TrimSpace(args["technical_analysis"]); len(tech) >= 20 {
-			proof = tech
-			args["exploitation_proof"] = proof
-		} else if poc := strings.TrimSpace(args["poc_description"]); len(poc) >= 20 {
-			proof = poc
-			args["exploitation_proof"] = proof
+		for _, cand := range []string{args["description"], args["technical_analysis"], args["poc_description"]} {
+			if c := strings.TrimSpace(cand); len(c) >= 20 && HasConcreteImpact(c) {
+				proof = c
+				args["exploitation_proof"] = proof
+				break
+			}
 		}
 	}
 	if severity != "info" && method == "" {
@@ -895,6 +911,55 @@ func checkClaimConsistency(title, cwe, method, cvssVector, severity, description
 
 	return ""
 }
+
+// checkFabricatedFinding rejects two classes of non-vulnerability that the
+// agent emits when it cannot actually reach or exploit the target yet still
+// calls report_vulnerability. They pass the shape-based gates because their
+// "proof" is real command output (a ping/curl transcript) or long prose — it
+// just is not evidence of a vulnerability — and then surface as critical/high
+// noise (including on Telegram/Discord). Matches the substring-gate style of
+// checkFalsePositive.
+//
+//  1. SIMULATED / PLACEHOLDER / WORKAROUND findings — fabricated to "complete
+//     the task" (often against invented /placeholder/ endpoints, or with a
+//     proof that openly admits it is a stand-in). Never real → rejected at
+//     every severity.
+//  2. TARGET-UNREACHABLE reported AS a vulnerability — a host that is down or
+//     unresolvable is an availability/scope problem, not a finding. Rejected
+//     for actionable (non-info) severities, but only when the proof shows NO
+//     concrete exploitation outcome, so a genuine finding whose proof merely
+//     mentions a timeout in passing is preserved.
+func checkFabricatedFinding(title, endpoint, description, proof, severity string) string {
+	blob := strings.ToLower(title + " " + endpoint + " " + description + " " + proof)
+
+	// Class 1: explicit fabrication markers — reject at any severity.
+	for _, m := range []string{
+		"simulated", "placeholder", "hypothetical endpoint",
+		"workaround to satisfy", "to satisfy the assessment", "assessment engine",
+		"task completion requirement", "this report is a workaround",
+	} {
+		if strings.Contains(blob, m) {
+			return fmt.Sprintf("❌ REJECTED: '%s' is a SIMULATED/PLACEHOLDER/WORKAROUND report (matched %q), not a real vulnerability. Never fabricate a finding to complete a task. If you could not exploit a reachable endpoint, record what you tested with add_note and move on — do NOT call report_vulnerability.", title, m)
+		}
+	}
+
+	// Class 2: target-unreachable dressed up as an actionable vulnerability.
+	// Guarded by HasConcreteImpact so a real finding whose proof also shows a
+	// concrete outcome (uid=0, extracted data, an OOB hit) is never dropped.
+	if severity != "" && severity != "info" && !HasConcreteImpact(proof) {
+		for _, m := range []string{
+			"unreachable", "host is down", "host unresponsive",
+			"100% packet loss", "could not resolve host", "name or service not known",
+			"no route to host", "target host down", "target is down", "assessment blocked",
+		} {
+			if strings.Contains(blob, m) {
+				return fmt.Sprintf("❌ REJECTED: '%s' reports the target as UNREACHABLE (matched %q) — that is an availability/scope issue, not a %s vulnerability. Note it with add_note and finish gracefully; only report an actionable finding backed by a concrete exploitation outcome against a reachable endpoint.", title, m, strings.ToUpper(severity))
+			}
+		}
+	}
+	return ""
+}
+
 func checkFalsePositive(title, description, severity, proof string) string {
 	lower := strings.ToLower(title + " " + description)
 	isHighSev := severity == "critical" || severity == "high" || severity == "medium"

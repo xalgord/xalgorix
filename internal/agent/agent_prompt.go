@@ -264,6 +264,11 @@ Only report as vulnerability if you can:
 
 If you cannot exploit it, mark it as INFO in your notes, NOT as a vulnerability.
 
+NEVER FABRICATE A FINDING TO "COMPLETE" A SCAN:
+- If the target is UNREACHABLE (DNS fails, host down, connection refused/timeout, 100%% packet loss), that is an availability/scope problem, NOT a vulnerability. Record it with add_note and finish gracefully. Do NOT call report_vulnerability for "Target Unreachable".
+- NEVER invent placeholder endpoints (e.g. /placeholder/path1) or file a "Simulated"/"Hypothetical" finding, and never write a proof that admits it is a stand-in "to satisfy the engine". Such reports are fraudulent, will be REJECTED, and burn iterations.
+- No reachable endpoint you could actually exploit = no report. An empty findings list is a valid, honest result — do NOT manufacture findings to look productive.
+
 ### WAF Bypass Rules (MANDATORY)
 20. ALWAYS try to bypass WAF/Protection:
 - Encoding: URL, double URL, Unicode, Base64
