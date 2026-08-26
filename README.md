@@ -167,6 +167,29 @@ Most scanners **detect**. Xalgorix **proves**. An autonomous agent works through
 
 > Directional comparison — Nuclei and ZAP are excellent at what they do. Xalgorix adds the reasoning-heavy discovery and exploit-verification layer on top.
 
+### ☁️ Self-hosted vs Hosted cloud
+
+Xalgorix is free and open source — self-host it forever, no strings attached. The [hosted cloud](https://www.xalgorix.com/) runs the **same** exploit-verified engine; it exists for people who'd rather not manage API keys, infrastructure, and unpredictable LLM bills. Both are first-class — pick what fits.
+
+|                                    | **Self-hosted** (this repo)              | **[Hosted cloud](https://www.xalgorix.com/)**   |
+| ---------------------------------- | ---------------------------------------- | ----------------------------------------------- |
+| Price to start                     | Free, Apache-2.0                         | Free tier · one full scan from $1               |
+| LLM API key                        | Bring & manage your own                  | Included — none to wrangle                      |
+| Cost per scan                      | Raw LLM tokens — variable, can spike     | 1 credit per live host — predictable            |
+| Setup & ops                        | You install, update & run the toolchain  | Nothing to run — scan in ~60s                   |
+| Out-of-band infra (SSRF/blind RCE) | Stand up your own OOB server             | Managed OOB included                            |
+| Scheduling · team · RBAC           | Do it yourself                           | Built in                                        |
+| Updates                            | `git pull` + rebuild                     | Always on the latest engine                     |
+| Data residency / offline           | ✅ stays on your infra · air-gap OK       | Runs on our infra (DPA available)               |
+
+**Self-host if** data must stay on your network, you want full control, or you'll run offline/air-gapped — that's exactly what it's for. **Use the cloud if** you'd rather skip the API keys, infra, and surprise token bills, and pay only for the live hosts you actually scan.
+
+<div align="center">
+
+[**☁️ Try the hosted cloud — free →**](https://www.xalgorix.com/) &nbsp;·&nbsp; [**⚖️ Compare the real cost (calculator) →**](https://www.xalgorix.com/hosted-vs-self-hosted)
+
+</div>
+
 If Xalgorix saves you a triage cycle, please **[⭐ star the repo](https://github.com/xalgorix/xalgorix)** — it genuinely helps others find it.
 
 ## 🎯 Use Cases
