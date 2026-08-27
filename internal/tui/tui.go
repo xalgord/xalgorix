@@ -531,6 +531,60 @@ func FormatVulnSummary() string {
 	return b.String()
 }
 
+// FormatCostNote prints an honest end-of-scan LLM-usage line plus a low-key
+// pointer to the hosted service. Self-hosting is free to run, but the tokens the
+// agent just spent were billed to the operator's own LLM provider — a cost
+// that's otherwise invisible until the provider invoice arrives. Surfacing the
+// count makes it visible, and points at the outcome-based hosted alternative.
+// Returns "" when there were no tokens to report (e.g. a run that never called
+// the model), so it stays silent when there's nothing honest to say.
+func FormatCostNote(cfg *config.Config, totalTokens int) string {
+	if totalTokens <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("\n  ═══ LLM usage this scan: ~%s tokens ═══\n\n", humanizeTokens(totalTokens)))
+	if isLocalProvider(cfg) {
+		b.WriteString("  Ran on your local model — no API bill, just your own compute and time.\n")
+	} else {
+		b.WriteString("  Those tokens were billed to your own LLM provider.\n")
+	}
+	b.WriteString("  The hosted cloud runs the same exploit-verified scan for 1 credit per\n")
+	b.WriteString("  live host — no API keys, no token bills, infra + OOB managed for you:\n")
+	b.WriteString("    → https://www.xalgorix.com/hosted-vs-self-hosted\n")
+	return b.String()
+}
+
+// humanizeTokens renders a token count compactly (2.34M / 812k / 640).
+func humanizeTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.2fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.0fk", float64(n)/1_000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
+// isLocalProvider reports whether the active LLM runs locally (Ollama or a
+// loopback endpoint), so the cost note doesn't wrongly claim a provider bill.
+func isLocalProvider(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	if cfg.OllamaCompatible || strings.EqualFold(strings.TrimSpace(cfg.LLMProvider), "ollama") {
+		return true
+	}
+	model := strings.ToLower(cfg.LLM)
+	base := strings.ToLower(cfg.APIBase)
+	return strings.HasPrefix(model, "ollama/") ||
+		strings.Contains(model, "ollama") ||
+		strings.Contains(base, "11434") ||
+		strings.Contains(base, "localhost") ||
+		strings.Contains(base, "127.0.0.1")
+}
+
 func metadataString(metadata map[string]any, key string) (string, bool) {
 	if metadata == nil {
 		return "", false
@@ -605,11 +659,16 @@ func RunCLI(cfg *config.Config, targets []string, instruction string, codeScan s
 	}
 
 	done := make(chan struct{})
+	// The terminal "finished" event carries the run's cumulative token total.
+	// Capturing it here is race-free: the goroutine writes it before close(done),
+	// and RunCLI only reads it after <-done.
+	var totalTokens int
 	go func() {
 		defer close(done)
 		for evt := range events {
 			fmt.Print(FormatEvent(evt))
 			if evt.Type == "finished" {
+				totalTokens = evt.TotalTokens
 				return
 			}
 		}
@@ -620,6 +679,7 @@ func RunCLI(cfg *config.Config, targets []string, instruction string, codeScan s
 	<-done
 
 	fmt.Print(FormatVulnSummary())
+	fmt.Print(FormatCostNote(cfg, totalTokens))
 }
 
 // cliPickLoopbackPort returns a free loopback TCP port for a provision scan.
