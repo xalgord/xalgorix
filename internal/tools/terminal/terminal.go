@@ -18,7 +18,6 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
-	"unsafe"
 
 	"github.com/xalgord/xalgorix/v4/internal/config"
 	"github.com/xalgord/xalgorix/v4/internal/resources"
@@ -601,57 +600,6 @@ func setProcessLimits(cmd *exec.Cmd, memoryLimited bool, memLimitBytes int64) {
 		return
 	}
 	setProcessLimitsForPID(cmd.Process.Pid, memoryLimited, memLimitBytes)
-}
-
-// setProcessLimitsForPID applies the same OOM / RLIMIT_AS constraints as
-// setProcessLimits but works with an already-known PID. This is the path
-// used for processes spawned outside of os/exec (e.g. go-rod's launcher,
-// which exposes only Launcher.PID()).
-func setProcessLimitsForPID(pid int, memoryLimited bool, memLimitBytes int64) {
-	if pid <= 0 {
-		return
-	}
-
-	// ── OOM score adjustment ──
-	// Score 500 = "kill me before most things, but not before 1000"
-	// xalgorix protects itself with a negative score, so the kernel prefers
-	// killing children under memory pressure.
-	oomPath := fmt.Sprintf("/proc/%d/oom_score_adj", pid)
-	if err := os.WriteFile(oomPath, []byte("500"), 0644); err != nil { //nolint:gosec // G306: procfs ignores the file mode
-		// Not fatal — best effort. Fails if not running as root.
-		log.Printf("[RESOURCES] Cannot set OOM score for PID %d: %v", pid, err)
-	}
-
-	// ── Memory limit for scanner subprocesses ──
-	// Uses prlimit64 syscall to set RLIMIT_AS on the child process.
-	// If the tool exceeds this, it gets ENOMEM / SIGSEGV — xalgorix survives.
-	if memoryLimited && memLimitBytes > 0 {
-		newLimit := syscall.Rlimit{
-			Cur: uint64(memLimitBytes),
-			Max: uint64(memLimitBytes),
-		}
-		// prlimit64(pid, resource, new_rlimit*, old_rlimit*)
-		// unsafe.Pointer is required by the syscall ABI to pass the
-		// rlimit struct; there is no safe stdlib wrapper for setting
-		// RLIMIT_AS on another PID. The pointer is to a local struct that
-		// outlives the call.
-		_, _, errno := syscall.RawSyscall6(
-			syscall.SYS_PRLIMIT64,
-			uintptr(pid),
-			uintptr(syscall.RLIMIT_AS),
-			uintptr(unsafe.Pointer(&newLimit)), //nolint:gosec // G103: audited unsafe.Pointer for prlimit64 syscall ABI
-			0,                                  // old limit — don't need it
-			0, 0,
-		)
-		if errno != 0 {
-			log.Printf("[RESOURCES] Cannot set RLIMIT_AS for PID %d: %v", pid, errno)
-		} else {
-			log.Printf("[RESOURCES] Tool PID %d: OOM score=500, mem limit=%d MB",
-				pid, memLimitBytes/(1024*1024))
-		}
-	} else {
-		log.Printf("[RESOURCES] PID %d: OOM score set to 500", pid)
-	}
 }
 
 // ApplyProcessLimits applies the same child-process protections used by

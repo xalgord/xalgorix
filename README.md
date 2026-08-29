@@ -57,7 +57,7 @@
 curl -sSL https://www.xalgorix.com/install | bash
 ```
 
-This downloads the prebuilt binary for your platform (Linux amd64/arm64) from the latest release. Then run the interactive setup wizard:
+This downloads the prebuilt binary for your platform (Linux or macOS, amd64/arm64) from the latest release. Then run the interactive setup wizard:
 
 ```bash
 xalgorix --setup
@@ -88,9 +88,9 @@ docker compose up -d
 docker compose logs -f   # shows the generated admin password on first start
 ```
 
-The image ships an extensive offensive-security toolset preinstalled (nmap, nuclei, httpx, subfinder, katana, ffuf, gobuster, sqlmap, masscan, dalfox, feroxbuster, and more) **and** keeps every package manager (apt, go, cargo, pipx, npm) available so the agent can still auto-install anything missing at runtime. It runs as root inside the container by design — treat the container as a disposable, network-isolated scanning sandbox and never expose the dashboard without auth. (amd64 image; the installer above covers arm64.)
+The image ships an extensive offensive-security toolset preinstalled (nmap, nuclei, httpx, subfinder, katana, ffuf, gobuster, sqlmap, masscan, dalfox, feroxbuster, and more) **and** keeps every package manager (apt, go, cargo, pipx, npm) available so the agent can still auto-install anything missing at runtime. It runs as root inside the container by design — treat the container as a disposable, network-isolated scanning sandbox and never expose the dashboard without auth. Images are published for both amd64 and arm64.
 
-**Or build from source** (needs Go 1.25+ and Node.js):
+**Or build from source** (needs Go 1.26+ and Node.js):
 
 ```bash
 git clone https://github.com/xalgorix/xalgorix.git
@@ -226,7 +226,7 @@ The fastest paths need no toolchain at all.
 curl -sSL https://www.xalgorix.com/install | bash
 ```
 
-Downloads the latest release binary for your platform (Linux `amd64`/`arm64`) and installs it to `/usr/local/bin` (or `~/.local/bin` without sudo). Override with `XALGORIX_INSTALL_DIR` or pin a version with `XALGORIX_VERSION=vX.Y.Z`.
+Downloads the latest release binary for your platform (Linux or macOS, `amd64`/`arm64`) and installs it to `/usr/local/bin` (or `~/.local/bin` without sudo). Override with `XALGORIX_INSTALL_DIR` or pin a version with `XALGORIX_VERSION=vX.Y.Z`.
 
 Complete first-time configuration interactively—no manual environment-file editing required:
 
@@ -251,7 +251,7 @@ docker run --rm -p 9137:9137 \
 
 The image is **batteries-included**: an extensive offensive-security toolset is preinstalled (nmap, nuclei, httpx, subfinder, dnsx, naabu, katana, ffuf, gobuster, dalfox, feroxbuster, sqlmap, masscan, nikto, whatweb, hydra, and more), plus Chromium for browser-assisted DAST. It also keeps the full package-manager set (apt, go, cargo, pipx, npm) available, so the agent auto-installs anything missing at runtime. Scan data persists to the `/data` volume, and the server binds `0.0.0.0` inside the container — set `XALGORIX_USERNAME`/`XALGORIX_PASSWORD` before exposing it beyond localhost.
 
-The container runs as root by design (the engine only enables runtime auto-install for uid 0, and apt/go/cargo installs need system write access). Treat it as a disposable, network-isolated scanning sandbox. It's published for `amd64`; use the one-line installer for arm64 hosts.
+The container runs as root by design (the engine only enables runtime auto-install for uid 0, and apt/go/cargo installs need system write access). Treat it as a disposable, network-isolated scanning sandbox. The same tags publish a multi-platform manifest for `linux/amd64` and `linux/arm64`, so Docker selects the native image automatically.
 
 On first run, if you don't set dashboard auth the container **generates a random admin password and prints it to the logs** (the image binds `0.0.0.0`, which the engine won't do without auth). Set `XALGORIX_USERNAME` + `XALGORIX_PASSWORD` (or `XALGORIX_PASSWORD_HASH`) to use your own. The binary never self-updates inside the container (`XALGORIX_NO_AUTO_UPDATE=1`) — pull a new image tag to upgrade. The **nuclei** engine and its vuln templates are refreshed to the latest on every image build (the release CI and `redeploy.sh` force this); pass `--build-arg NUCLEI_VERSION=vX.Y.Z` to pin the engine, or `NUCLEI_REFRESH=0 ./redeploy.sh` to reuse Docker's cache.
 
@@ -259,8 +259,8 @@ On first run, if you don't set dashboard auth the container **generates a random
 
 | Requirement    | Notes                                                        |
 | -------------- | ------------------------------------------------------------ |
-| Linux          | Primary supported platform.                                  |
-| Go             | `1.25` or newer.                                             |
+| OS             | Linux or macOS (`amd64`/`arm64`).                            |
+| Go             | `1.26` or newer.                                             |
 | Node.js + npm  | Required when building the bundled React Web UI from source. |
 | Security tools | Installed on demand only when auto-install is enabled.       |
 

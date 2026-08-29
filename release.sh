@@ -192,16 +192,17 @@ if ! go build ./cmd/xalgorix/; then
 fi
 ok "Build successful"
 
-# ─── Step 4: Build release binaries (multi-arch) ───
-# Build both linux/amd64 and linux/arm64 so the one-line installer
-# (install.sh) can serve the right binary for each host. Asset names must
-# match the `${BINARY}-${OS}-${ARCH}` pattern install.sh downloads.
+# ─── Step 4: Build release binaries (multi-platform) ───
+# Build native Linux and macOS binaries for Intel and ARM so the one-line
+# installer can serve the right asset. Names must match the
+# `${BINARY}-${OS}-${ARCH}` pattern install.sh downloads.
 mkdir -p "$BUILD_DIR"
 RELEASE_ASSETS=()
-for arch in amd64 arm64; do
-    info "Building linux/$arch release binary..."
-    out="$BUILD_DIR/xalgorix-linux-$arch"
-    CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build \
+for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+    IFS=/ read -r target_os target_arch <<< "$target"
+    info "Building $target_os/$target_arch release binary..."
+    out="$BUILD_DIR/xalgorix-$target_os-$target_arch"
+    CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go build \
         -ldflags "-s -w -X main.version=$NEW_VERSION" \
         -o "$out" \
         ./cmd/xalgorix/

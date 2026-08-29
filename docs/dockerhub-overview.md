@@ -63,7 +63,7 @@ An extensive toolset ships preinstalled — `nmap`, `nuclei`, `httpx`, `subfinde
 | `X.Y.Z` (e.g. `4.5.50`) | A specific, immutable release. |
 | `X.Y` (e.g. `4.5`) | Latest patch of that minor line. |
 
-**Platform:** `linux/amd64`. For `arm64` hosts, use the one-line installer or build from source (see the repo).
+**Platforms:** `linux/amd64` and `linux/arm64`. Docker automatically selects the native image for the host.
 
 ## Security notes
 
@@ -76,6 +76,6 @@ An extensive toolset ships preinstalled — `nmap`, `nuclei`, `httpx`, `subfinde
 - **Source & docs:** https://github.com/xalgorix/xalgorix
 - **Documentation:** https://docs.xalgorix.com
 - **Hosted (no install):** https://www.xalgorix.com
-- **One-line install (any Linux, amd64/arm64):** `curl -sSL https://www.xalgorix.com/install | bash`
+- **One-line install (Linux or macOS, amd64/arm64):** `curl -sSL https://www.xalgorix.com/install | bash`
 
 Released under the Apache License 2.0.

@@ -36,7 +36,7 @@ Small fixes (typos, docs, obvious bugs) don't need an issue first — just open 
 
 Install the following on your workstation:
 
-- **Go 1.25+** — building and testing the `xalgorix` binary.
+- **Go 1.26+** — building and testing the `xalgorix` binary.
 - **Node.js 20+** and **npm** — building the embedded `webui` dashboard bundle.
 - **GNU Make** — the entry point for every common task.
 

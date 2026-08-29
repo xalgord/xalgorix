@@ -30,7 +30,8 @@ command -v curl >/dev/null 2>&1 || die "curl is required but not installed."
 OS="$(uname -s)"
 case "$OS" in
   Linux) OS="linux" ;;
-  *) die "Unsupported OS '$OS'. Xalgorix ships Linux binaries; build from source for other platforms (see README)." ;;
+  Darwin) OS="darwin" ;;
+  *) die "Unsupported OS '$OS'. Xalgorix ships Linux and macOS binaries; build from source for other platforms (see README)." ;;
 esac
 
 ARCH="$(uname -m)"

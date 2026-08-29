@@ -22,6 +22,22 @@ func TestLevelStringAndMaxLevel(t *testing.T) {
 	}
 }
 
+func TestLiveHostMetricsAreUsable(t *testing.T) {
+	stats := GetStats()
+	if stats.CPUCores < 1 {
+		t.Fatalf("CPU cores = %d, want at least one", stats.CPUCores)
+	}
+	if stats.MemTotalMB <= 0 {
+		t.Fatalf("total memory = %d MB, want a positive host reading", stats.MemTotalMB)
+	}
+	if stats.MemAvailableMB <= 0 {
+		t.Fatalf("available memory = %d MB, want a positive host reading", stats.MemAvailableMB)
+	}
+	if stats.DiskFreeMB <= 0 {
+		t.Fatalf("free disk = %d MB, want a positive filesystem reading", stats.DiskFreeMB)
+	}
+}
+
 func TestEnvHelpers(t *testing.T) {
 	t.Setenv("XALGORIX_TEST_FLOAT", "")
 	if got := envFloat("XALGORIX_TEST_FLOAT", 1.5); got != 1.5 {

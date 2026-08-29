@@ -34,8 +34,8 @@
 #
 # Then open http://127.0.0.1:9137
 #
-# amd64 image. The release BINARIES remain multi-arch (Linux amd64/arm64) via
-# the one-line installer.
+# Published for linux/amd64 and linux/arm64. Release binaries also cover native
+# Linux and macOS installs via the one-line installer.
 
 # ── Stage 1: build the React web UI ──────────────────────────────────────────
 FROM node:22-bookworm-slim AS webui
@@ -113,6 +113,7 @@ RUN set -eux; \
 # ── Stage 3: runtime — Kali Linux, full toolset, runs as root ────────────────
 FROM kalilinux/kali-rolling
 
+ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Kali metapackages = the extensive toolset. Recommends are left ON so the
@@ -171,7 +172,12 @@ ENV PATH="/usr/local/go/bin:/root/go/bin:/root/.cargo/bin:/root/.local/bin:${PAT
 
 # feroxbuster (Rust) — Kali packages it, but grab the latest release binary too
 # so it's current; cargo stays available at runtime as the engine's fallback.
-RUN curl -sSLo /tmp/ferox.zip https://github.com/epi052/feroxbuster/releases/latest/download/x86_64-linux-feroxbuster.zip \
+RUN case "${TARGETARCH}" in \
+      amd64) ferox_arch=x86_64 ;; \
+      arm64) ferox_arch=aarch64 ;; \
+      *) echo "Unsupported Docker target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSLo /tmp/ferox.zip "https://github.com/epi052/feroxbuster/releases/latest/download/${ferox_arch}-linux-feroxbuster.zip" \
     && unzip -o /tmp/ferox.zip -d /usr/local/bin feroxbuster \
     && chmod +x /usr/local/bin/feroxbuster \
     && rm -f /tmp/ferox.zip \
@@ -203,7 +209,7 @@ RUN curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main
 RUN mkdir -p -m 755 /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
          > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/* \

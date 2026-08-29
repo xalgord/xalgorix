@@ -1,8 +1,8 @@
 // Package resources provides real-time system resource monitoring for
 // dynamic scan admission control and runtime backpressure.
 //
-// It reads Linux /proc files (meminfo, loadavg) and uses syscall.Statfs
-// for disk space. All thresholds are configurable via environment variables.
+// It uses portable host metrics plus syscall.Statfs for disk space. All
+// thresholds are configurable via environment variables.
 package resources
 
 import (
@@ -18,6 +18,10 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/shirou/gopsutil/v3/load"
+	"github.com/shirou/gopsutil/v3/mem"
+	"github.com/shirou/gopsutil/v3/process"
 )
 
 // ── Resource Levels ──
@@ -929,74 +933,39 @@ func ProtectCurrentProcess() {
 	log.Printf("[RESOURCES] xalgorix OOM score set to -500")
 }
 
-// ── Linux /proc readers ──
+// ── Portable host metrics ──
 
-// readLoadAvg reads 1-minute load average from /proc/loadavg.
+// readLoadAvg reads the host's 1-minute load average.
 func readLoadAvg() float64 {
-	data, err := os.ReadFile("/proc/loadavg")
+	stats, err := load.Avg()
 	if err != nil {
-		log.Printf("[RESOURCES] Cannot read /proc/loadavg: %v", err)
+		log.Printf("[RESOURCES] Cannot read load average: %v", err)
 		return 0
 	}
-	fields := strings.Fields(string(data))
-	if len(fields) < 1 {
-		return 0
-	}
-	val, err := strconv.ParseFloat(fields[0], 64)
-	if err != nil {
-		return 0
-	}
-	return val
+	return stats.Load1
 }
 
-// readMemInfo reads total and available memory from /proc/meminfo.
+// readMemInfo reads total and available physical memory. gopsutil maps this to
+// procfs on Linux and the native VM statistics APIs on macOS.
 func readMemInfo() (totalMB, availableMB int64) {
-	data, err := os.ReadFile("/proc/meminfo")
+	stats, err := mem.VirtualMemory()
 	if err != nil {
-		log.Printf("[RESOURCES] Cannot read /proc/meminfo: %v", err)
+		log.Printf("[RESOURCES] Cannot read memory statistics: %v", err)
 		return 0, 0
 	}
-
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		val, err := strconv.ParseInt(fields[1], 10, 64)
-		if err != nil {
-			continue
-		}
-		// /proc/meminfo reports in kB
-		switch fields[0] {
-		case "MemTotal:":
-			totalMB = val / 1024
-		case "MemAvailable:":
-			availableMB = val / 1024
-		}
-	}
-	return totalMB, availableMB
+	return int64(stats.Total / (1024 * 1024)), int64(stats.Available / (1024 * 1024)) //nolint:gosec // G115: MB-scaled memory sizes fit int64
 }
 
 func readProcessRSSMB() int64 {
-	data, err := os.ReadFile("/proc/self/status")
+	current, err := process.NewProcess(int32(os.Getpid())) //nolint:gosec // G115: OS process IDs fit int32
 	if err != nil {
 		return 0
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if !strings.HasPrefix(line, "VmRSS:") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			return 0
-		}
-		kb, err := strconv.ParseInt(fields[1], 10, 64)
-		if err != nil {
-			return 0
-		}
-		return kb / 1024
+	stats, err := current.MemoryInfo()
+	if err != nil {
+		return 0
 	}
-	return 0
+	return int64(stats.RSS / (1024 * 1024)) //nolint:gosec // G115: MB-scaled RSS fits int64
 }
 
 // readDiskFree returns free disk space (in MB) for the root filesystem.

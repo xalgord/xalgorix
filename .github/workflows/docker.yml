@@ -1,15 +1,12 @@
 # Build and publish the Xalgorix container image.
 #
-# Triggers on version tags (vX.Y.Z, pushed by release.sh) and can be run
-# manually. Publishes the batteries-included amd64 image tagged with the
-# version and `latest` to:
+# Each architecture is built on a native GitHub-hosted runner. This avoids the
+# extreme QEMU cost of compiling the batteries-included Kali toolset, then a
+# final job joins both digests into one linux/amd64 + linux/arm64 manifest.
+# Images are published to:
 #   - GitHub Container Registry: ghcr.io/xalgord/xalgorix   (always)
 #   - Docker Hub:                docker.io/xalgord/xalgorix (when the
 #     DOCKERHUB_USERNAME + DOCKERHUB_TOKEN repo secrets are set)
-#
-# The Docker Hub target is OPTIONAL and self-gating: with no secrets, the run
-# still succeeds and publishes to GHCR only. (Release binaries remain
-# multi-arch via the installer.)
 name: Docker
 
 on:
@@ -27,20 +24,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  publish:
-    name: Build and push image
-    runs-on: ubuntu-latest
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
-    # Surfaced so steps can gate the Docker Hub path on the secret being set.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
     env:
       DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # The Kali batteries-included image is many GB; the stock runner (~14GB
-      # free on /) can't hold it mid-build. Reclaim ~25-30GB by dropping
-      # preinstalled SDKs/toolchains we don't need.
+      # The Kali batteries-included image is many GB; reclaim the runner's
+      # preinstalled SDK space before BuildKit starts materializing layers.
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
@@ -58,7 +63,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Optional: only runs when the Docker Hub secrets are configured.
       - name: Log in to Docker Hub
         if: ${{ env.DOCKERHUB_USER != '' }}
         uses: docker/login-action@v3
@@ -71,8 +75,6 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          # GHCR always; Docker Hub (docker.io/xalgord/xalgorix) only when the
-          # secret is present — the empty line is ignored by the action.
           images: |
             ghcr.io/${{ github.repository }}
             ${{ env.DOCKERHUB_USER != '' && 'docker.io/xalgord/xalgorix' || '' }}
@@ -80,21 +82,146 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=edge,enable=${{ github.ref_type != 'tag' }}
 
-      - name: Build and push
+      - name: Select image repositories
+        id: images
+        env:
+          GHCR_IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          images="$GHCR_IMAGE"
+          if [[ -n "$DOCKERHUB_USER" ]]; then
+            images="${images},docker.io/xalgord/xalgorix"
+          fi
+          echo "names=$images" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
-          # amd64 only: the batteries-included toolset (Go/Rust/apt tools +
-          # nuclei templates) is impractical to build for arm64 under CI
-          # emulation. Release binaries stay multi-arch via the installer.
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
-          # TOOLS_REFRESH busts the dedicated nuclei engine+template layer on
-          # every run, so each published image ships the latest nuclei + latest
-          # templates (matters if a build-cache backend is added here later).
+          outputs: type=image,"name=${{ steps.images.outputs.names }}",push-by-digest=true,name-canonical=true,push=true
           build-args: |
             VERSION=${{ steps.meta.outputs.version || github.ref_name }}
-            TOOLS_REFRESH=${{ github.run_id }}
+            TOOLS_REFRESH=${{ github.run_id }}-${{ matrix.arch }}
+
+      - name: Export digest
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${IMAGE_DIGEST#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Publish multi-architecture manifest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: build
+    env:
+      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      GHCR_IMAGE: ghcr.io/${{ github.repository }}
+      DOCKERHUB_IMAGE: docker.io/xalgord/xalgorix
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: docker-digest-*
+          merge-multiple: true
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: ${{ env.DOCKERHUB_USER != '' }}
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/${{ github.repository }}
+            ${{ env.DOCKERHUB_USER != '' && 'docker.io/xalgord/xalgorix' || '' }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=edge,enable=${{ github.ref_type != 'tag' }}
+
+      - name: Create manifests
+        env:
+          DIGEST_DIR: ${{ runner.temp }}/digests
+          METADATA_JSON: ${{ steps.meta.outputs.json }}
+        run: |
+          mapfile -t digests < <(find "$DIGEST_DIR" -maxdepth 1 -type f -printf '%f\n' | sort)
+          if [[ ${#digests[@]} -ne 2 ]]; then
+            echo "Expected two platform digests, found ${#digests[@]}" >&2
+            exit 1
+          fi
+
+          ghcr_sources=()
+          dockerhub_sources=()
+          for digest in "${digests[@]}"; do
+            ghcr_sources+=("${GHCR_IMAGE}@sha256:${digest}")
+            dockerhub_sources+=("${DOCKERHUB_IMAGE}@sha256:${digest}")
+          done
+
+          ghcr_tags=()
+          dockerhub_tags=()
+          mapfile -t tags < <(jq -r '.tags[]' <<< "$METADATA_JSON")
+          for tag in "${tags[@]}"; do
+            case "$tag" in
+              "${GHCR_IMAGE}:"*) ghcr_tags+=("--tag" "$tag") ;;
+              "${DOCKERHUB_IMAGE}:"*) dockerhub_tags+=("--tag" "$tag") ;;
+            esac
+          done
+
+          if [[ ${#ghcr_tags[@]} -eq 0 ]]; then
+            echo "No GHCR tags were generated" >&2
+            exit 1
+          fi
+          docker buildx imagetools create "${ghcr_tags[@]}" "${ghcr_sources[@]}"
+
+          if [[ -n "$DOCKERHUB_USER" ]]; then
+            if [[ ${#dockerhub_tags[@]} -eq 0 ]]; then
+              echo "No Docker Hub tags were generated" >&2
+              exit 1
+            fi
+            docker buildx imagetools create "${dockerhub_tags[@]}" "${dockerhub_sources[@]}"
+          fi
+
+      - name: Verify published platforms
+        env:
+          METADATA_JSON: ${{ steps.meta.outputs.json }}
+        run: |
+          manifest_tag=$(jq -r --arg prefix "${GHCR_IMAGE}:" '[.tags[] | select(startswith($prefix))][0] // empty' <<< "$METADATA_JSON")
+          if [[ -z "$manifest_tag" ]]; then
+            echo "No GHCR manifest tag was generated" >&2
+            exit 1
+          fi
+          manifest=$(docker buildx imagetools inspect "$manifest_tag")
+          echo "$manifest"
+          grep -q 'Platform:.*linux/amd64' <<< "$manifest"
+          grep -q 'Platform:.*linux/arm64' <<< "$manifest"
