@@ -307,7 +307,7 @@ func (r *Registry) Execute(name string, args map[string]string) (Result, error) 
 	if len(missing) > 0 {
 		if name == "report_vulnerability" {
 			return Result{}, fmt.Errorf(
-				"missing required parameters for tool '%s': %s — call it once more using the canonical XML shape with title, severity, and description in the same function block; endpoint and exploitation_proof are optional registry fields (proof is enforced by the reporting policy for actionable severities)",
+				"missing required parameter for tool '%s': %s — 'title' is the only hard-required field; include it (with severity + description + exploitation_proof for a complete report) inside a single <function=report_vulnerability>...</function> block. severity/description are salvaged if omitted, but proof is still enforced by the reporting policy for actionable severities",
 				name, strings.Join(missing, ", "),
 			)
 		}

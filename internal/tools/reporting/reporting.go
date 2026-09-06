@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -283,8 +284,8 @@ func RegisterWithVerifier(r *tools.Registry, verifier FindingVerifier) {
    - None/Info (0.0): Missing headers, version disclosure, self-XSS, DNS config issues`,
 		Parameters: []tools.Parameter{
 			{Name: "title", Description: "Vulnerability title", Required: true},
-			{Name: "severity", Description: "Severity per HackerOne CVSS ranges: critical (CVSS 9.0-10.0), high (7.0-8.9), medium (4.0-6.9), low (0.1-3.9), info (0.0). Must match your CVSS score.", Required: true},
-			{Name: "description", Description: "Detailed description of the vulnerability", Required: true},
+			{Name: "severity", Description: "Severity per HackerOne CVSS ranges: critical (CVSS 9.0-10.0), high (7.0-8.9), medium (4.0-6.9), low (0.1-3.9), info (0.0). Must match your CVSS score. If omitted it is derived from cvss (or defaults to medium) so a real finding is never lost — but always set it explicitly.", Required: false},
+			{Name: "description", Description: "Detailed description of the vulnerability. Strongly recommended; if omitted it is synthesized from the title and proof so a real finding is never lost to a missing field.", Required: false},
 			{Name: "exploitation_proof", Description: "REQUIRED for medium+. Concrete evidence of exploitation: extracted data, reflected payload text, command output, timing measurement, callback confirmation. Paste actual output here.", Required: false},
 			{Name: "verification_method", Description: "How you verified: exploited, time_based, data_extracted, callback_received, error_based, blind_confirmed, reflected, authenticated, manual_verified", Required: false},
 			{Name: "oob_token", Description: "For callback-confirmed SSRF: the exact token returned by oob_callback generate. Required so the backend can reject scanner-origin and DNS-only interactions.", Required: false},
@@ -327,11 +328,49 @@ func reportVulnWithContextID(contextID string, args map[string]string) (tools.Re
 
 func reportVulnWithContextIDAndVerifier(contextID string, verifier FindingVerifier, args map[string]string) (tools.Result, error) {
 	severity := strings.ToLower(strings.TrimSpace(args["severity"]))
+	if severity == "" {
+		// Salvage a missing severity (a common model omission) instead of
+		// bouncing a proven finding: derive it from the CVSS score when given,
+		// else default to medium. This never INFLATES severity, and the
+		// severity/proof gates below still apply, so an unproven finding is
+		// still rejected on its own merits.
+		if cv, err := strconv.ParseFloat(strings.TrimSpace(args["cvss"]), 64); err == nil && cv > 0 {
+			severity = severityFromCVSS(cv)
+		} else {
+			severity = "medium"
+		}
+		args["severity"] = severity
+	}
 	proof := strings.TrimSpace(args["exploitation_proof"])
 	method := strings.ToLower(strings.TrimSpace(args["verification_method"]))
 	title := strings.TrimSpace(args["title"])
 	target := strings.TrimSpace(args["target"])
 	endpoint := strings.TrimSpace(args["endpoint"])
+
+	// ── Salvage a missing description ──
+	// `description` is no longer a hard-required registry field: models (esp.
+	// smaller ones) routinely emit a complete report_vulnerability call with
+	// title/severity/proof but drop the prose `description`, which previously
+	// bounced the whole finding as "missing required parameter" and LOST a real,
+	// proven vulnerability. Synthesize one from the strongest available field so
+	// the finding survives; a model-supplied description is always preferred.
+	if strings.TrimSpace(args["description"]) == "" {
+		var synth []string
+		if title != "" {
+			synth = append(synth, title)
+		}
+		for _, k := range []string{"technical_analysis", "impact", "poc_description", "exploitation_proof"} {
+			if v := strings.TrimSpace(args[k]); v != "" {
+				synth = append(synth, v)
+				break
+			}
+		}
+		desc := strings.TrimSpace(strings.Join(synth, "\n\n"))
+		if desc == "" {
+			desc = title
+		}
+		args["description"] = desc
+	}
 
 	// ── Gate 0: Fast duplicate check before spending effort on report validation ──
 	// This is repeated under the write lock just before append to close races.
