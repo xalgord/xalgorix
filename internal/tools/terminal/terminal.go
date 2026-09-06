@@ -147,6 +147,44 @@ func rewriteCommandForRequestRatePolicy(command string, policy scanctx.RequestRa
 	})
 }
 
+// dirbusterRuntimeCapSeconds bounds how long a single content-discovery tool may
+// run before it is force-stopped. Kept below the default per-command timeout so
+// a capped buster still leaves budget for the actual exploitation step.
+const dirbusterRuntimeCapSeconds = 180
+
+// CapDirbusterRuntime injects a hard runtime cap into directory/content
+// brute-force tools when the model omits one. ffuf without -maxtime and
+// feroxbuster without --time-limit routinely run until the full per-command
+// timeout on CTF/real apps (few matches, so a piped `| head` never closes its
+// side of the pipe), which repeatedly burned whole attempts and starved the
+// real exploit (observed on the SQLi/method-tamper/traversal challenges). This
+// is an ALWAYS-ON backstop — independent of the request-rate policy — for the
+// prompt guidance the model sometimes ignores. It only ADDS a cap when none is
+// present, so an explicit smaller bound the model set is preserved.
+func CapDirbusterRuntime(command string) string {
+	cap := strconv.Itoa(dirbusterRuntimeCapSeconds)
+	return rewriteShellSegments(command, func(segment string) string {
+		if hasToolCommand(segment, "ffuf") && !hasCommandFlag(segment, "-maxtime") {
+			segment = appendCommandArg(segment, "-maxtime "+cap)
+		}
+		if hasToolCommand(segment, "feroxbuster") && !hasCommandFlag(segment, "--time-limit") {
+			segment = appendCommandArg(segment, "--time-limit "+cap+"s")
+		}
+		if hasToolCommand(segment, "dirsearch") && !hasCommandFlag(segment, "--max-time") {
+			segment = appendCommandArg(segment, "--max-time "+cap)
+		}
+		return segment
+	})
+}
+
+// hasCommandFlag reports whether a flag (long or short) is already present in a
+// command segment, matched as a whole token so -maxtime does not match e.g.
+// -maxtime-job and --time-limit does not partial-match a longer flag.
+func hasCommandFlag(command, flag string) bool {
+	re := regexp.MustCompile(`(?i)(^|\s)` + regexp.QuoteMeta(flag) + `(?:=|\s|$)`)
+	return re.FindStringIndex(command) != nil
+}
+
 func rewriteShellSegments(command string, rewrite func(string) string) string {
 	var b strings.Builder
 	start := 0

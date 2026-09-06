@@ -1252,6 +1252,7 @@ func (a *Agent) Run(targets []string, instruction string) {
 					}
 					normalized, note := terminal.NormalizeCommandForRequestRatePolicy(contextID, command)
 					normalized = terminal.InjectScanHeadersIntoCommand(normalized)
+					normalized = terminal.CapDirbusterRuntime(normalized)
 					if normalized != command {
 						updatedArgs := make(map[string]string, len(tc.Args))
 						for k, v := range tc.Args {
